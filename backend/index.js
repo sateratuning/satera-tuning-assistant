@@ -39,6 +39,8 @@ const upload = multer({ dest: uploadsDir });
 // ===== Core middleware BEFORE routes =====
 app.use(cors());
 app.use(express.json());
+app.use(require('./routes/feedback'));
+
 app.use('/', runDetail);
 
 // ===== Health check =====
