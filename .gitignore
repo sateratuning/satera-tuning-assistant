@@ -1,0 +1,22 @@
+﻿# Node/React
+node_modules/
+dist/
+build/
+.cache/
+
+# Local env (secrets)
+.env
+.env.*
+backend/.env
+frontend/.env
+
+# Logs & misc
+npm-debug.log*
+yarn-*.log*
+coverage/
+.vscode/
+.DS_Store
+
+# Do NOT commit uploads or exports
+backend/uploads/
+frontend/uploads/
