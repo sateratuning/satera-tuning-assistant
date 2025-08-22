@@ -4,6 +4,10 @@ import { Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import './App.css';
 
+// 📨 Feedback
+import FeedbackModal from './FeedbackModal';
+import { sendFeedback } from './api';
+
 // 🔐 AUTH
 import {
   auth,
@@ -66,7 +70,7 @@ const styles = {
   button: { backgroundColor: '#00ff88', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
   smallBtn: { backgroundColor: '#00ff88', color: '#000', padding: '7px 11px', border: 'none', cursor: 'pointer', borderRadius: 6 },
 
-  // 🔥 Stand-out pink for sign-in buttons
+  // 🔵 Sign-in buttons
   signInBtn: { backgroundColor: '#3db8ff', color: '#000', padding: '7px 11px', border: '1px solid #000000ff', cursor: 'pointer', borderRadius: 6 },
 
   warnBtn: { backgroundColor: '#ffc107', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
@@ -80,8 +84,8 @@ const styles = {
 
   // Controls pad (top)
   controlCard: { background: '#1a1a1a', padding: 18, borderRadius: 10, border: '1px solid #2a2a2a' },
-  controlTitle: { fontSize: 40, fontWeight: 800, margin: 0, color: '#ffffffff', textShadow: '0 0 6px rgba(173,255,47,0.25)', textAlign: 'center' },
-  controlHelp: { marginTop: 6, fontSize: 14, color: '#4fff5bff', opacity: 0.9, textAlign: 'center' },
+  controlTitle: { fontSize: 40, fontWeight: 800, margin: 0, color: '#ffffff', textShadow: '0 0 6px rgba(173,255,47,0.25)', textAlign: 'center' },
+  controlHelp: { marginTop: 6, fontSize: 14, color: '#4fff5b', opacity: 0.9, textAlign: 'center' },
 
   /* Centered, tighter row for Interval + Log1 + Log2 */
   controlGrid: {
@@ -108,8 +112,7 @@ const styles = {
       '0 0 12px rgba(52,255,120,.35), 0 0 28px rgba(52,255,120,.18)',
     backgroundImage: 'linear-gradient(90deg, #caffd1, #69ff8a, #caffd1)',
     WebkitBackgroundClip: 'text',
-    backgroundClip: 'text',
-    colorAdjust: 'exact'
+    backgroundClip: 'text'
   },
 
   controlHint: { fontSize: 12, opacity: 0.75, marginTop: 4 },
@@ -247,6 +250,11 @@ export default function LogComparison() {
     return () => unsub();
   }, []);
 
+  // 📨 Feedback modal state
+  const [showFeedback, setShowFeedback] = useState(false);
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackMsg, setFeedbackMsg] = useState('');
+
   // logs & files
   const [log1, setLog1] = useState(null);
   const [log2, setLog2] = useState(null);
@@ -259,7 +267,7 @@ export default function LogComparison() {
   const [summary, setSummary] = useState({});
   const [interval, setInterval] = useState('60-130');
 
-  // vehicle (only name is free text)
+  // vehicle (only name is free text; locked to masked auth name when signed in)
   const [vehicle, setVehicle] = useState({
     name: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: ''
@@ -317,6 +325,7 @@ export default function LogComparison() {
       const v = speed[i];
 
       if (startMPH === 0) {
+        // Allow slight staging creep then detect clean launch
         if (!foundStop && v < 1.5) foundStop = true;
         if (foundStop && startTime === null && v > 1.5) startTime = time[i];
       } else {
@@ -334,9 +343,10 @@ export default function LogComparison() {
         }
         runs.push(seg);
         startTime = null;
-        if (startMPH === 0) foundStop = false;
+        if (startMPH === 0) foundStop = false; // look for next clean stop->go segment
       }
 
+      // Reset if the run blew past the target by too much
       if (startTime !== null && v > endMPH + 10) startTime = null;
     }
     return runs;
@@ -355,7 +365,7 @@ export default function LogComparison() {
     return best ? best.duration : null;
   };
 
-  // 🔐 Auth-safe Google sign-in handler
+  // 🔐 Google sign-in
   const handleGoogleLogin = async () => {
     try {
       await signInWithGoogle();
@@ -544,7 +554,7 @@ export default function LogComparison() {
     try {
       setStatus('');
 
-      // 🔐 AUTH: require sign in
+      // 🔐 require sign in
       if (!user) {
         setStatus('Please sign in to submit your run.');
         return;
@@ -557,7 +567,7 @@ export default function LogComparison() {
       const best = computeBestForInterval(parsed);
       if (best == null) { setStatus(`No valid ${interval} run found in the uploaded CSV.`); return; }
 
-      // Autofill/lock name from auth (masked)
+      // Use masked auth name
       const alias = maskedDisplayName(user);
 
       const vehicleInfo = {
@@ -575,7 +585,6 @@ export default function LogComparison() {
       setSubmitting(true);
       setStatus('Submitting run…');
 
-      // 🔐 include Firebase ID token
       const idToken = await user.getIdToken();
       const res = await fetch(`${API_BASE}/api/submit-run`, {
         method: 'POST',
@@ -595,6 +604,33 @@ export default function LogComparison() {
     }
   };
 
+  // 📨 Feedback handlers
+  const openFeedback = () => {
+    setFeedbackMsg('');
+    setShowFeedback(true);
+  };
+
+  const handleSubmitFeedback = async (payload) => {
+    try {
+      setFeedbackBusy(true);
+      // Accept either a string or object from FeedbackModal
+      const message = typeof payload === 'string' ? payload : (payload?.message || '');
+      const meta = {
+        page: 'LogComparison',
+        interval,
+        user: user ? maskedDisplayName(user) : 'Guest',
+        status,
+      };
+      await sendFeedback({ message, meta });
+      setShowFeedback(false);
+      setStatus('Thanks! Your feedback was sent.');
+    } catch (e) {
+      setStatus(`Feedback error: ${e?.message || e}`);
+    } finally {
+      setFeedbackBusy(false);
+    }
+  };
+
   return (
     <div style={styles.page}>
       {/* Keyframes for fancy headings */}
@@ -607,9 +643,12 @@ export default function LogComparison() {
 
       {/* HEADER with sign-in buttons */}
       <header style={styles.header}>
-        <div>BETA - Satera Tuning Log CompAI.rison 🏁 - BETA -  Sign in First to Submit a LOG - BETA</div>
+        <div>Satera Tuning — Log Comparison (BETA)</div>
 
         <div style={styles.headerRight}>
+          <button className="feedback-btn" style={styles.smallBtn} onClick={openFeedback}>
+            Report a Bug / Send Feedback
+          </button>
           {!user ? (
             <>
               <button style={styles.signInBtn} onClick={handleGoogleLogin}>Sign in with Google</button>
@@ -689,7 +728,7 @@ export default function LogComparison() {
                 <option value="40-100">40–100 mph</option>
                 <option value="60-130">60–130 mph</option>
               </select>
-              <div style={styles.controlHint}>Select what interval you want to measure.</div>
+              <div style={styles.controlHint}>Select the interval you want to measure.</div>
             </div>
 
             <div style={styles.fileWrap}>
@@ -705,7 +744,7 @@ export default function LogComparison() {
                 <span style={styles.controlLabelFancy}>Log 2 (CSV) — Optional</span>
               </div>
               <input id="log2Input" type="file" accept=".csv" onChange={(e) => handleFileChange(e, setLog2, setLog2File)} style={{ maxWidth: 360, width: '100%' }} />
-              <div style={styles.controlHint}>Add a second log to compare against Log 1(Optional).</div>
+              <div style={styles.controlHint}>Add a second log to compare against Log 1 (optional).</div>
             </div>
           </div>
 
@@ -923,6 +962,17 @@ export default function LogComparison() {
         </div>
         {/* /3-COLUMN */}
       </div>
+
+      {/* 📨 Feedback Modal */}
+      {showFeedback && (
+        <FeedbackModal
+          isOpen={showFeedback}
+          initialMessage={feedbackMsg}
+          busy={feedbackBusy}
+          onClose={() => setShowFeedback(false)}
+          onSubmit={handleSubmitFeedback}
+        />
+      )}
     </div>
   );
 }
