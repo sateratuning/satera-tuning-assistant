@@ -252,8 +252,6 @@ export default function LogComparison() {
 
   // 📨 Feedback modal state
   const [showFeedback, setShowFeedback] = useState(false);
-  const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [feedbackMsg, setFeedbackMsg] = useState('');
 
   // logs & files
   const [log1, setLog1] = useState(null);
@@ -604,30 +602,30 @@ export default function LogComparison() {
     }
   };
 
-  // 📨 Feedback handlers
+  // 📨 Feedback handlers (match your FeedbackModal API)
   const openFeedback = () => {
-    setFeedbackMsg('');
     setShowFeedback(true);
   };
 
-  const handleSubmitFeedback = async (payload) => {
+  // Must return true/false so the modal can show success state
+  const handleSubmitFeedback = async ({ email, page, message }) => {
     try {
-      setFeedbackBusy(true);
-      // Accept either a string or object from FeedbackModal
-      const message = typeof payload === 'string' ? payload : (payload?.message || '');
-      const meta = {
-        page: 'LogComparison',
-        interval,
-        user: user ? maskedDisplayName(user) : 'Guest',
-        status,
-      };
-      await sendFeedback({ message, meta });
-      setShowFeedback(false);
+      await sendFeedback({
+        message,
+        meta: {
+          page: page || 'LogComparison',
+          interval,
+          user: user ? maskedDisplayName(user) : 'Guest',
+          email: email || null,
+          status,
+        },
+      });
       setStatus('Thanks! Your feedback was sent.');
+      return true; // tell modal to show "Thanks!" view
     } catch (e) {
+      console.error(e);
       setStatus(`Feedback error: ${e?.message || e}`);
-    } finally {
-      setFeedbackBusy(false);
+      return false; // keep modal on form (it will show alert in your component)
     }
   };
 
@@ -963,16 +961,13 @@ export default function LogComparison() {
         {/* /3-COLUMN */}
       </div>
 
-      {/* 📨 Feedback Modal */}
-      {showFeedback && (
-        <FeedbackModal
-          isOpen={showFeedback}
-          initialMessage={feedbackMsg}
-          busy={feedbackBusy}
-          onClose={() => setShowFeedback(false)}
-          onSubmit={handleSubmitFeedback}
-        />
-      )}
+      {/* 📨 Feedback Modal (matches your component's props & return contract) */}
+      <FeedbackModal
+        open={showFeedback}
+        onClose={() => setShowFeedback(false)}
+        onSubmit={handleSubmitFeedback}
+        defaultPage="/log-comparison"
+      />
     </div>
   );
 }
