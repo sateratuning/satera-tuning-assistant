@@ -168,6 +168,7 @@ router.get('/api/env-check', (req, res) => {
     SMTP_PASS: process.env.SMTP_PASS ? '(set)' : null,
     MAIL_TO: process.env.MAIL_TO || null,
     MAIL_FROM: process.env.MAIL_FROM || null,
+     TEST_ENV: process.env.TEST_ENV || null, // 👈 add this line
   });
 });
 
