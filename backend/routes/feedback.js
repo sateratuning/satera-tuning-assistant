@@ -158,4 +158,20 @@ router.post('/api/feedback', async (req, res) => {
   }
 });
 
+
+// Debug route to check env vars
+router.get('/api/env-check', (req, res) => {
+  res.json({
+    SMTP_HOST: process.env.SMTP_HOST || null,
+    SMTP_PORT: process.env.SMTP_PORT || null,
+    SMTP_USER: process.env.SMTP_USER || null,
+    SMTP_PASS: process.env.SMTP_PASS ? '(set)' : null,
+    MAIL_TO: process.env.MAIL_TO || null,
+    MAIL_FROM: process.env.MAIL_FROM || null,
+  });
+});
+
+
+
+
 module.exports = router;
