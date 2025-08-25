@@ -3,42 +3,22 @@ const express = require('express');
 const router = express.Router();
 const nodemailer = require('nodemailer');
 
-// --- Supabase (optional: keeps your previous insert) ---
+// --- Supabase (optional) ---
 let supabase = null;
 try {
-  const getSupabase = require('../Lib/supabase'); // ← keep this path/casing consistent with your repo
+  const getSupabase = require('../Lib/supabase'); // keep path/casing exactly as in repo
   supabase = getSupabase();
 } catch (e) {
   console.warn('Supabase client not loaded (continuing without DB insert).');
 }
 
-// --- Mail transport (SMTP) ---
-// Set these in your server env (or hosting provider’s dashboard):
-// SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_TO, MAIL_FROM (optional)
-const {
-  SMTP_HOST,
-  SMTP_PORT,
-  SMTP_USER,
-  SMTP_PASS,
-  MAIL_TO,
-  MAIL_FROM,
-} = process.env;
-
-const smtpPort = Number(SMTP_PORT || 587);
-const mailer = nodemailer.createTransport({
-  host: SMTP_HOST,
-  port: smtpPort,
-  secure: smtpPort === 465, // true for 465, false for 587/25
-  auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
-});
-
-// Util to safely stringify meta
+// Safe pretty-print
 const pretty = (obj) => {
   try { return JSON.stringify(obj ?? {}, null, 2); }
   catch { return String(obj); }
 };
 
-// Table schema suggestion (if you keep Supabase insert):
+// Table (suggested)
 // create table if not exists feedback (
 //   id uuid primary key default gen_random_uuid(),
 //   message text not null,
@@ -64,7 +44,7 @@ router.post('/api/feedback', async (req, res) => {
       req.socket?.remoteAddress ||
       null;
 
-    // 1) (Optional) Save to Supabase
+    // 1) Optional: save to Supabase
     let savedId = null;
     if (supabase) {
       const { error, data } = await supabase
@@ -72,33 +52,59 @@ router.post('/api/feedback', async (req, res) => {
         .insert([{ message, meta, user_agent: userAgent, ip }])
         .select()
         .single();
-
-      if (error) {
-        console.error('Supabase insert error:', error);
-      } else {
-        savedId = data?.id || null;
-      }
+      if (error) console.error('Supabase insert error:', error);
+      else savedId = data?.id || null;
     }
 
-    // 2) Send email notification
-    // Pull email & page from meta if provided by the frontend
+    // 2) Email notification
+    // Read ENV FRESH on every request
+    const {
+      SMTP_HOST,
+      SMTP_PORT,
+      SMTP_USER,
+      SMTP_PASS,
+      MAIL_TO,
+      MAIL_FROM,
+    } = process.env;
+
+    // Minimal debug (non-sensitive)
+    console.log('ENV DEBUG (feedback)', {
+      has_SMTP_HOST: Boolean(SMTP_HOST),
+      smtp_port: Number(SMTP_PORT || 587),
+      has_SMTP_USER: Boolean(SMTP_USER),
+      has_SMTP_PASS: Boolean(SMTP_PASS),
+      has_MAIL_TO: Boolean(MAIL_TO),
+      has_MAIL_FROM: Boolean(MAIL_FROM),
+    });
+
     const reporterEmail = meta?.email || meta?.userEmail || null;
     const page = meta?.page || 'Unknown page';
-    const interval = meta?.interval ? ` | interval: ${meta.interval}` : '';
+    const intervalInfo = meta?.interval ? ` | interval: ${meta.interval}` : '';
     const maskedUser = meta?.user || 'Guest';
+
+    let emailed = false;
 
     if (!SMTP_HOST || !MAIL_TO) {
       console.warn('SMTP not configured (missing SMTP_HOST or MAIL_TO). Skipping email send.');
     } else {
+      // Build transporter NOW (uses current env)
+      const port = Number(SMTP_PORT || 587);
+      const transporter = nodemailer.createTransport({
+        host: SMTP_HOST,
+        port,
+        secure: port === 465, // true for 465, false for 587/25
+        auth: SMTP_USER && SMTP_PASS ? { user: SMTP_USER, pass: SMTP_PASS } : undefined,
+      });
+
       const fromAddr = MAIL_FROM || SMTP_USER || 'no-reply@sateratuning.com';
-      const subject = `New feedback from ${maskedUser} — ${page}${interval}`;
+      const subject = `New feedback from ${maskedUser} — ${page}${intervalInfo}`;
 
       const text = [
         `New feedback received:`,
         ``,
         `From:  ${maskedUser}${reporterEmail ? ` <${reporterEmail}>` : ''}`,
         `Page:  ${page}`,
-        interval ? `Info:  ${interval.replace(' | ', '')}` : '',
+        meta?.interval ? `Interval: ${meta.interval}` : '',
         `IP:    ${ip}`,
         `Agent: ${userAgent}`,
         ``,
@@ -109,9 +115,7 @@ router.post('/api/feedback', async (req, res) => {
         `${pretty(meta)}`,
         ``,
         savedId ? `DB Row ID: ${savedId}` : '',
-      ]
-        .filter(Boolean)
-        .join('\n');
+      ].filter(Boolean).join('\n');
 
       const html = `
         <div style="font-family:system-ui,Segoe UI,Arial,sans-serif;line-height:1.45">
@@ -119,7 +123,7 @@ router.post('/api/feedback', async (req, res) => {
           <table cellpadding="6" style="border-collapse:collapse;background:#f8f9fa;border:1px solid #e6e8eb">
             <tr><td><b>From</b></td><td>${maskedUser}${reporterEmail ? ` &lt;${reporterEmail}&gt;` : ''}</td></tr>
             <tr><td><b>Page</b></td><td>${page}</td></tr>
-            ${interval ? `<tr><td><b>Interval</b></td><td>${meta.interval}</td></tr>` : ''}
+            ${meta?.interval ? `<tr><td><b>Interval</b></td><td>${meta.interval}</td></tr>` : ''}
             <tr><td><b>IP</b></td><td>${ip || ''}</td></tr>
             <tr><td><b>User Agent</b></td><td>${userAgent || ''}</td></tr>
             ${savedId ? `<tr><td><b>DB Row ID</b></td><td>${savedId}</td></tr>` : ''}
@@ -131,17 +135,23 @@ router.post('/api/feedback', async (req, res) => {
         </div>
       `;
 
-      await mailer.sendMail({
-        from: fromAddr,
-        to: MAIL_TO,
-        subject,
-        text,
-        html,
-        replyTo: reporterEmail || undefined,
-      });
+      try {
+        await transporter.sendMail({
+          from: fromAddr,
+          to: MAIL_TO,
+          subject,
+          text,
+          html,
+          replyTo: reporterEmail || undefined,
+        });
+        emailed = true;
+      } catch (err) {
+        // Show real SMTP reason in Render logs
+        console.error('SMTP sendMail error:', err && (err.response || err.message || err));
+      }
     }
 
-    return res.json({ ok: true, id: savedId, emailed: Boolean(SMTP_HOST && MAIL_TO) });
+    return res.json({ ok: true, id: savedId, emailed });
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'Server error.' });
