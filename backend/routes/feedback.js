@@ -159,18 +159,29 @@ router.post('/api/feedback', async (req, res) => {
 });
 
 
-// Debug route to check env vars
-router.get('/api/env-check', (req, res) => {
+// Super‑debug: show how many env vars exist and a couple of safe examples
+router.get('/api/env-dump', (req, res) => {
+  const keys = Object.keys(process.env || {});
   res.json({
-    SMTP_HOST: process.env.SMTP_HOST || null,
-    SMTP_PORT: process.env.SMTP_PORT || null,
-    SMTP_USER: process.env.SMTP_USER || null,
-    SMTP_PASS: process.env.SMTP_PASS ? '(set)' : null,
-    MAIL_TO: process.env.MAIL_TO || null,
-    MAIL_FROM: process.env.MAIL_FROM || null,
-     TEST_ENV: process.env.TEST_ENV || null, // 👈 add this line
+    count: keys.length,
+    sample: {
+      NODE_ENV: process.env.NODE_ENV || null,
+      PORT: process.env.PORT || null,
+      PATH: process.env.PATH ? '(present)' : null,
+    },
+    // show if our keys exist
+    ourKeys: {
+      SMTP_HOST: process.env.SMTP_HOST ? '(set)' : null,
+      SMTP_PORT: process.env.SMTP_PORT || null,
+      SMTP_USER: process.env.SMTP_USER ? '(set)' : null,
+      SMTP_PASS: process.env.SMTP_PASS ? '(set)' : null,
+      MAIL_TO: process.env.MAIL_TO || null,
+      MAIL_FROM: process.env.MAIL_FROM || null,
+      TEST_ENV: process.env.TEST_ENV || null,
+    },
   });
 });
+
 
 
 
