@@ -3,13 +3,16 @@ const express = require('express');
 const router = express.Router();
 const nodemailer = require('nodemailer');
 
+const ROUTE_VERSION = 'v4-with-ping-and-supabase-debug';
+console.log(`[feedback] route loaded: ${ROUTE_VERSION}`);
+
 // --- Supabase (optional) ---
 let supabase = null;
 try {
-  const getSupabase = require('../Lib/supabase'); // keep path/casing exactly as in repo
+  const getSupabase = require('../Lib/supabase'); // keep path/casing as in repo
   supabase = getSupabase();
 } catch (e) {
-  console.warn('Supabase client not loaded (continuing without DB insert).');
+  console.warn('[feedback] Supabase client not loaded (continuing without DB insert).');
 }
 
 // Safe pretty-print
@@ -18,16 +21,28 @@ const pretty = (obj) => {
   catch { return String(obj); }
 };
 
-// Table (suggested)
-// create table if not exists feedback (
-//   id uuid primary key default gen_random_uuid(),
-//   message text not null,
-//   meta jsonb,
-//   user_agent text,
-//   ip text,
-//   created_at timestamptz default now()
-// );
+// ---------- Quick health check ----------
+router.get('/api/feedback/ping', (req, res) => {
+  const {
+    SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, MAIL_TO, MAIL_FROM
+  } = process.env;
 
+  res.json({
+    ok: true,
+    route: 'feedback',
+    version: ROUTE_VERSION,
+    env: {
+      has_SMTP_HOST: Boolean(SMTP_HOST),
+      smtp_port: Number(SMTP_PORT || 587),
+      has_SMTP_USER: Boolean(SMTP_USER),
+      has_SMTP_PASS: Boolean(SMTP_PASS),
+      has_MAIL_TO: Boolean(MAIL_TO),
+      has_MAIL_FROM: Boolean(MAIL_FROM),
+    }
+  });
+});
+
+// ---------- Feedback submit ----------
 router.post('/api/feedback', async (req, res) => {
   try {
     const { message, meta = {} } = req.body || {};
@@ -47,17 +62,31 @@ router.post('/api/feedback', async (req, res) => {
     // 1) Optional: save to Supabase
     let savedId = null;
     if (supabase) {
-      const { error, data } = await supabase
-        .from('feedback')
-        .insert([{ message, meta, user_agent: userAgent, ip }])
-        .select()
-        .single();
-      if (error) console.error('Supabase insert error:', error);
-      else savedId = data?.id || null;
+      try {
+        const { error, data } = await supabase
+          .from('feedback')
+          .insert([{ message, meta, user_agent: userAgent, ip }])
+          .select()
+          .single();
+
+        if (error) {
+          // Log full error object so we know exactly what's wrong
+          console.error('[feedback] Supabase insert error =>', {
+            message: error.message,
+            details: error.details,
+            hint: error.hint,
+            code: error.code,
+          });
+        } else {
+          savedId = data?.id || null;
+        }
+      } catch (dbErr) {
+        console.error('[feedback] Supabase insert threw =>', dbErr);
+      }
     }
 
     // 2) Email notification
-    // Read ENV FRESH on every request
+    // Read ENV fresh on every request
     const {
       SMTP_HOST,
       SMTP_PORT,
@@ -79,15 +108,14 @@ router.post('/api/feedback', async (req, res) => {
 
     const reporterEmail = meta?.email || meta?.userEmail || null;
     const page = meta?.page || 'Unknown page';
-    const intervalInfo = meta?.interval ? ` | interval: ${meta.interval}` : '';
     const maskedUser = meta?.user || 'Guest';
 
     let emailed = false;
 
     if (!SMTP_HOST || !MAIL_TO) {
-      console.warn('SMTP not configured (missing SMTP_HOST or MAIL_TO). Skipping email send.');
+      console.warn('[feedback] SMTP not configured (missing SMTP_HOST or MAIL_TO). Skipping email send.');
     } else {
-      // Build transporter NOW (uses current env)
+      // Build transporter now (uses current env)
       const port = Number(SMTP_PORT || 587);
       const transporter = nodemailer.createTransport({
         host: SMTP_HOST,
@@ -97,7 +125,12 @@ router.post('/api/feedback', async (req, res) => {
       });
 
       const fromAddr = MAIL_FROM || SMTP_USER || 'no-reply@sateratuning.com';
-      const subject = `New feedback from ${maskedUser} — ${page}${intervalInfo}`;
+      const subjectParts = [
+        'New feedback',
+        maskedUser ? `from ${maskedUser}` : '',
+        page ? `— ${page}` : ''
+      ].filter(Boolean);
+      const subject = subjectParts.join(' ');
 
       const text = [
         `New feedback received:`,
@@ -147,29 +180,29 @@ router.post('/api/feedback', async (req, res) => {
         emailed = true;
       } catch (err) {
         // Show real SMTP reason in Render logs
-        console.error('SMTP sendMail error:', err && (err.response || err.message || err));
+        console.error('[feedback] SMTP sendMail error:', err && (err.response || err.message || err));
       }
     }
 
     return res.json({ ok: true, id: savedId, emailed });
   } catch (e) {
-    console.error(e);
+    console.error('[feedback] handler error:', e);
     return res.status(500).json({ error: 'Server error.' });
   }
 });
 
-
-// Super‑debug: show how many env vars exist and a couple of safe examples
+// ---------- Extra env dump (safe) ----------
 router.get('/api/env-dump', (req, res) => {
   const keys = Object.keys(process.env || {});
   res.json({
+    ok: true,
+    version: ROUTE_VERSION,
     count: keys.length,
     sample: {
       NODE_ENV: process.env.NODE_ENV || null,
       PORT: process.env.PORT || null,
       PATH: process.env.PATH ? '(present)' : null,
     },
-    // show if our keys exist
     ourKeys: {
       SMTP_HOST: process.env.SMTP_HOST ? '(set)' : null,
       SMTP_PORT: process.env.SMTP_PORT || null,
@@ -181,9 +214,5 @@ router.get('/api/env-dump', (req, res) => {
     },
   });
 });
-
-
-
-
 
 module.exports = router;
