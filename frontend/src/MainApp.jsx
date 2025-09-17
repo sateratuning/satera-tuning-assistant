@@ -6,6 +6,7 @@ import {
   years, models, engines, injectors, mapSensors, throttles,
   powerAdders, transmissions, tireHeights, gearRatios, fuels
 } from './ui/options';
+import { deriveAdvice, SateraTone } from './ui/advice';
 
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
@@ -74,132 +75,6 @@ const styles = {
   list: { margin: '8px 0 0 0', paddingLeft: 18, lineHeight: 1.5, color: '#d9ffe0' }
 };
 
-/** Heuristic suggestion rules — v1: client-only, no extra API */
-const RULES = [
-  {
-    id: 'knock',
-    match: /(knock|kr|knock retard|timing pulled|detonation)/i,
-    title: 'Knock Retard Detected',
-    severity: 'high',
-    tips: [
-      'Verify fuel quality and octane; consider fresh 93/E85 if applicable.',
-      'Reduce spark advance in the affected RPM/load cells.',
-      'Check IATs; excessive heat can induce knock — inspect intake/IC/heat soak.',
-      'Inspect plugs (heat range & gap) and coil performance.',
-    ],
-  },
-  {
-    id: 'lean',
-    match: /(lean|afr.*(>|\bhigh\b)|lambda.*high|p0171|p0174|stft.*(>|high)|ltft.*(>|high))/i,
-    title: 'Lean Condition / High AFR',
-    severity: 'high',
-    tips: [
-      'Check for vacuum/boost leaks (couplers, PCV, brake booster lines).',
-      'Verify injector data (flow rate, offsets) and fuel pump capacity.',
-      'Log fuel pressure under load; ensure regulator and filter are healthy.',
-      'Dial in MAF/VE in the affected airflow ranges.',
-    ],
-  },
-  {
-    id: 'rich',
-    match: /(rich|afr.*(<|\blow\b)|lambda.*low)/i,
-    title: 'Rich Condition / Low AFR',
-    severity: 'med',
-    tips: [
-      'Confirm injector scaling and short pulse adder.',
-      'MAF/VE may be over-reporting; re-cal in those cells.',
-      'Check for leaking injector(s) or excessive fuel pressure.',
-    ],
-  },
-  {
-    id: 'iat',
-    match: /(iat|intake air temp|charge temp|heat soak)/i,
-    title: 'High Intake Air Temps',
-    severity: 'med',
-    tips: [
-      'Improve airflow/heat extraction; ensure fans/intercooler are working.',
-      'Consider lower IAT spark modifiers or reduce base timing at high IAT.',
-      'Verify closed hood heat soak vs. road airflow.',
-    ],
-  },
-  {
-    id: 'boost',
-    match: /(map.*kpa|boost|overboost|underboost|wastegate|bov)/i,
-    title: 'Boost / MAP Irregularities',
-    severity: 'med',
-    tips: [
-      'Pressure test charge system for leaks; inspect clamps/couplers.',
-      'Verify wastegate spring and duty; check BOV operation.',
-      'Confirm MAP sensor type/scaling matches tune.',
-    ],
-  },
-  {
-    id: 'fuel_press',
-    match: /(fuel pressure|rail pressure|low side|high side|hpfp|lpfp)/i,
-    title: 'Fuel Pressure Concerns',
-    severity: 'high',
-    tips: [
-      'Log commanded vs. actual pressure at WOT.',
-      'Replace clogged filter; inspect pump wiring/voltage drop.',
-      'Scale injectors correctly; reduce demand until pressure holds.',
-    ],
-  },
-  {
-    id: 'misfire',
-    match: /(misfire|p03\d\d|p0300|ignition)/i,
-    title: 'Misfires Detected',
-    severity: 'med',
-    tips: [
-      'Inspect plugs (condition, gap, heat range) and coils/boots.',
-      'Check for lean cylinders (fuel trims/cylinder balance).',
-      'Look for mechanical issues (compression/leakdown if persistent).',
-    ],
-  },
-  {
-    id: 'throttle',
-    match: /(throttle close|torque management|driver demand|airflow limit|throttle limit)/i,
-    title: 'Throttle Closure / Torque Limiting',
-    severity: 'low',
-    tips: [
-      'Increase driver demand limits and airflow limits in the affected regions.',
-      'Verify torque model & predicted torque; reduce over-reporting.',
-      'Check traction control or trans torque intervention.',
-    ],
-  },
-  {
-    id: 'idle',
-    match: /(idle.*hunt|stall|surge)/i,
-    title: 'Idle Instability',
-    severity: 'low',
-    tips: [
-      'Adjust base running airflow and proportional/integral terms.',
-      'Check for vacuum leaks and correct spark at idle.',
-      'Verify injector data at low pulse widths.',
-    ],
-  },
-];
-
-function deriveSuggestions(reviewText = '') {
-  const text = reviewText.toLowerCase();
-  const hits = RULES
-    .filter(r => r.match.test(text))
-    .map(r => ({ id: r.id, title: r.title, severity: r.severity, tips: r.tips }));
-  // If nothing matched, provide a gentle default
-  if (!hits.length && reviewText.trim()) {
-    return [{
-      id: 'general',
-      title: 'No Critical Flags Detected',
-      severity: 'low',
-      tips: [
-        'Consider fine-tuning spark in the most active cells to smooth transitions.',
-        'Verify trims are within ±5% in cruise and WOT target AFR is met.',
-        'Keep IATs in check for consistent repeatability.',
-      ],
-    }];
-  }
-  return hits;
-}
-
 export default function MainApp() {
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1100);
   useEffect(() => {
@@ -214,7 +89,7 @@ export default function MainApp() {
   });
   const [result, setResult] = useState('');
   const [status, setStatus] = useState('');
-  const suggestions = useMemo(() => deriveSuggestions(result), [result]);
+  const suggestions = useMemo(() => deriveAdvice(result), [result]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -236,7 +111,7 @@ export default function MainApp() {
       const res = await fetch(`${API_BASE}/ai-review`, { method: 'POST', body: data });
       if (!res.ok) throw new Error(`AI review failed (${res.status})`);
       const text = await res.text();
-      const [review/*, ai*/] = text.split('===SPLIT===');
+      const [review] = text.split('===SPLIT===');
       setResult((review || '').trim());
     } catch (e) {
       setResult(`❌ Error analyzing log. ${e.message || ''}`);
@@ -342,12 +217,14 @@ export default function MainApp() {
                 </div>
                 {suggestions.map(s => (
                   <div key={s.id} style={{ marginTop: 12 }}>
-                    <span style={styles.badge(s.severity)}>
-                      {s.severity === 'high' ? 'High Priority' : s.severity === 'med' ? 'Medium' : 'Info'}
-                    </span>
-                    <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.title}</strong>
+                    {SateraTone.showSeverityBadges && (
+                      <span style={styles.badge(s.severity)}>
+                        {s.severity === 'high' ? 'High Priority' : s.severity === 'med' ? 'Medium' : 'Info'}
+                      </span>
+                    )}
+                    <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.label}</strong>
                     <ul style={styles.list}>
-                      {s.tips.map((t, i) => <li key={i}>{t}</li>)}
+                      {s.bullets.map((t, i) => <li key={i}>{t}</li>)}
                     </ul>
                   </div>
                 ))}
