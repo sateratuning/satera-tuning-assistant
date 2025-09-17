@@ -26,6 +26,9 @@ const processLog = require('./routes/processLog');
 const trainerAI = require('./routes/trainerAI');
 const overlayRoutes = require('./routes/overlay');         // POST /api/overlay
 
+// NEW: style-guided prompt builder for AI reviews
+const { buildMessages } = require('./prompt');
+
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
 
@@ -210,7 +213,7 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     if (b40100) out.push(`🚀 Best 40–100 mph: ${b40100}s`);
     if (b60130) out.push(`🚀 Best 60–130 mph: ${b60130}s`);
 
-    // AI summary with reduced payload
+    // === Build concise observations for the model (true AI review) ===
     const reduced = parsed
       .filter((_, i) => i % 400 === 0)
       .map(row => ({
@@ -220,23 +223,50 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
       }))
       .filter(r => Number.isFinite(r.rpm) && Number.isFinite(r.airmass) && Number.isFinite(r.knock));
 
-    const userPrompt =
-      `You are a Gen 3 HEMI tuning assistant. Based on the table below (RPM, airmass, and knock), summarize where timing should be reduced. Only reduce timing where knock is detected. Return a concise, actionable summary with RPM ranges and approximate deltas.\n\n` +
-      JSON.stringify(reduced, null, 2);
+    const quickChecks = out.join('\n'); // collected quick metrics above
 
-    let aiOutput = 'AI summary unavailable.';
+    const observations = [
+      'Quick checks:',
+      quickChecks,
+      '',
+      'Reduced telemetry sample (rpm, airmass, knock):',
+      JSON.stringify(reduced.slice(0, 200), null, 2)
+    ].join('\n');
+
+    // Build style-guided few-shot prompt
+    const meta = {
+      year: req.body.year || '',
+      model: req.body.model || '',
+      engine: req.body.engine || '',
+      fuel: req.body.fuel || '',
+      power: req.body.power || '',
+      trans: req.body.trans || ''
+    };
+    const messages = buildMessages({ meta, observations });
+
+    // Call OpenAI for the final review in your voice
+    let finalReview = 'No output.';
     try {
-      const aiResponse = await openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: userPrompt }],
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
         temperature: 0.3,
+        messages
       });
-      aiOutput = aiResponse?.choices?.[0]?.message?.content?.trim() || aiOutput;
+      finalReview = completion.choices?.[0]?.message?.content?.trim() || finalReview;
     } catch (e) {
-      console.warn('AI summary failed:', e.message);
+      console.warn('AI review failed:', e.message);
+      // Fallback: show quick checks
+      finalReview = [
+        'Summary',
+        'Model unavailable. Showing quick checks only.',
+        '',
+        'Findings',
+        quickChecks
+      ].join('\n');
     }
 
-    res.send(`${out.join('\n')}===SPLIT===${aiOutput}`);
+    // Return ONLY the AI-written review (frontend handles plain text fine)
+    res.type('text/plain').send(finalReview);
   } catch (err) {
     console.error(err);
     res.status(500).send('Failed to analyze log.');
