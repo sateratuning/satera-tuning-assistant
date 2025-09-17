@@ -163,9 +163,19 @@ export default function MainApp() {
       <header style={styles.header}>
         <div>Satera Tuning — AI Log Review (BETA)</div>
         <div style={{ display:'flex', gap:10 }}>
-          <Link to="/log-comparison" style={{ color:'#000', textDecoration:'underline' }}>
-            Go to Log Comparison
-          </Link>
+          <Link
+  to="/ai-review"
+  style={{
+    ...styles.button,              // use the full green button style
+    textDecoration: 'none',
+    display: 'inline-block',
+    textAlign: 'center',
+    lineHeight: 'normal'
+  }}
+>
+  AI Log Review
+</Link>
+
         </div>
       </header>
 
