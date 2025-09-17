@@ -3,6 +3,8 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import './App.css';
+import { Link } from 'react-router-dom';
+
 
 // 📨 Feedback
 import FeedbackModal from './FeedbackModal';
@@ -670,13 +672,19 @@ export default function LogComparison() {
 
       {/* HEADER with sign-in buttons */}
       <header style={styles.header}>
-        <div>Satera Tuning — Log Comparison (BETA)</div>
+  <div>Satera Tuning — Log Comparison (BETA)</div>
 
-        <div style={styles.headerRight}>
-          <button className="feedback-btn" style={styles.smallBtn} onClick={openFeedback}>
-            Report a Bug / Send Feedback
-          </button>
-          {!user ? (
+  <div style={styles.headerRight}>
+    {/* 🔗 New link to AI Log Review */}
+    <Link to="/ai-review" style={{ ...styles.smallBtn, textDecoration: 'none', display: 'inline-block', textAlign: 'center', lineHeight: 'normal' }}>
+      AI Log Review
+    </Link>
+
+    <button className="feedback-btn" style={styles.smallBtn} onClick={openFeedback}>
+      Report a Bug / Send Feedback
+    </button>
+    {!user ? (
+
             <>
               <button style={styles.signInBtn} onClick={handleGoogleLogin}>Sign in with Google</button>
               <button
