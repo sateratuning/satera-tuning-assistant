@@ -676,9 +676,19 @@ export default function LogComparison() {
 
   <div style={styles.headerRight}>
     {/* 🔗 New link to AI Log Review */}
-    <Link to="/ai-review" style={{ ...styles.smallBtn, textDecoration: 'none', display: 'inline-block', textAlign: 'center', lineHeight: 'normal' }}>
-      AI Log Review
-    </Link>
+    <Link
+  to="/ai-review"
+  style={{
+    ...styles.button,              // use the full green button style
+    textDecoration: 'none',
+    display: 'inline-block',
+    textAlign: 'center',
+    lineHeight: 'normal'
+  }}
+>
+  AI Log Review
+</Link>
+
 
     <button className="feedback-btn" style={styles.smallBtn} onClick={openFeedback}>
       Report a Bug / Send Feedback
