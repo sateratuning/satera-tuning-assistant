@@ -1,6 +1,9 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 
+// Use same-origin API by default; allow override via REACT_APP_API_BASE
+const API_BASE = process.env.REACT_APP_API_BASE || '/api';
+
 const TrainerMode = () => {
   const [form, setForm] = useState({
     vin: '', calid: '', transCalid: '', transModel: '', year: '', model: '', engine: '', injectors: '', map: '',
@@ -53,18 +56,17 @@ const TrainerMode = () => {
     Object.entries(form).forEach(([key, value]) => formData.append(key, value));
     formData.append('beforeLog', beforeLog);
     formData.append('afterLog', afterLog);
-    formData.append('feedback', notes); // ✅ send the trainer notes as feedback
-
+    formData.append('feedback', notes);
 
     try {
-      const res = await axios.post('http://localhost:5000/trainer-ai', formData);
+      const res = await axios.post(`${API_BASE}/trainer-ai`, formData);
       const data = res.data;
       setAiSummary(data.aiSummary || '');
       setSparkChanges(data.sparkChanges || []);
       setTrainingEntry(data.trainingEntry || null);
       setStatus('✅ Upload complete.');
     } catch (err) {
-      console.error("❌ Upload error:", err);
+      console.error('❌ Upload error:', err);
       setStatus('❌ Upload failed.');
     }
   };
@@ -103,16 +105,24 @@ const TrainerMode = () => {
   const renderInput = (label, name) => (
     <div style={{ marginBottom: '12px' }}>
       <label>{label}</label>
-      <input name={name} value={form[name]} onChange={handleChange}
-        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }} />
+      <input
+        name={name}
+        value={form[name]}
+        onChange={handleChange}
+        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+      />
     </div>
   );
 
   const renderDropdown = (label, name, options) => (
     <div style={{ marginBottom: '12px' }}>
       <label>{label}</label>
-      <select name={name} value={form[name]} onChange={handleChange}
-        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}>
+      <select
+        name={name}
+        value={form[name]}
+        onChange={handleChange}
+        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+      >
         <option value="">Select...</option>
         {options.concat('Custom').map(opt => (
           <option key={opt} value={opt}>{opt}</option>
@@ -135,8 +145,12 @@ const TrainerMode = () => {
 
       <div style={{ marginBottom: '20px' }}>
         <label>Paste VCM Info</label>
-        <textarea onBlur={handleVCMPaste} placeholder="Paste copied VCM Editor info here"
-          rows="4" style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }} />
+        <textarea
+          onBlur={handleVCMPaste}
+          placeholder="Paste copied VCM Editor info here"
+          rows="4"
+          style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
+        />
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
@@ -160,30 +174,51 @@ const TrainerMode = () => {
 
         <div style={{ gridColumn: '1 / -1' }}>
           <label>Spark Table — Starting (Paste full 17x17 with axes)</label>
-          <textarea name="sparkTableStart" rows="6" value={form.sparkTableStart} onChange={handleChange}
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}></textarea>
+          <textarea
+            name="sparkTableStart"
+            rows="6"
+            value={form.sparkTableStart}
+            onChange={handleChange}
+            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
+          />
         </div>
 
         <div style={{ gridColumn: '1 / -1' }}>
           <label>Spark Table — Final (Paste full 17x17 with axes)</label>
-          <textarea name="sparkTableFinal" rows="6" value={form.sparkTableFinal} onChange={handleChange}
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}></textarea>
+          <textarea
+            name="sparkTableFinal"
+            rows="6"
+            value={form.sparkTableFinal}
+            onChange={handleChange}
+            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
+          />
         </div>
 
         <div>
           <label>Before Log (CSV)</label>
-          <input type="file" accept=".csv" onChange={e => setBeforeLog(e.target.files[0])}
-            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }} />
+          <input
+            type="file"
+            accept=".csv"
+            onChange={e => setBeforeLog(e.target.files[0])}
+            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }}
+          />
         </div>
 
         <div>
           <label>After Log (CSV)</label>
-          <input type="file" accept=".csv" onChange={e => setAfterLog(e.target.files[0])}
-            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }} />
+          <input
+            type="file"
+            accept=".csv"
+            onChange={e => setAfterLog(e.target.files[0])}
+            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }}
+          />
         </div>
 
         <div style={{ gridColumn: '1 / -1' }}>
-          <button type="submit" style={{ backgroundColor: '#00ff88', color: '#000', padding: '12px 20px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}>
+          <button
+            type="submit"
+            style={{ backgroundColor: '#00ff88', color: '#000', padding: '12px 20px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
+          >
             Upload Training Data
           </button>
         </div>
@@ -208,31 +243,32 @@ const TrainerMode = () => {
         </div>
       )}
 
-      {sparkChanges.length > 0 && (
-        <div style={{ marginTop: '2rem' }}>
-          <h2 style={{ color: '#00FF90', marginBottom: '10px' }}>🔥 Spark Table Changes</h2>
-          <table style={{ width: '100%', borderCollapse: 'collapse', background: '#222', color: '#fff' }}>
-            <thead>
-              <tr>
-                <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>RPM</th>
-                <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Airmass</th>
-                <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Before</th>
-                <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>After</th>
-              </tr>
-            </thead>
-            <tbody>
-              {sparkChanges.map((row, idx) => (
-                <tr key={idx}>
-                  <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.rpm}</td>
-                  <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.airmass}</td>
-                  <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.before}</td>
-                  <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.after}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+     {sparkChanges.length > 0 && (
+  <div style={{ marginTop: '2rem' }}>
+    <h2 style={{ color: '#00FF90', marginBottom: '10px' }}>🔥 Spark Table Changes</h2>
+    <table style={{ width: '100%', borderCollapse: 'collapse', background: '#222', color: '#fff' }}>
+      <thead>
+        <tr>
+          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>RPM</th>
+          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Airmass</th>
+          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Before</th>
+          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>After</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sparkChanges.map((row, idx) => (
+          <tr key={idx}>
+            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.rpm}</td>
+            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.airmass}</td>
+            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.before}</td>
+            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.after}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+)}
+
 
       {trainingEntry && (
         <div style={{ marginTop: '2rem' }}>
@@ -245,55 +281,53 @@ const TrainerMode = () => {
             style={{ width: '100%', marginTop: '10px', padding: '12px', backgroundColor: '#222', color: '#fff', borderRadius: '6px' }}
           />
           <button
-  onClick={async () => {
-    try {
-      const res = await axios.post('http://localhost:5000/update-feedback', {
-        id: trainingEntry?.id,
-        feedback: notes
-      });
-      alert('✅ Feedback submitted!');
-    } catch (err) {
-      console.error('❌ Feedback submit failed:', err);
-      alert('❌ Feedback failed to submit.');
-    }
-  }}
-  style={{
-    marginTop: '10px',
-    backgroundColor: '#ffaa00',
-    padding: '10px 16px',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    color: '#000'
-  }}
->
-  💬 Submit Feedback
-</button>
-
+            onClick={async () => {
+              try {
+                await axios.post(`${API_BASE}/update-feedback`, {
+                  id: trainingEntry?.id,
+                  feedback: notes
+                });
+                alert('✅ Feedback submitted!');
+              } catch (err) {
+                console.error('❌ Feedback submit failed:', err);
+                alert('❌ Feedback failed to submit.');
+              }
+            }}
+            style={{
+              marginTop: '10px',
+              backgroundColor: '#ffaa00',
+              padding: '10px 16px',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              color: '#000'
+            }}
+          >
+            💬 Submit Feedback
+          </button>
 
           <button
-  onClick={async () => {
-    try {
-      const res = await axios.post('http://localhost:5000/fine-tune-now');
-      alert(`✅ Fine-tune started. Job ID: ${res.data.job.id}`);
-    } catch (err) {
-      console.error('❌ Fine-tune failed:', err);
-      alert('❌ Fine-tune failed.');
-    }
-  }}
-  style={{
-    marginTop: '10px',
-    backgroundColor: '#ff00cc',
-    padding: '10px 16px',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    color: '#000'
-  }}
->
-  🤖 Fine-Tune GPT-4 Now
-</button>
-
+            onClick={async () => {
+              try {
+                const res = await axios.post(`${API_BASE}/fine-tune-now`);
+                alert(`✅ Fine-tune started. Job ID: ${res.data.job.id}`);
+              } catch (err) {
+                console.error('❌ Fine-tune failed:', err);
+                alert('❌ Fine-tune failed.');
+              }
+            }}
+            style={{
+              marginTop: '10px',
+              backgroundColor: '#ff00cc',
+              padding: '10px 16px',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              color: '#000'
+            }}
+          >
+            🤖 Fine-Tune GPT-4 Now
+          </button>
         </div>
       )}
 

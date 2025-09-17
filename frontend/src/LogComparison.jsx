@@ -21,7 +21,7 @@ import {
   sendPasswordResetEmail,
 } from 'firebase/auth';
 
-const API_BASE = process.env.REACT_APP_API_BASE || ''; // same-origin proxy or full http://localhost:5000
+const API_BASE = process.env.REACT_APP_API_BASE || ''; // same-// …origin proxy or full /api
 
 // ===== dropdown data =====
 const years = Array.from({ length: 21 }, (_, i) => String(2005 + i)); // 2005–2025
@@ -271,6 +271,37 @@ export default function LogComparison() {
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: ''
   });
 
+  // ====== NEW: Log Review state ======
+  const [reviewLoading, setReviewLoading] = useState(false);
+  const [reviewText, setReviewText] = useState('');
+  const [reviewError, setReviewError] = useState('');
+
+  // ====== NEW: review runner (POST /review-log with multipart form) ======
+  const runLogReview = async (file) => {
+    if (!file) return;
+    setReviewLoading(true);
+    setReviewText('');
+    setReviewError('');
+    try {
+      const form = new FormData();
+      form.append('log', file); // backend expects "log"
+      const res = await fetch(`${API_BASE}/review-log`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(t || `Review failed with status ${res.status}`);
+      }
+      const text = await res.text(); // endpoint returns plain text summary
+      setReviewText(text || 'No output returned.');
+    } catch (err) {
+      setReviewError(err?.message || 'Log review failed.');
+    } finally {
+      setReviewLoading(false);
+    }
+  };
+
   const parseCSV = (raw) => {
     const rows = raw.trim().split('\n');
     if (rows.length < 20) return null;
@@ -303,6 +334,10 @@ export default function LogComparison() {
       const parsed = parseCSV(reader.result);
       setParsed(parsed);
       setStatus(parsed ? 'CSV parsed.' : 'Failed to parse CSV (check format).');
+      // ====== NEW: auto run review when primary log (Log 1) is uploaded ======
+      if (setParsed === setLog1 && file) {
+        runLogReview(file);
+      }
     };
     reader.readAsText(file);
   };
@@ -439,20 +474,20 @@ export default function LogComparison() {
     let xEnd = 0;
 
     if (r1) {
-      datasets.push({ label: 'Log 1', data: r1.data, borderColor: '#00ff88', tension: 0.1, parsing: false });
+      datasets.push({ label: 'Log 1', data: r1.data, tension: 0.1, parsing: false });
       datasets.push({
         label: `${startMPH}–${endMPH}: ${r1.duration}s`,
         data: [{ x: r1.data.at(-1).x, y: r1.data.at(-1).y }],
-        pointBackgroundColor: '#ffff00', pointRadius: 6, pointStyle: 'triangle', showLine: false
+        pointRadius: 6, pointStyle: 'triangle', showLine: false
       });
       xEnd = Math.max(xEnd, r1.duration);
     }
     if (r2) {
-      datasets.push({ label: 'Log 2', data: r2.data, borderColor: '#ff00aa', tension: 0.1, parsing: false });
+      datasets.push({ label: 'Log 2', data: r2.data, tension: 0.1, parsing: false });
       datasets.push({
         label: `${startMPH}–${endMPH} (L2): ${r2.duration}s`,
         data: [{ x: r2.data.at(-1).x, y: r2.data.at(-1).y }],
-        pointBackgroundColor: '#ffff00', pointRadius: 6, pointStyle: 'triangle', showLine: false
+        pointRadius: 6, pointStyle: 'triangle', showLine: false
       });
       xEnd = Math.max(xEnd, r2.duration);
     }
@@ -462,7 +497,6 @@ export default function LogComparison() {
       datasets.push({
         label: overlayToUse.label,
         data: overlayToUse.data || [],
-        borderColor: '#ffd700',
         borderDash: [6, 4],
         tension: 0.1,
         parsing: false
@@ -842,7 +876,7 @@ export default function LogComparison() {
             </div>
           </aside>
 
-          {/* CENTER: Graph */}
+          {/* CENTER: Graph + Log Review Panel */}
           <div style={{ display: 'grid', gap: 16 }}>
             <div style={{ ...styles.card }}>
               <div style={styles.titleWrap}>
@@ -863,6 +897,49 @@ export default function LogComparison() {
                   {summary['Log 2'] && <>🚀 {interval} (L2): {summary['Log 2']}s</>}
                 </div>
               )}
+
+              {/* ===== NEW: Log Review Panel (Primary Log) ===== */}
+              <div style={{ marginTop: 16, background: '#0f130f', border: '1px solid #1e2b1e', borderRadius: 10, padding: 12, color: '#d9ffe0' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <h3 style={{ margin: 0 }}>Log Review (Primary Log)</h3>
+                  <button
+                    onClick={() => log1File && runLogReview(log1File)}
+                    style={styles.smallBtn}
+                    disabled={!log1File || reviewLoading}
+                    title={!log1File ? 'Upload your primary log first' : 'Re-run review'}
+                  >
+                    {reviewLoading ? 'Reviewing…' : 'Re-run Review'}
+                  </button>
+                </div>
+
+                {!log1File && (
+                  <p style={{ opacity: 0.8, marginTop: 8 }}>
+                    Upload your <b>Log 1</b> CSV to generate a review summary here.
+                  </p>
+                )}
+
+                {reviewError && (
+                  <p style={{ color: '#ff9a9a', marginTop: 8 }}>
+                    {reviewError}
+                  </p>
+                )}
+
+                {!!reviewText && (
+                  <pre style={{
+                    marginTop: 12,
+                    whiteSpace: 'pre-wrap',
+                    lineHeight: 1.4,
+                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+                    background: '#0b0f0b',
+                    border: '1px solid #142014',
+                    borderRadius: 8,
+                    padding: 12
+                  }}>
+                    {reviewText}
+                  </pre>
+                )}
+              </div>
+              {/* ===== /Log Review Panel ===== */}
             </div>
           </div>
 

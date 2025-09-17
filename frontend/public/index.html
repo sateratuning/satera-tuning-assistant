@@ -1,6 +1,25 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
+
+<script>
+  (function () {
+    var orig = window.fetch ? window.fetch.bind(window) : null;
+    window.fetch = function (input, init) {
+      var url = typeof input === 'string' ? input : (input && input.url ? input.url : '');
+      if (/^https?:\/\/localhost:5000/i.test(url)) {
+        var newUrl = url.replace(/^https?:\/\/localhost:5000/i, '');
+        console.warn('[PreloadShim] Rewriting localhost -> same-origin:', url, '=>', newUrl);
+        return (orig || fetch)(newUrl, init);
+      }
+      return (orig || fetch)(input, init);
+    };
+    console.log('[PreloadShim] Active');
+  })();
+</script>
+
+
+
     <meta charset="utf-8" />
     <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
