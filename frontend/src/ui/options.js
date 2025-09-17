@@ -1,6 +1,6 @@
 // frontend/src/ui/options.js
 export const years         = Array.from({ length: 21 }, (_, i) => String(2005 + i)); // 2005–2025
-export const models        = ['Charger','Challenger','Durango SRT','Jeep SRT8','Trackhawk','Ram TRX','300C SRT8','Magnum SRT8','Other'];
+export const models        = ['Charger','Challenger','Durango','Trackhawk','TRX','300','Magnum','Other'];
 export const engines       = ['Pre-eagle 5.7L','Eagle 5.7L','6.1L','6.4L (392)','Hellcat 6.2L','HO Hellcat 6.2L','Other'];
 export const injectors     = ['Stock','ID1050x','ID1300x','ID1700x','Other'];
 export const mapSensors    = ['OEM 1 bar','2 bar','3 bar','Other'];
