@@ -2,16 +2,17 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import './App.css';
 import { Link } from 'react-router-dom';
+import {
+  years, models, engines, injectors, mapSensors, throttles,
+  powerAdders, transmissions, tireHeights, gearRatios, fuels
+} from './ui/options';
 
 /* Match LogComparison’s API_BASE behavior:
    - Use REACT_APP_API_BASE if set (e.g., https://satera-backend.onrender.com)
    - Or leave empty to rely on same-origin/proxy in local dev */
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
-import {
-  years, models, engines, injectors, mapSensors, throttles,
-  powerAdders, transmissions, tireHeights, gearRatios, fuels
-} from './ui/options';
+
 
 
 /* ===== styles (lifted from LogComparison, trimmed for this page) ===== */
