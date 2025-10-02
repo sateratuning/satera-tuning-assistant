@@ -299,7 +299,7 @@ export default function LogComparison() {
     }
   };
 
-  const parseCSV = (raw) => {
+ const parseCSV = (raw) => {
     const rows = raw.split(/\r?\n/).map(r => r.trim());
     if (!rows.length) return null;
 
@@ -309,7 +309,7 @@ export default function LogComparison() {
 
     const headers = rows[headerRowIndex].split(',').map(h => h.trim());
 
-    // Skip: header, units row, 2 more spacer rows → start of data
+    // Skip: header, units row, 2 spacer rows
     const dataStart = headerRowIndex + 4;
     const dataRows = rows.slice(dataStart);
 
@@ -327,6 +327,23 @@ export default function LogComparison() {
       if (Number.isFinite(s) && Number.isFinite(t)) { speed.push(s); time.push(t); }
     }
     return (speed.length && time.length) ? { speed, time } : null;
+  };
+
+  const handleFileChange = (e, setParsed, setFileRef) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileRef(file);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseCSV(reader.result);
+      setParsed(parsed);
+      setStatus(parsed ? 'CSV parsed.' : 'Failed to parse CSV (check format).');
+      // ====== NEW: auto run review when primary log (Log 1) is uploaded ======
+      if (setParsed === setLog1 && file) {
+        runLogReview(file);
+      }
+    };
+    reader.readAsText(file);
   };
 
   const ranges = useMemo(() => ({
