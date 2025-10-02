@@ -273,7 +273,7 @@ export default function LogComparison() {
   const [reviewText, setReviewText] = useState('');
   const [reviewError, setReviewError] = useState('');
 
-  // ====== NEW: review runner (POST /review-log with multipart form) ======
+  // ====== UPDATED: review runner (POST /ai-review with multipart form, split on ===SPLIT===) ======
   const runLogReview = async (file) => {
     if (!file) return;
     setReviewLoading(true);
@@ -282,7 +282,7 @@ export default function LogComparison() {
     try {
       const form = new FormData();
       form.append('log', file); // backend expects "log"
-      const res = await fetch(`${API_BASE}/review-log`, {
+      const res = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
         body: form,
       });
@@ -290,8 +290,10 @@ export default function LogComparison() {
         const t = await res.text();
         throw new Error(t || `Review failed with status ${res.status}`);
       }
-      const text = await res.text(); // endpoint returns plain text summary
-      setReviewText(text || 'No output returned.');
+      const text = await res.text(); // backend returns "quickChecks\n===SPLIT===\naiReview"
+      const [quickChecks, aiPart] = text.split('===SPLIT===');
+      const combined = (quickChecks || '').trim() + (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
+      setReviewText(combined || 'No output returned.');
     } catch (err) {
       setReviewError(err?.message || 'Log review failed.');
     } finally {
@@ -299,7 +301,7 @@ export default function LogComparison() {
     }
   };
 
- const parseCSV = (raw) => {
+  const parseCSV = (raw) => {
     const rows = raw.split(/\r?\n/).map(r => r.trim());
     if (!rows.length) return null;
 
@@ -338,7 +340,7 @@ export default function LogComparison() {
       const parsed = parseCSV(reader.result);
       setParsed(parsed);
       setStatus(parsed ? 'CSV parsed.' : 'Failed to parse CSV (check format).');
-      // ====== NEW: auto run review when primary log (Log 1) is uploaded ======
+      // Auto-run AI Review when Log 1 selected
       if (setParsed === setLog1 && file) {
         runLogReview(file);
       }
@@ -918,7 +920,7 @@ export default function LogComparison() {
                 </div>
               )}
 
-              {/* ===== NEW: Log Review Panel (Primary Log) ===== */}
+              {/* ===== Log Review Panel (Primary Log) ===== */}
               <div style={{ marginTop: 16, background: '#0f130f', border: '1px solid #1e2b1e', borderRadius: 10, padding: 12, color: '#d9ffe0' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                   <h3 style={{ margin: 0 }}>Log Review (Primary Log)</h3>
