@@ -59,15 +59,22 @@ app.use('/', overlayRoutes);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /**
- * Shared CSV analyzer (quick checks only)
+ * Shared CSV analyzer (with header auto-detect)
  */
 function analyzeCsvContent(content) {
-  const lines = content.split('\n').map(l => l.trimEnd());
-  const after15 = lines.slice(15);
-  if (after15.length < 5) throw new Error('CSV appears incomplete.');
+  const lines = content.split(/\r?\n/).map(l => l.trim());
+  if (!lines.length) throw new Error('CSV file empty');
 
-  const headers = (after15[0] || '').split(',').map(h => h.trim());
-  const dataRows = after15.slice(4).filter(row => row && row.includes(','));
+  // 🔎 Find header row (must start with "Offset")
+  const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) throw new Error('Could not locate header row');
+
+  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+
+  // Skip header + units + 2 spacer rows
+  const dataStart = headerRowIndex + 4;
+  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(','));
+
   const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
 
   const parsed = dataRows.map(row => {
@@ -76,10 +83,9 @@ function analyzeCsvContent(content) {
     headers.forEach((h, i) => { obj[h] = toNum(values[i]); });
     return obj;
   });
+
   if (!parsed.length) throw new Error('No data rows found in CSV.');
 
-  const hasCol = (name) => headers.includes(name);
-  const getColumn = (name) => (hasCol(name) ? parsed.map(r => r[name]).filter(Number.isFinite) : []);
   const safeMax = (arr) => (arr.length ? Math.max(...arr) : undefined);
   const safeMin = (arr) => (arr.length ? Math.min(...arr) : undefined);
   const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined);
@@ -87,49 +93,49 @@ function analyzeCsvContent(content) {
   const out = [];
 
   // Knock
-  const knockValues = getColumn('Total Knock Retard').map(v => Math.abs(v));
+  const knockValues = parsed.map(r => r['Total Knock Retard']).filter(Number.isFinite).map(v => Math.abs(v));
   const peakKnock = safeMax(knockValues);
   if (peakKnock !== undefined) out.push(peakKnock > 0 ? `⚠️ Knock detected: up to ${peakKnock.toFixed(1)}°` : '✅ No knock detected.');
-  else out.push('ℹ️ Knock column not found.');
 
   // WOT
-  const accel = getColumn('Accelerator Position D (SAE)');
+  const accel = parsed.map(r => r['Accelerator Position D (SAE)']).filter(Number.isFinite);
   const wotRows = accel.length ? parsed.filter(r => (r['Accelerator Position D (SAE)'] ?? 0) > 86) : [];
-  const timingCol = 'Timing Advance (SAE)';
   const rpmCol = 'Engine RPM (SAE)';
+  const timingCol = 'Timing Advance (SAE)';
   const mapCol = 'Intake Manifold Absolute Pressure (SAE)';
 
   if (wotRows.length) {
     const peakTimingRow = wotRows.reduce((best, r) => ((r[timingCol] ?? -Infinity) > (best[timingCol] ?? -Infinity) ? r : best), wotRows[0]);
     const peakTiming = peakTimingRow[timingCol], rpmAtPeak = peakTimingRow[rpmCol];
-    if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak)) out.push(`📈 Peak timing under WOT: ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
+    if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak))
+      out.push(`📈 Peak timing under WOT: ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
+
     const mapWOT = wotRows.map(r => r[mapCol]).filter(Number.isFinite);
-    if (mapWOT.length) out.push(`🌡 MAP under WOT: ${safeMin(mapWOT).toFixed(1)} – ${safeMax(mapWOT).toFixed(1)} kPa`);
+    if (mapWOT.length)
+      out.push(`🌡 MAP under WOT: ${safeMin(mapWOT).toFixed(1)} – ${safeMax(mapWOT).toFixed(1)} kPa`);
   } else {
     out.push('ℹ️ No WOT conditions found.');
   }
 
   // Knock sensors
   ['Knock Sensor 1', 'Knock Sensor 2'].forEach(s => {
-    const volts = getColumn(s);
-    if (!volts.length) out.push(`ℹ️ ${s} not found.`);
-    else {
+    const volts = parsed.map(r => r[s]).filter(Number.isFinite);
+    if (volts.length) {
       const peak = safeMax(volts);
       out.push(peak > 3.0 ? `⚠️ ${s} exceeded 3.0V threshold (Peak: ${peak.toFixed(2)}V)` : `✅ ${s} within safe range (Peak: ${peak.toFixed(2)}V)`);
     }
   });
 
-  // Fuel trims variance
-  const lt1 = getColumn('Long Term Fuel Trim Bank 1 (SAE)');
-  const lt2 = getColumn('Long Term Fuel Trim Bank 2 (SAE)');
+  // Fuel trims
+  const lt1 = parsed.map(r => r['Long Term Fuel Trim Bank 1 (SAE)']).filter(Number.isFinite);
+  const lt2 = parsed.map(r => r['Long Term Fuel Trim Bank 2 (SAE)']).filter(Number.isFinite);
   if (lt1.length && lt2.length) {
     const variance = lt1.map((v, i) => (Number.isFinite(v) && Number.isFinite(lt2[i])) ? Math.abs(v - lt2[i]) : undefined).filter(Number.isFinite);
-    out.push(variance.some(v => v > 10) ? '⚠️ Fuel trim variance > 10% between banks' : '✅ Fuel trim variance within 10%');
+    if (variance.some(v => v > 10)) out.push('⚠️ Fuel trim variance > 10% between banks');
   }
 
-  // Avg fuel correction
-  const st1 = getColumn('Short Term Fuel Trim Bank 1 (SAE)');
-  const st2 = getColumn('Short Term Fuel Trim Bank 2 (SAE)');
+  const st1 = parsed.map(r => r['Short Term Fuel Trim Bank 1 (SAE)']).filter(Number.isFinite);
+  const st2 = parsed.map(r => r['Short Term Fuel Trim Bank 2 (SAE)']).filter(Number.isFinite);
   if (st1.length && lt1.length) {
     const combo1 = st1.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt1[i]) ? lt1[i] : 0)).filter(Number.isFinite);
     const a1 = avg(combo1); if (a1 !== undefined) out.push(`📊 Avg fuel correction (Bank 1): ${a1.toFixed(1)}%`);
@@ -140,56 +146,19 @@ function analyzeCsvContent(content) {
   }
 
   // Oil pressure
-  const rpmSeries = getColumn(rpmCol);
-  const oilSeries = getColumn('Engine Oil Pressure');
-  if (rpmSeries.length && oilSeries.length) {
-    const oilRows = parsed.filter(r => Number.isFinite(r[rpmCol]) && r[rpmCol] > 500);
-    const oilLow = oilRows.some(r => Number.isFinite(r['Engine Oil Pressure']) && r['Engine Oil Pressure'] < 20);
-    out.push(oilLow ? '⚠️ Oil pressure dropped below 20 psi.' : '✅ Oil pressure within safe range.');
+  const oil = parsed.map(r => r['Engine Oil Pressure']).filter(Number.isFinite);
+  if (oil.length && parsed.some(r => (r[rpmCol] ?? 0) > 500 && r['Engine Oil Pressure'] < 20)) {
+    out.push('⚠️ Oil pressure dropped below 20 psi.');
   }
 
   // Coolant
-  const ect = getColumn('Engine Coolant Temp (SAE)');
-  if (ect.length) out.push(ect.some(v => v > 230) ? '⚠️ Coolant temp exceeded 230°F.' : '✅ Coolant temp within safe limits.');
+  const ect = parsed.map(r => r['Engine Coolant Temp (SAE)']).filter(Number.isFinite);
+  if (ect.length && ect.some(v => v > 230)) out.push('⚠️ Coolant temp exceeded 230°F.');
 
-  // Misfires
-  const misfireReport = [];
-  const firstRow = parsed[0] || {};
-  Object.keys(firstRow).forEach(k => {
-    if (k.includes('Misfire Current Cylinder')) {
-      const cyl = k.split('#')[1] || '?';
-      const vals = getColumn(k);
-      if (vals.length) {
-        let count = 0;
-        for (let i = 1; i < vals.length; i++) {
-          const d = vals[i] - vals[i - 1];
-          if (Number.isFinite(d) && d > 0 && d < 1000) count += d;
-        }
-        if (count > 0) misfireReport.push(`- Cylinder ${cyl}: ${count} misfires`);
-      }
-    }
-  });
-  out.push(misfireReport.length ? `🚨 Misfires detected:\n${misfireReport.join('\n')}` : '✅ No misfires detected.');
-
-  return { parsed, out };
+  return { headers, parsed, out };
 }
 
-// -------- REVIEW-LOG (non-AI quick checks) --------
-app.post(['/review-log', '/api/review-log'], upload.single('log'), (req, res) => {
-  try {
-    if (!req.file) return res.status(400).send('No CSV file uploaded.');
-    const content = fs.readFileSync(req.file.path, 'utf8');
-    const { out } = analyzeCsvContent(content);
-    res.type('text/plain').send(out.join('\n'));
-  } catch (err) {
-    console.error(err);
-    res.status(500).send('Failed to analyze log.');
-  } finally {
-    if (req.file?.path && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
-  }
-});
-
-// -------- AI REVIEW (already in place) --------
+// -------- AI REVIEW (CSV upload) --------
 app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res) => {
   let filePath;
   try {
@@ -197,10 +166,9 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     filePath = req.file.path;
     const content = fs.readFileSync(filePath, 'utf8');
 
-    const { parsed, out } = analyzeCsvContent(content);
+    const { headers, parsed, out } = analyzeCsvContent(content);
     const quickChecks = out.join('\n');
 
-    // Reduced telemetry sample
     const rpmCol = 'Engine RPM (SAE)';
     const reduced = parsed
       .filter((_, i) => i % 400 === 0)
@@ -242,7 +210,6 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
       finalReview = 'Model unavailable. Showing quick checks only.';
     }
 
-    // Keep format the same as before
     res.type('text/plain').send(`${quickChecks}\n===SPLIT===\n${finalReview}`);
   } catch (err) {
     console.error(err);
