@@ -300,10 +300,19 @@ export default function LogComparison() {
   };
 
   const parseCSV = (raw) => {
-    const rows = raw.trim().split('\n');
-    if (rows.length < 20) return null;
-    const headers = rows[15].split(',').map(h => h.trim());
-    const dataRows = rows.slice(19);
+    const rows = raw.split(/\r?\n/).map(r => r.trim());
+    if (!rows.length) return null;
+
+    // Find header row with "Offset"
+    const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
+    if (headerRowIndex === -1) return null;
+
+    const headers = rows[headerRowIndex].split(',').map(h => h.trim());
+
+    // Skip: header, units row, 2 more spacer rows → start of data
+    const dataStart = headerRowIndex + 4;
+    const dataRows = rows.slice(dataStart);
+
     const col = (name) => headers.findIndex(h => h === name);
     const speedIndex = col('Vehicle Speed (SAE)');
     const timeIndex  = col('Offset');
@@ -311,32 +320,13 @@ export default function LogComparison() {
 
     const speed = [], time = [];
     for (let row of dataRows) {
-      if (!row || !row.includes(',')) continue;
+      if (!row.includes(',')) continue;
       const cols = row.split(',');
       const s = parseFloat(cols[speedIndex]);
       const t = parseFloat(cols[timeIndex]);
-      if (Number.isFinite(s) && Number.isFinite(t)) {
-        speed.push(s); time.push(t);
-      }
+      if (Number.isFinite(s) && Number.isFinite(t)) { speed.push(s); time.push(t); }
     }
     return (speed.length && time.length) ? { speed, time } : null;
-  };
-
-  const handleFileChange = (e, setParsed, setFileRef) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileRef(file);
-    const reader = new FileReader();
-    reader.onload = () => {
-      const parsed = parseCSV(reader.result);
-      setParsed(parsed);
-      setStatus(parsed ? 'CSV parsed.' : 'Failed to parse CSV (check format).');
-      // ====== NEW: auto run review when primary log (Log 1) is uploaded ======
-      if (setParsed === setLog1 && file) {
-        runLogReview(file);
-      }
-    };
-    reader.readAsText(file);
   };
 
   const ranges = useMemo(() => ({
