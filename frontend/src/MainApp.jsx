@@ -65,7 +65,7 @@ const styles = {
   },
 };
 
-// --- CSV parser ---
+// --- CSV parser with WOT-only trimming ---
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
@@ -80,19 +80,56 @@ function parseCSV(raw) {
   const col = (name) => headers.findIndex(h => h === name);
   const speedIndex = col('Vehicle Speed (SAE)');
   const timeIndex = col('Offset');
+  const accelIndex = col('Accelerator Position D (SAE)');
+
   if (speedIndex === -1 || timeIndex === -1) return null;
 
-  const speed = [], time = [];
+  const allRows = [];
   for (let row of dataRows) {
     if (!row.includes(',')) continue;
     const cols = row.split(',');
     const s = parseFloat(cols[speedIndex]);
     const t = parseFloat(cols[timeIndex]);
+    const a = accelIndex >= 0 ? parseFloat(cols[accelIndex]) : 0;
     if (Number.isFinite(s) && Number.isFinite(t)) {
-      speed.push(s); time.push(t);
+      allRows.push({ t, s, a });
     }
   }
-  return (speed.length && time.length) ? { speed, time } : null;
+  if (!allRows.length) return null;
+
+  // Group into WOT segments
+  let segments = [];
+  let current = [];
+  for (let pt of allRows) {
+    if (pt.a > 86) {
+      current.push(pt);
+    } else {
+      if (current.length) {
+        segments.push(current);
+        current = [];
+      }
+    }
+  }
+  if (current.length) segments.push(current);
+
+  // Pick the shortest valid WOT run
+  if (segments.length) {
+    segments = segments.filter(seg => seg.length > 5); // ignore tiny bursts
+    if (segments.length) {
+      segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
+      const best = segments[0];
+      return {
+        time: best.map(p => +(p.t - best[0].t).toFixed(3)),
+        speed: best.map(p => +p.s.toFixed(2))
+      };
+    }
+  }
+
+  // fallback: full log
+  return {
+    time: allRows.map(p => p.t),
+    speed: allRows.map(p => p.s)
+  };
 }
 
 export default function MainApp() {
@@ -154,7 +191,7 @@ export default function MainApp() {
 
     try {
       const form = new FormData();
-      form.append('log', formData.logFile); // ✅ send log like LogComparison
+      form.append('log', formData.logFile);
       form.append('vehicle', JSON.stringify({ year: formData.year, model: formData.model }));
       form.append('mods', JSON.stringify({
         engine: formData.engine, injectors: formData.injectors, map: formData.map,
