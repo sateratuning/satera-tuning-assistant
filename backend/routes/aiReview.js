@@ -2,6 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const { OpenAI } = require('openai');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+
+// uploads dir
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({ dest: uploadsDir });
 
 const REQUIRED_ENUMS = {
   engine: ['Pre-eagle 5.7L','6.1L','Eagle 5.7L','6.4L','Hellcat 6.2L','HO Hellcat 6.2L','Other'],
@@ -35,6 +43,40 @@ function sanitizeTone(text) {
   return out;
 }
 
+// =========================
+// Dynamic Offset-Locate Parser
+// =========================
+function parseCSV(raw) {
+  const rows = raw.split(/\r?\n/).map(r => r.trim());
+  if (!rows.length) return null;
+
+  // Locate header row with "Offset"
+  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) return null;
+
+  const headers = rows[headerRowIndex].split(',').map(h => h.trim());
+  const dataStart = headerRowIndex + 4; // header + units + 2 blanks
+  const dataRows = rows.slice(dataStart).filter(r => r.includes(','));
+
+  const col = (name) => headers.findIndex(h => h === name);
+  const val = (cols, idx) => {
+    const n = parseFloat(cols[idx]);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const parsed = dataRows.map(r => {
+    const cols = r.split(',');
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = val(cols, i); });
+    return obj;
+  });
+
+  return { headers, parsed };
+}
+
+// =========================
+// AI Review Route
+// =========================
 function buildSystemPrompt({ mods }) {
   return [
 `You are an automotive log *assessor* for Gen 3 HEMI vehicles.`,
@@ -62,33 +104,33 @@ function buildUserPrompt({ vehicle, mods, metrics }) {
   return [
 `VEHICLE: ${vehicle?.year || ''} ${vehicle?.model || ''} | Engine: ${mods.engine} | Trans: ${mods.trans}`,
 `MODS: Power Adder: ${mods.power_adder} | Fuel: ${mods.fuel} | NN: ${mods.nn}`,
-`KEY METRICS:`,
-`- Knock events: ${metrics.knock?.length ? JSON.stringify(metrics.knock) : 'None'}`,
-`- Peak timing: ${metrics.peakTiming}° @ ${metrics.peakTimingRPM} RPM`,
-`- MAP under WOT: ${metrics.mapWOTmin || 'N/A'} – ${metrics.mapWOTmax || 'N/A'} kPa`,
-`- Knock Sensor Voltages: B1 ${metrics.ks1max} V, B2 ${metrics.ks2max} V`,
-`- Fuel trim variance: ${metrics.varFT?.toFixed(1)}%`,
-`- Avg Fuel Corr: B1 ${metrics.avgFT1?.toFixed(1)}%, B2 ${metrics.avgFT2?.toFixed(1)}%`,
-`- Oil min: ${metrics.oilMin} psi`,
-`- ECT max: ${metrics.ectMax} °F`,
-`- Misfires: ${JSON.stringify(metrics.misfires)}`,
-`- 0–60 mph: ${metrics.zeroTo60 || 'N/A'}`,
-`- 40–100 mph: ${metrics.fortyTo100 || 'N/A'}`,
-`- 60–130 mph: ${metrics.sixtyTo130 || 'N/A'}`,
+`KEY METRICS:` + JSON.stringify(metrics, null, 2),
 `Please produce a neutral assessment using these values, following the 10-item checklist strictly.`,
   ].join('\n');
 }
 
-router.post('/ai-review', async (req, res) => {
+router.post('/ai-review', upload.single('log'), async (req, res) => {
+  let filePath;
   try {
-    const { vehicle, mods, metrics } = req.body || {};
+    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded' });
+    filePath = req.file.path;
+
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = parseCSV(raw);
+    if (!parsed) return res.status(400).json({ error: 'Failed to parse CSV (Offset not found)' });
+
+    // TODO: compute metrics like in processLog.js if you want hard values,
+    // or just pass downsampled parsed rows to AI.
+    const sampled = parsed.parsed.filter((_, i) => i % 400 === 0);
+
+    const { vehicle, mods } = req.body || {};
     const missing = validateMods(mods);
     if (missing.length) return res.status(400).json({ error: 'Missing or invalid fields', fields: missing });
 
     const system = buildSystemPrompt({ mods });
-    const user = buildUserPrompt({ vehicle, mods, metrics });
+    const user = buildUserPrompt({ vehicle, mods, metrics: sampled });
 
-    const openai = new OpenAI();
+    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const resp = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
@@ -113,6 +155,10 @@ router.post('/ai-review', async (req, res) => {
   } catch (e) {
     console.error('ai-review error', e);
     return res.status(500).json({ error: 'AI review failed' });
+  } finally {
+    try {
+      if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    } catch {}
   }
 });
 

@@ -25,7 +25,7 @@ const safeMin = (arr) => (arr.length ? Math.min(...arr) : undefined);
 const block = (lines) => lines.filter(Boolean).join('\n');
 
 // =====================================================================
-// /api/review-log  — Non‑AI review + timers + normalized graph arrays
+// /api/review-log  — Non-AI review + timers + normalized graph arrays
 // =====================================================================
 router.post('/api/review-log', upload.single('log'), async (req, res) => {
   let filePath;
@@ -36,19 +36,19 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
     filePath = req.file.path;
 
     const raw = fs.readFileSync(filePath, 'utf8');
-    const lines = raw.split('\n').map(l => l.trimEnd());
+    const lines = raw.split(/\r?\n/).map(l => l.trimEnd());
 
-    // Expected format (your confirmed structure):
-    // index 15: headers
-    // index 16: units
-    // index 17–18: blank
-    // index 19+: data
-    const after15 = lines.slice(15);
-    if (after15.length < 5) {
-      return res.status(400).json({ error: 'CSV appears incomplete after header row.' });
+    // ==============================
+    // Dynamic Offset-Locate Parsing
+    // ==============================
+    const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
+    if (headerRowIndex === -1) {
+      return res.status(400).json({ error: 'CSV header with "Offset" not found.' });
     }
-    const headers = (after15[0] || '').split(',').map(h => h.trim());
-    const dataRows = after15.slice(4).filter(r => r && r.includes(','));
+
+    const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+    const dataStart = headerRowIndex + 4; // header + units + 2 spacer rows
+    const dataRows = lines.slice(dataStart).filter(r => r && r.includes(','));
 
     if (!headers.length || !dataRows.length) {
       return res.status(400).json({ error: 'No headers or data rows found.' });
@@ -67,7 +67,7 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
       ? parsed.map(r => r[name]).filter(Number.isFinite)
       : []);
 
-    // ======== Non‑AI diagnostics (text summary) ========
+    // ======== Non-AI diagnostics (text summary) ========
     const summary = [];
 
     // Knock
@@ -263,11 +263,10 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
     if (sixtyToOneThirty) summary.push(`🚀 Best 60–130 mph: ${sixtyToOneThirty.toFixed(2)}s`);
 
     // ===== Graph arrays (normalized) =====
-    // Frontend overlay expects simple X/Y arrays: time[] (sec) and speed[] (mph)
     const timeArr = time;     // already seconds
     const speedArr = speed;   // mph
 
-    // Response payload expected by the combined page
+    // Response payload
     res.json({
       summaryText: block(summary),
       metrics: {
@@ -291,9 +290,7 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
   } finally {
     try {
       if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (e) {
-      // swallow cleanup errors
-    }
+    } catch (e) {}
   }
 });
 
