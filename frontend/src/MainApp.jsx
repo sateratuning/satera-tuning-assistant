@@ -65,7 +65,7 @@ const styles = {
   },
 };
 
-// --- CSV parser with WOT-only trimming ---
+// --- CSV parser with WOT trimming ---
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
@@ -81,54 +81,52 @@ function parseCSV(raw) {
   const speedIndex = col('Vehicle Speed (SAE)');
   const timeIndex = col('Offset');
   const accelIndex = col('Accelerator Position D (SAE)');
+  if (speedIndex === -1 || timeIndex === -1 || accelIndex === -1) return null;
 
-  if (speedIndex === -1 || timeIndex === -1) return null;
-
-  const allRows = [];
+  // Build points
+  const points = [];
   for (let row of dataRows) {
     if (!row.includes(',')) continue;
     const cols = row.split(',');
     const s = parseFloat(cols[speedIndex]);
     const t = parseFloat(cols[timeIndex]);
-    const a = accelIndex >= 0 ? parseFloat(cols[accelIndex]) : 0;
-    if (Number.isFinite(s) && Number.isFinite(t)) {
-      allRows.push({ t, s, a });
+    const a = parseFloat(cols[accelIndex]);
+    if (Number.isFinite(s) && Number.isFinite(t) && Number.isFinite(a)) {
+      points.push({ s, t, a });
     }
   }
-  if (!allRows.length) return null;
+  if (!points.length) return null;
 
-  // Group into WOT segments
+  // Detect WOT segments
   let segments = [];
   let current = [];
-  for (let pt of allRows) {
-    if (pt.a > 86) {
-      current.push(pt);
-    } else {
-      if (current.length) {
-        segments.push(current);
-        current = [];
-      }
+  for (let p of points) {
+    if (p.a > 86) {
+      current.push(p);
+    } else if (current.length) {
+      segments.push(current);
+      current = [];
     }
   }
   if (current.length) segments.push(current);
 
-  // Pick the shortest valid WOT run
-  if (segments.length) {
-    segments = segments.filter(seg => seg.length > 5); // ignore tiny bursts
-    if (segments.length) {
-      segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
-      const best = segments[0];
-      return {
-        time: best.map(p => +(p.t - best[0].t).toFixed(3)),
-        speed: best.map(p => +p.s.toFixed(2))
-      };
-    }
-  }
+  if (!segments.length) return { speed: points.map(p => p.s), time: points.map(p => p.t) };
 
-  // fallback: full log
+  // Pick shortest valid segment (like a drag pass)
+  segments = segments.filter(seg => seg.length > 5);
+  if (!segments.length) return { speed: points.map(p => p.s), time: points.map(p => p.t) };
+
+  segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
+  const best = segments[0];
+
+  // Trim from first launch (WOT + moving)
+  const launchIdx = best.findIndex(p => p.a > 86 && p.s > 0.5);
+  const trimmed = launchIdx >= 0 ? best.slice(launchIdx) : best;
+
+  const t0 = trimmed[0].t;
   return {
-    time: allRows.map(p => p.t),
-    speed: allRows.map(p => p.s)
+    time: trimmed.map(p => +(p.t - t0).toFixed(3)),
+    speed: trimmed.map(p => +p.s.toFixed(2))
   };
 }
 
@@ -233,8 +231,15 @@ export default function MainApp() {
   const chartOptions = {
     responsive: true, maintainAspectRatio: false, parsing: false,
     scales: {
-      x: { type: 'linear', title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
-      y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
+      x: { 
+        type: 'linear', min: 0, // ✅ force start at 0
+        title: { display: true, text: 'Time (s)', color: '#adff2f' }, 
+        ticks: { color: '#adff2f' }, grid: { color: '#333' } 
+      },
+      y: { 
+        title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, 
+        ticks: { color: '#adff2f' }, grid: { color: '#333' } 
+      }
     },
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
