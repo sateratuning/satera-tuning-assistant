@@ -480,44 +480,22 @@ export default function LogComparison() {
     let xEnd = 0;
 
     if (r1) {
-  datasets.push({
-    label: 'Log 1',
-    data: r1.data,
-    tension: 0.1,
-    parsing: false,
-    borderColor: '#00ff88',         // ✅ force neon green line
-    backgroundColor: 'rgba(0,255,136,0.15)',
-    borderWidth: 2,
-    pointRadius: 0
-  });
-  datasets.push({
-    label: `${startMPH}–${endMPH}: ${r1.duration}s`,
-    data: [{ x: r1.data.at(-1).x, y: r1.data.at(-1).y }],
-    pointRadius: 6, pointStyle: 'triangle', showLine: false,
-    borderColor: '#00ff88'
-  });
-  xEnd = Math.max(xEnd, r1.duration);
-}
-
-if (r2) {
-  datasets.push({
-    label: 'Log 2',
-    data: r2.data,
-    tension: 0.1,
-    parsing: false,
-    borderColor: '#ff5733',         // ✅ force orange-red line
-    backgroundColor: 'rgba(255,87,51,0.15)',
-    borderWidth: 2,
-    pointRadius: 0
-  });
-  datasets.push({
-    label: `${startMPH}–${endMPH} (L2): ${r2.duration}s`,
-    data: [{ x: r2.data.at(-1).x, y: r2.data.at(-1).y }],
-    pointRadius: 6, pointStyle: 'triangle', showLine: false,
-    borderColor: '#ff5733'
-  });
-  xEnd = Math.max(xEnd, r2.duration);
-}
+      datasets.push({ label: 'Log 1', data: r1.data, tension: 0.1, parsing: false });
+      datasets.push({
+        label: `${startMPH}–${endMPH}: ${r1.duration}s`,
+        data: [{ x: r1.data.at(-1).x, y: r1.data.at(-1).y }],
+        pointRadius: 6, pointStyle: 'triangle', showLine: false
+      });
+      xEnd = Math.max(xEnd, r1.duration);
+    }
+    if (r2) {
+      datasets.push({ label: 'Log 2', data: r2.data, tension: 0.1, parsing: false });
+      datasets.push({
+        label: `${startMPH}–${endMPH} (L2): ${r2.duration}s`,
+        data: [{ x: r2.data.at(-1).x, y: r2.data.at(-1).y }],
+        pointRadius: 6, pointStyle: 'triangle', showLine: false
+      });
+      xEnd = Math.max(xEnd, r2.duration);
     }
 
     const overlayToUse = forcedOverlay !== undefined ? forcedOverlay : leaderOverlay;
@@ -527,8 +505,7 @@ if (r2) {
         data: overlayToUse.data || [],
         borderDash: [6, 4],
         tension: 0.1,
-        parsing: false,
-        borderColor: '#3399ff'
+        parsing: false
       });
       const lastX = overlayToUse.data?.length ? overlayToUse.data.at(-1).x : 0;
       xEnd = Math.max(xEnd, lastX);
@@ -1092,3 +1069,4 @@ if (r2) {
       />
     </div>
   );
+}
