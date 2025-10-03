@@ -57,6 +57,11 @@ export default function MainApp() {
   const [status, setStatus] = useState('');
   const suggestions = useMemo(() => deriveAdvice(aiResult), [aiResult]);
 
+  const handleChange = (e) => {
+    const { name, value } = e.target;
+    setFormData((p) => ({ ...p, [name]: value }));
+  };
+
   const handleFileChange = (e) => {
     setFormData((p) => ({ ...p, logFile: e.target.files?.[0] || null }));
   };
@@ -203,6 +208,42 @@ export default function MainApp() {
 
       <div style={styles.shell}>
         <div style={isNarrow ? styles.gridNarrow : styles.grid2}>
+          {/* LEFT: vehicle details form */}
+          <aside style={styles.card}>
+            <h3 style={styles.sectionTitleFancy}>Vehicle Details</h3>
+            <label>Year</label>
+            <select name="year" value={formData.year} onChange={handleChange}>
+              <option value="">-- Select Year --</option>
+              {years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <label>Model</label>
+            <select name="model" value={formData.model} onChange={handleChange}>
+              <option value="">-- Select Model --</option>
+              {models.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <label>Engine</label>
+            <select name="engine" value={formData.engine} onChange={handleChange}>
+              <option value="">-- Select Engine --</option>
+              {engines.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+            <label>Power Adder</label>
+            <select name="power" value={formData.power} onChange={handleChange}>
+              <option value="">-- Select Power Adder --</option>
+              {powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <label>Fuel</label>
+            <select name="fuel" value={formData.fuel} onChange={handleChange}>
+              <option value="">-- Select Fuel --</option>
+              {fuels.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <label>Transmission</label>
+            <select name="trans" value={formData.trans} onChange={handleChange}>
+              <option value="">-- Select Transmission --</option>
+              {transmissions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </aside>
+
+          {/* RIGHT: Upload + Graph + AI Results */}
           <main style={{ display: 'grid', gap: 16 }}>
             {/* Upload card */}
             <div style={styles.card}>
