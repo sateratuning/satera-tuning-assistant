@@ -5,6 +5,7 @@ import { Link } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import annotationPlugin from 'chartjs-plugin-annotation';
+import { Chart } from 'chart.js';
 
 import {
   years, models, engines, injectors, mapSensors, throttles,
@@ -13,8 +14,6 @@ import {
 import { deriveAdvice, SateraTone } from './ui/advice';
 
 const API_BASE = process.env.REACT_APP_API_BASE || '';
-// Register annotation plugin
-import { Chart } from 'chart.js';
 Chart.register(annotationPlugin);
 
 const styles = {
@@ -58,19 +57,25 @@ export default function MainApp() {
   const [status, setStatus] = useState('');
   const suggestions = useMemo(() => deriveAdvice(aiResult), [aiResult]);
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData((p) => ({ ...p, [name]: value }));
-  };
   const handleFileChange = (e) => {
     setFormData((p) => ({ ...p, logFile: e.target.files?.[0] || null }));
   };
 
   const handleSubmit = async () => {
+    // Required fields
+    const required = ['engine', 'power', 'fuel', 'trans', 'year', 'model'];
+    const missing = required.filter(k => !formData[k]);
+
+    if (missing.length) {
+      setAiResult(`❌ Please fill in all required fields before running AI Review: ${missing.join(', ')}`);
+      return;
+    }
+
     if (!formData.logFile) {
       alert('Please upload a CSV log first.');
       return;
     }
+
     setStatus('Analyzing...');
     setAiResult('');
     setMetrics(null);
@@ -86,7 +91,6 @@ export default function MainApp() {
       setMetrics(logJson.metrics);
       setGraphs(logJson.graphs || null);
 
-      // FIXED: Use /ai-review instead of /ai-review-json
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -199,9 +203,6 @@ export default function MainApp() {
 
       <div style={styles.shell}>
         <div style={isNarrow ? styles.gridNarrow : styles.grid2}>
-          {/* LEFT: vehicle details form (unchanged) */}
-
-          {/* CENTER: Upload + Graph + AI Results */}
           <main style={{ display: 'grid', gap: 16 }}>
             {/* Upload card */}
             <div style={styles.card}>
