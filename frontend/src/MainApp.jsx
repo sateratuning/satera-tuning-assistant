@@ -65,6 +65,36 @@ const styles = {
   },
 };
 
+// --- CSV parser (like LogComparison) ---
+function parseCSV(raw) {
+  const rows = raw.split(/\r?\n/).map(r => r.trim());
+  if (!rows.length) return null;
+
+  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) return null;
+
+  const headers = rows[headerRowIndex].split(',').map(h => h.trim());
+  const dataStart = headerRowIndex + 4;
+  const dataRows = rows.slice(dataStart);
+
+  const col = (name) => headers.findIndex(h => h === name);
+  const speedIndex = col('Vehicle Speed (SAE)');
+  const timeIndex = col('Offset');
+  if (speedIndex === -1 || timeIndex === -1) return null;
+
+  const speed = [], time = [];
+  for (let row of dataRows) {
+    if (!row.includes(',')) continue;
+    const cols = row.split(',');
+    const s = parseFloat(cols[speedIndex]);
+    const t = parseFloat(cols[timeIndex]);
+    if (Number.isFinite(s) && Number.isFinite(t)) {
+      speed.push(s); time.push(t);
+    }
+  }
+  return (speed.length && time.length) ? { speed, time } : null;
+}
+
 export default function MainApp() {
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1100);
   useEffect(() => {
@@ -88,7 +118,23 @@ export default function MainApp() {
     setFormData((p) => ({ ...p, [name]: value }));
   };
   const handleFileChange = (e) => {
-    setFormData((p) => ({ ...p, logFile: e.target.files?.[0] || null }));
+    const file = e.target.files?.[0] || null;
+    if (!file) return;
+    setFormData((p) => ({ ...p, logFile: file }));
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const parsed = parseCSV(reader.result);
+      if (!parsed) {
+        setStatus('❌ Failed to parse CSV (check format).');
+      } else {
+        setStatus('CSV parsed.');
+        setGraphs(parsed); // store for chart
+        // build dummy metrics for AI call
+        setMetrics({ zeroTo60: null, fortyTo100: null, sixtyTo130: null });
+      }
+    };
+    reader.readAsText(file);
   };
 
   const handleSubmit = async () => {
@@ -99,7 +145,6 @@ export default function MainApp() {
       setAiResult(`❌ Please fill in all required fields before running AI Review: ${missing.join(', ')}`);
       return;
     }
-
     if (!formData.logFile) {
       alert('Please upload a CSV log first.');
       return;
@@ -107,19 +152,8 @@ export default function MainApp() {
 
     setStatus('Analyzing...');
     setAiResult('');
-    setMetrics(null);
-    setGraphs(null);
 
     try {
-      const fd = new FormData();
-      fd.append('log', formData.logFile);
-      const logRes = await fetch(`${API_BASE}/review-log`, { method: 'POST', body: fd });
-      if (!logRes.ok) throw new Error('Log parsing failed');
-      const logJson = await logRes.json();
-      if (!logJson.metrics) throw new Error('No metrics returned');
-      setMetrics(logJson.metrics);
-      setGraphs(logJson.graphs || null);
-
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -130,7 +164,7 @@ export default function MainApp() {
             throttle: formData.throttle, power_adder: formData.power,
             trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
           },
-          metrics: logJson.metrics
+          metrics: metrics || {}
         }),
       });
       if (!reviewRes.ok) throw new Error('AI review failed');
@@ -145,38 +179,14 @@ export default function MainApp() {
   };
 
   const chartData = graphs ? {
-    datasets: [
-      {
-        label: 'Vehicle Speed (mph)',
-        data: graphs.time.map((t, i) => ({ x: t, y: graphs.speed[i] })),
-        borderColor: '#00ff88',
-        backgroundColor: 'rgba(0,255,136,0.15)',
-        borderWidth: 2,
-        pointRadius: 0,
-        tension: 0.2
-      }
-    ]
+    datasets: [{
+      label: 'Vehicle Speed (mph)',
+      data: graphs.time.map((t, i) => ({ x: t, y: graphs.speed[i] })),
+      borderColor: '#00ff88',
+      backgroundColor: 'rgba(0,255,136,0.15)',
+      borderWidth: 2, pointRadius: 0, tension: 0.2
+    }]
   } : null;
-
-  const annotations = metrics ? {
-    annotations: {
-      zeroToSixty: metrics.zeroTo60 ? {
-        type: 'line', xMin: metrics.zeroTo60, xMax: metrics.zeroTo60,
-        borderColor: '#ff9a9a', borderWidth: 2,
-        label: { enabled: true, content: `0–60: ${metrics.zeroTo60}s`, position: 'start', backgroundColor: 'rgba(255,154,154,0.2)', color: '#ff9a9a' }
-      } : null,
-      fortyToHundred: metrics.fortyTo100 ? {
-        type: 'line', xMin: metrics.fortyTo100, xMax: metrics.fortyTo100,
-        borderColor: '#ffc96b', borderWidth: 2,
-        label: { enabled: true, content: `40–100: ${metrics.fortyTo100}s`, position: 'start', backgroundColor: 'rgba(255,201,107,0.2)', color: '#ffc96b' }
-      } : null,
-      sixtyToOneThirty: metrics.sixtyTo130 ? {
-        type: 'line', xMin: metrics.sixtyTo130, xMax: metrics.sixtyTo130,
-        borderColor: '#74ffb0', borderWidth: 2,
-        label: { enabled: true, content: `60–130: ${metrics.sixtyTo130}s`, position: 'start', backgroundColor: 'rgba(116,255,176,0.2)', color: '#74ffb0' }
-      } : null
-    }
-  } : {};
 
   const chartOptions = {
     responsive: true, maintainAspectRatio: false, parsing: false,
@@ -184,7 +194,7 @@ export default function MainApp() {
       x: { type: 'linear', title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
       y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
     },
-    plugins: { legend: { labels: { color: '#adff2f' } }, annotation: annotations }
+    plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
   return (
@@ -257,15 +267,6 @@ export default function MainApp() {
                   <h3 style={styles.sectionTitleFancy}>📈 Vehicle Speed vs Time</h3>
                 </div>
                 <Line data={chartData} options={chartOptions} />
-              </div>
-            )}
-
-            {metrics && (
-              <div style={styles.card}>
-                <h3 style={styles.sectionTitleFancy}>📊 Parsed Metrics</h3>
-                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
-                  {JSON.stringify(metrics, null, 2)}
-                </pre>
               </div>
             )}
 
