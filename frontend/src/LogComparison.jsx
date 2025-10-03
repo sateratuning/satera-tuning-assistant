@@ -936,7 +936,7 @@ if (overlayToUse) {
               </div>
 
               {graphData ? (
-                <div style={{ height: 500 }}>
+                <div style={{ height: 300 }}>
                   <Line data={graphData} options={graphData.options} />
                 </div>
               ) : (
