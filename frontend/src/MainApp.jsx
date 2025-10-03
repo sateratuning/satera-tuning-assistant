@@ -153,25 +153,28 @@ export default function MainApp() {
     setAiResult('');
 
     try {
+      const form = new FormData();
+      form.append('log', formData.logFile); // ✅ send log like LogComparison
+      form.append('vehicle', JSON.stringify({ year: formData.year, model: formData.model }));
+      form.append('mods', JSON.stringify({
+        engine: formData.engine, injectors: formData.injectors, map: formData.map,
+        throttle: formData.throttle, power_adder: formData.power,
+        trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
+      }));
+      form.append('metrics', JSON.stringify(metrics || {}));
+
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vehicle: { year: formData.year, model: formData.model },
-          mods: {
-            engine: formData.engine, injectors: formData.injectors, map: formData.map,
-            throttle: formData.throttle, power_adder: formData.power,
-            trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
-          },
-          metrics: metrics || {}
-        }),
+        body: form,
       });
-      if (!reviewRes.ok) throw new Error('AI review failed');
+      if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
-      // ✅ FIXED: parse as text + split
-      const rawText = await reviewRes.text();
-      const [logReview, aiReview] = rawText.split('===SPLIT===');
-      setAiResult(aiReview?.trim() || 'No AI assessment returned.');
+      const text = await reviewRes.text();
+      const [quickChecks, aiPart] = text.split('===SPLIT===');
+      const combined =
+        (quickChecks || '').trim() +
+        (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
+      setAiResult(combined || 'No AI assessment returned.');
       setStatus('');
     } catch (err) {
       console.error(err);
