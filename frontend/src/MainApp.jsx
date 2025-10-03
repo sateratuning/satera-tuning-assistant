@@ -65,7 +65,7 @@ const styles = {
   },
 };
 
-// --- CSV parser ---
+// --- CSV parser with WOT trimming ---
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
@@ -80,19 +80,54 @@ function parseCSV(raw) {
   const col = (name) => headers.findIndex(h => h === name);
   const speedIndex = col('Vehicle Speed (SAE)');
   const timeIndex = col('Offset');
-  if (speedIndex === -1 || timeIndex === -1) return null;
+  const accelIndex = col('Accelerator Position D (SAE)');
+  if (speedIndex === -1 || timeIndex === -1 || accelIndex === -1) return null;
 
-  const speed = [], time = [];
+  // Build points
+  const points = [];
   for (let row of dataRows) {
     if (!row.includes(',')) continue;
     const cols = row.split(',');
     const s = parseFloat(cols[speedIndex]);
     const t = parseFloat(cols[timeIndex]);
-    if (Number.isFinite(s) && Number.isFinite(t)) {
-      speed.push(s); time.push(t);
+    const a = parseFloat(cols[accelIndex]);
+    if (Number.isFinite(s) && Number.isFinite(t) && Number.isFinite(a)) {
+      points.push({ s, t, a });
     }
   }
-  return (speed.length && time.length) ? { speed, time } : null;
+  if (!points.length) return null;
+
+  // Detect WOT segments
+  let segments = [];
+  let current = [];
+  for (let p of points) {
+    if (p.a > 86) {
+      current.push(p);
+    } else if (current.length) {
+      segments.push(current);
+      current = [];
+    }
+  }
+  if (current.length) segments.push(current);
+
+  if (!segments.length) return { speed: points.map(p => p.s), time: points.map(p => p.t) };
+
+  // Pick shortest valid segment (like a drag pass)
+  segments = segments.filter(seg => seg.length > 5);
+  if (!segments.length) return { speed: points.map(p => p.s), time: points.map(p => p.t) };
+
+  segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
+  const best = segments[0];
+
+  // Trim from first launch (WOT + moving)
+  const launchIdx = best.findIndex(p => p.a > 86 && p.s > 0.5);
+  const trimmed = launchIdx >= 0 ? best.slice(launchIdx) : best;
+
+  const t0 = trimmed[0].t;
+  return {
+    time: trimmed.map(p => +(p.t - t0).toFixed(3)),
+    speed: trimmed.map(p => +p.s.toFixed(2))
+  };
 }
 
 export default function MainApp() {
@@ -117,7 +152,6 @@ export default function MainApp() {
     const { name, value } = e.target;
     setFormData((p) => ({ ...p, [name]: value }));
   };
-
   const handleFileChange = (e) => {
     const file = e.target.files?.[0] || null;
     if (!file) return;
@@ -154,23 +188,28 @@ export default function MainApp() {
     setAiResult('');
 
     try {
-      const reviewRes = await fetch(`${API_BASE}/ai-review-json`, {
+      const form = new FormData();
+      form.append('log', formData.logFile);
+      form.append('vehicle', JSON.stringify({ year: formData.year, model: formData.model }));
+      form.append('mods', JSON.stringify({
+        engine: formData.engine, injectors: formData.injectors, map: formData.map,
+        throttle: formData.throttle, power_adder: formData.power,
+        trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
+      }));
+      form.append('metrics', JSON.stringify(metrics || {}));
+
+      const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          vehicle: { year: formData.year, model: formData.model },
-          mods: {
-            engine: formData.engine, injectors: formData.injectors, map: formData.map,
-            throttle: formData.throttle, power_adder: formData.power,
-            trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
-          },
-          metrics: metrics || {}
-        }),
+        body: form,
       });
       if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
-      const reviewJson = await reviewRes.json();
-      setAiResult(reviewJson.assessment || 'No AI assessment returned.');
+      const text = await reviewRes.text();
+      const [quickChecks, aiPart] = text.split('===SPLIT===');
+      const combined =
+        (quickChecks || '').trim() +
+        (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
+      setAiResult(combined || 'No AI assessment returned.');
       setStatus('');
     } catch (err) {
       console.error(err);
@@ -192,8 +231,15 @@ export default function MainApp() {
   const chartOptions = {
     responsive: true, maintainAspectRatio: false, parsing: false,
     scales: {
-      x: { type: 'linear', title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
-      y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
+      x: { 
+        type: 'linear', min: 0, // ✅ force start at 0
+        title: { display: true, text: 'Time (s)', color: '#adff2f' }, 
+        ticks: { color: '#adff2f' }, grid: { color: '#333' } 
+      },
+      y: { 
+        title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, 
+        ticks: { color: '#adff2f' }, grid: { color: '#333' } 
+      }
     },
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
@@ -203,7 +249,7 @@ export default function MainApp() {
       <header style={styles.header}>
         <div>Satera Tuning — AI Log Review (BETA)</div>
         <div style={styles.headerRight}>
-          <Link to="/log-comparison" style={{ ...styles.button, textDecoration: 'none', lineHeight: 'normal' }}>
+          <Link to="/log-comparison" style={{ ...styles.button, textDecoration:'none', lineHeight:'normal' }}>
             Log Comparison
           </Link>
         </div>
