@@ -14,53 +14,37 @@ if (!fs.existsSync(uploadsDir)) {
 }
 const upload = multer({ dest: uploadsDir });
 
-// Build text block from an array of lines
+// Build text block
 const block = (lines) => lines.filter(Boolean).join('\n');
 
-// =====================================================================
-// /api/review-log — Non-AI review + timers + normalized graph arrays
-// =====================================================================
 router.post('/api/review-log', upload.single('log'), async (req, res) => {
   let filePath;
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No CSV file uploaded.' });
-    }
+    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded.' });
     filePath = req.file.path;
 
     const raw = fs.readFileSync(filePath, 'utf8');
-    const { metrics } = parseLogFile(raw);
+    const { metrics, graphs } = parseLogFile(raw);
 
-    if (!metrics) {
-      return res.status(400).json({ error: 'Failed to parse CSV / extract metrics.' });
-    }
+    if (!metrics) return res.status(400).json({ error: 'Failed to parse CSV / extract metrics.' });
 
     const summary = [];
 
-    // Knock
+    // Build summary from metrics
     if (metrics.peakKnock !== undefined) {
       summary.push(metrics.peakKnock > 0
         ? `⚠️ Knock detected: up to ${metrics.peakKnock.toFixed(1)}°`
         : '✅ No knock detected.');
-    } else {
-      summary.push('ℹ️ Knock column not found.');
     }
 
-    // Peak timing under WOT
     if (metrics.peakTiming && metrics.peakTimingRPM) {
       summary.push(`📈 Peak timing under WOT: ${metrics.peakTiming.toFixed(1)}° @ ${metrics.peakTimingRPM.toFixed(0)} RPM`);
-    } else {
-      summary.push('ℹ️ Could not determine peak timing @ RPM under WOT.');
     }
 
-    // MAP under WOT
     if (metrics.mapWOTmin !== undefined && metrics.mapWOTmax !== undefined) {
       summary.push(`🌡 MAP under WOT: ${metrics.mapWOTmin.toFixed(1)} – ${metrics.mapWOTmax.toFixed(1)} kPa`);
-    } else {
-      summary.push('ℹ️ MAP data under WOT not found.');
     }
 
-    // Knock sensors
     if (metrics.ks1max !== null) {
       summary.push(
         metrics.ks1max > 3.0
@@ -76,32 +60,27 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
       );
     }
 
-    // Fuel trim variance
-    if (metrics.varFT !== null && metrics.varFT !== undefined) {
+    if (metrics.varFT !== null) {
       summary.push(metrics.varFT > 10
         ? '⚠️ Fuel trim variance > 10% between banks'
         : '✅ Fuel trim variance within 10%');
     }
 
-    // Avg fuel corrections
     if (metrics.avgFT1 !== null) summary.push(`📊 Avg fuel correction (Bank 1): ${metrics.avgFT1.toFixed(1)}%`);
     if (metrics.avgFT2 !== null) summary.push(`📊 Avg fuel correction (Bank 2): ${metrics.avgFT2.toFixed(1)}%`);
 
-    // Oil pressure
     if (metrics.oilMin !== null) {
       summary.push(metrics.oilMin < 20
         ? '⚠️ Oil pressure dropped below 20 psi.'
         : '✅ Oil pressure within safe range.');
     }
 
-    // Coolant
     if (metrics.ectMax !== null) {
       summary.push(metrics.ectMax > 230
         ? '⚠️ Coolant temp exceeded 230°F.'
         : '✅ Coolant temp within safe limits.');
     }
 
-    // Misfires
     if (metrics.misfires && Object.keys(metrics.misfires).length) {
       const misfireReport = Object.entries(metrics.misfires)
         .map(([cyl, count]) => `- Cylinder ${cyl}: ${count} misfires`);
@@ -110,21 +89,14 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
       summary.push('✅ No misfires detected.');
     }
 
-    // Acceleration times
     if (metrics.zeroTo60) summary.push(`🚦 Best 0–60 mph: ${metrics.zeroTo60.toFixed(2)}s`);
     if (metrics.fortyTo100) summary.push(`🚀 Best 40–100 mph: ${metrics.fortyTo100.toFixed(2)}s`);
     if (metrics.sixtyTo130) summary.push(`🚀 Best 60–130 mph: ${metrics.sixtyTo130.toFixed(2)}s`);
 
-    // Response payload
     res.json({
       summaryText: block(summary),
       metrics,
-      graphs: {
-        // Reuse the speed/time arrays for overlay (if needed in frontend)
-        // NOTE: parseLogFile already ensured Offset & Vehicle Speed columns exist
-        time: [],   // Can be expanded if you want graphs here
-        speed: []
-      },
+      graphs,
       aiEligible: true
     });
   } catch (err) {
@@ -133,7 +105,7 @@ router.post('/api/review-log', upload.single('log'), async (req, res) => {
   } finally {
     try {
       if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch (e) {}
+    } catch {}
   }
 });
 

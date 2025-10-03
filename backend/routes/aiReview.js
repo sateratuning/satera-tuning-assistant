@@ -6,7 +6,9 @@ const fs = require('fs');
 const path = require('path');
 const multer = require('multer');
 
-// uploads dir
+const { parseLogFile } = require('./processLog-helpers');
+
+// Ensure uploads dir exists
 const uploadsDir = path.join(__dirname, '..', 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 const upload = multer({ dest: uploadsDir });
@@ -43,40 +45,6 @@ function sanitizeTone(text) {
   return out;
 }
 
-// =========================
-// Dynamic Offset-Locate Parser
-// =========================
-function parseCSV(raw) {
-  const rows = raw.split(/\r?\n/).map(r => r.trim());
-  if (!rows.length) return null;
-
-  // Locate header row with "Offset"
-  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
-  if (headerRowIndex === -1) return null;
-
-  const headers = rows[headerRowIndex].split(',').map(h => h.trim());
-  const dataStart = headerRowIndex + 4; // header + units + 2 blanks
-  const dataRows = rows.slice(dataStart).filter(r => r.includes(','));
-
-  const col = (name) => headers.findIndex(h => h === name);
-  const val = (cols, idx) => {
-    const n = parseFloat(cols[idx]);
-    return Number.isFinite(n) ? n : undefined;
-  };
-
-  const parsed = dataRows.map(r => {
-    const cols = r.split(',');
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = val(cols, i); });
-    return obj;
-  });
-
-  return { headers, parsed };
-}
-
-// =========================
-// AI Review Route
-// =========================
 function buildSystemPrompt({ mods }) {
   return [
 `You are an automotive log *assessor* for Gen 3 HEMI vehicles.`,
@@ -116,19 +84,15 @@ router.post('/ai-review', upload.single('log'), async (req, res) => {
     filePath = req.file.path;
 
     const raw = fs.readFileSync(filePath, 'utf8');
-    const parsed = parseCSV(raw);
-    if (!parsed) return res.status(400).json({ error: 'Failed to parse CSV (Offset not found)' });
-
-    // TODO: compute metrics like in processLog.js if you want hard values,
-    // or just pass downsampled parsed rows to AI.
-    const sampled = parsed.parsed.filter((_, i) => i % 400 === 0);
+    const { metrics, graphs } = parseLogFile(raw);
+    if (!metrics) return res.status(400).json({ error: 'Failed to parse CSV / extract metrics' });
 
     const { vehicle, mods } = req.body || {};
     const missing = validateMods(mods);
     if (missing.length) return res.status(400).json({ error: 'Missing or invalid fields', fields: missing });
 
     const system = buildSystemPrompt({ mods });
-    const user = buildUserPrompt({ vehicle, mods, metrics: sampled });
+    const user = buildUserPrompt({ vehicle, mods, metrics });
 
     const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
     const resp = await openai.chat.completions.create({
@@ -151,7 +115,12 @@ router.post('/ai-review', upload.single('log'), async (req, res) => {
         .join('\n');
     }
 
-    return res.json({ ok: true, assessment: text });
+    return res.json({
+      ok: true,
+      assessment: text,
+      metrics,
+      graphs
+    });
   } catch (e) {
     console.error('ai-review error', e);
     return res.status(500).json({ error: 'AI review failed' });
