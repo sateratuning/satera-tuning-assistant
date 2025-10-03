@@ -1,112 +1,149 @@
-// backend/routes/processLog.js
-const express = require('express');
-const router = express.Router();
-const fs = require('fs');
-const path = require('path');
-const multer = require('multer');
+// backend/routes/processLog-helpers.js
+function parseLogFile(raw) {
+  const lines = raw.split(/\r?\n/).map(l => l.trim());
+  if (!lines.length) return { metrics: null, graphs: null };
 
-const { parseLogFile } = require('./processLog-helpers');
+  // 🔎 Locate the header row dynamically by finding "Offset"
+  const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) return { metrics: null, graphs: null };
 
-// Ensure uploads dir exists
-const uploadsDir = path.join(__dirname, '..', 'uploads');
-if (!fs.existsSync(uploadsDir)) {
-  fs.mkdirSync(uploadsDir, { recursive: true });
-}
-const upload = multer({ dest: uploadsDir });
+  const headers = lines[headerRowIndex].split(',').map(h => h.trim());
 
-// Build text block
-const block = (lines) => lines.filter(Boolean).join('\n');
+  // Data starts after: header + units + 2 spacer rows
+  const dataStart = headerRowIndex + 4;
+  const dataRows = lines.slice(dataStart).filter(r => r && r.includes(','));
 
-router.post('/api/review-log', upload.single('log'), async (req, res) => {
-  let filePath;
-  try {
-    if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded.' });
-    filePath = req.file.path;
+  const toNum = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : null;
+  };
 
-    const raw = fs.readFileSync(filePath, 'utf8');
-    const { metrics, graphs } = parseLogFile(raw);
+  // Parse rows into objects
+  const parsed = dataRows.map(row => {
+    const cols = row.split(',');
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = toNum(cols[i]); });
+    return obj;
+  });
 
-    if (!metrics) return res.status(400).json({ error: 'Failed to parse CSV / extract metrics.' });
+  const hasCol = (name) => headers.includes(name);
+  const getCol = (name) => hasCol(name) ? parsed.map(r => r[name]).filter(Number.isFinite) : [];
 
-    const summary = [];
+  const safeMax = (arr) => arr.length ? Math.max(...arr) : null;
+  const safeMin = (arr) => arr.length ? Math.min(...arr) : null;
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
 
-    // Build summary from metrics
-    if (metrics.peakKnock !== undefined) {
-      summary.push(metrics.peakKnock > 0
-        ? `⚠️ Knock detected: up to ${metrics.peakKnock.toFixed(1)}°`
-        : '✅ No knock detected.');
-    }
+  // ===== Metrics =====
+  const knockCol = getCol('Total Knock Retard').map(v => Math.abs(v));
+  const peakKnock = safeMax(knockCol);
 
-    if (metrics.peakTiming && metrics.peakTimingRPM) {
-      summary.push(`📈 Peak timing under WOT: ${metrics.peakTiming.toFixed(1)}° @ ${metrics.peakTimingRPM.toFixed(0)} RPM`);
-    }
+  // WOT rows
+  const accelName = 'Accelerator Position D (SAE)';
+  const timingName = 'Timing Advance (SAE)';
+  const rpmName = 'Engine RPM (SAE)';
+  const mapName = 'Intake Manifold Absolute Pressure (SAE)';
+  let wotRows = hasCol(accelName) ? parsed.filter(r => r[accelName] > 86) : [];
 
-    if (metrics.mapWOTmin !== undefined && metrics.mapWOTmax !== undefined) {
-      summary.push(`🌡 MAP under WOT: ${metrics.mapWOTmin.toFixed(1)} – ${metrics.mapWOTmax.toFixed(1)} kPa`);
-    }
-
-    if (metrics.ks1max !== null) {
-      summary.push(
-        metrics.ks1max > 3.0
-          ? `⚠️ Knock Sensor 1 exceeded 3.0V (Peak: ${metrics.ks1max.toFixed(2)}V)`
-          : `✅ Knock Sensor 1 safe (Peak: ${metrics.ks1max.toFixed(2)}V)`
-      );
-    }
-    if (metrics.ks2max !== null) {
-      summary.push(
-        metrics.ks2max > 3.0
-          ? `⚠️ Knock Sensor 2 exceeded 3.0V (Peak: ${metrics.ks2max.toFixed(2)}V)`
-          : `✅ Knock Sensor 2 safe (Peak: ${metrics.ks2max.toFixed(2)}V)`
-      );
-    }
-
-    if (metrics.varFT !== null) {
-      summary.push(metrics.varFT > 10
-        ? '⚠️ Fuel trim variance > 10% between banks'
-        : '✅ Fuel trim variance within 10%');
-    }
-
-    if (metrics.avgFT1 !== null) summary.push(`📊 Avg fuel correction (Bank 1): ${metrics.avgFT1.toFixed(1)}%`);
-    if (metrics.avgFT2 !== null) summary.push(`📊 Avg fuel correction (Bank 2): ${metrics.avgFT2.toFixed(1)}%`);
-
-    if (metrics.oilMin !== null) {
-      summary.push(metrics.oilMin < 20
-        ? '⚠️ Oil pressure dropped below 20 psi.'
-        : '✅ Oil pressure within safe range.');
-    }
-
-    if (metrics.ectMax !== null) {
-      summary.push(metrics.ectMax > 230
-        ? '⚠️ Coolant temp exceeded 230°F.'
-        : '✅ Coolant temp within safe limits.');
-    }
-
-    if (metrics.misfires && Object.keys(metrics.misfires).length) {
-      const misfireReport = Object.entries(metrics.misfires)
-        .map(([cyl, count]) => `- Cylinder ${cyl}: ${count} misfires`);
-      summary.push(`🚨 Misfires detected:\n${misfireReport.join('\n')}`);
-    } else {
-      summary.push('✅ No misfires detected.');
-    }
-
-    if (metrics.zeroTo60) summary.push(`🚦 Best 0–60 mph: ${metrics.zeroTo60.toFixed(2)}s`);
-    if (metrics.fortyTo100) summary.push(`🚀 Best 40–100 mph: ${metrics.fortyTo100.toFixed(2)}s`);
-    if (metrics.sixtyTo130) summary.push(`🚀 Best 60–130 mph: ${metrics.sixtyTo130.toFixed(2)}s`);
-
-    res.json({
-      summaryText: block(summary),
-      metrics,
-      graphs,
-      aiEligible: true
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Log processing failed.' });
-  } finally {
-    try {
-      if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
-    } catch {}
+  let peakTiming = null, peakTimingRPM = null;
+  if (wotRows.length) {
+    const peakRow = wotRows.reduce((best, r) =>
+      (r[timingName] ?? -Infinity) > (best[timingName] ?? -Infinity) ? r : best, wotRows[0]);
+    peakTiming = peakRow[timingName];
+    peakTimingRPM = peakRow[rpmName];
   }
-});
+  const mapWOT = wotRows.map(r => r[mapName]).filter(Number.isFinite);
 
-module.exports = router;
+  // Knock sensors
+  const ks1max = safeMax(getCol('Knock Sensor 1'));
+  const ks2max = safeMax(getCol('Knock Sensor 2'));
+
+  // Fuel trims
+  const lt1 = getCol('Long Term Fuel Trim Bank 1 (SAE)');
+  const lt2 = getCol('Long Term Fuel Trim Bank 2 (SAE)');
+  let varFT = null;
+  if (lt1.length && lt2.length) {
+    const diffs = lt1.map((v, i) => (Number.isFinite(v) && Number.isFinite(lt2[i])) ? Math.abs(v - lt2[i]) : null)
+      .filter(Number.isFinite);
+    varFT = diffs.length ? Math.max(...diffs) : null;
+  }
+  const st1 = getCol('Short Term Fuel Trim Bank 1 (SAE)');
+  const st2 = getCol('Short Term Fuel Trim Bank 2 (SAE)');
+  const avgFT1 = avg(st1.map((v, i) => v + (lt1[i] || 0)).filter(Number.isFinite));
+  const avgFT2 = avg(st2.map((v, i) => v + (lt2[i] || 0)).filter(Number.isFinite));
+
+  // Oil & coolant
+  const oilRows = parsed.filter(r => (r[rpmName] || 0) > 500);
+  const oilMin = oilRows.length ? safeMin(oilRows.map(r => r['Engine Oil Pressure']).filter(Number.isFinite)) : null;
+  const ectMax = safeMax(getCol('Engine Coolant Temp (SAE)'));
+
+  // Misfires
+  const misfires = {};
+  if (parsed[0]) {
+    Object.keys(parsed[0]).forEach(key => {
+      if (key.includes('Misfire Current Cylinder')) {
+        const cyl = key.split('#')[1];
+        const vals = getCol(key);
+        let count = 0;
+        for (let i = 1; i < vals.length; i++) {
+          const diff = vals[i] - vals[i - 1];
+          if (diff > 0 && diff < 1000) count += diff;
+        }
+        if (count > 0) misfires[cyl] = count;
+      }
+    });
+  }
+
+  // Acceleration intervals
+  const speed = getCol('Vehicle Speed (SAE)');
+  const time = getCol('Offset');
+  const findAllIntervals = (start, end) => {
+    const times = [];
+    let startTime = null;
+    for (let i = 0; i < speed.length; i++) {
+      const s = speed[i], t = time[i];
+      if (!Number.isFinite(s) || !Number.isFinite(t)) continue;
+      if (startTime === null && s >= start && s < end) startTime = t;
+      if (startTime !== null && s >= end) {
+        times.push(t - startTime);
+        startTime = null;
+      }
+    }
+    return times;
+  };
+  const best = (arr) => arr.length ? Math.min(...arr) : null;
+  const runs0060 = (() => {
+    const times = [];
+    let foundStop = false, startTime = null;
+    for (let i = 1; i < speed.length; i++) {
+      const s = speed[i], t = time[i];
+      if (!Number.isFinite(s) || !Number.isFinite(t)) continue;
+      if (!foundStop && s < 1.5) foundStop = true;
+      if (foundStop && startTime === null && s > 1.5) startTime = t;
+      if (startTime !== null && s >= 60) {
+        times.push(t - startTime);
+        startTime = null;
+        foundStop = false;
+      }
+    }
+    return times;
+  })();
+
+  const zeroTo60 = best(runs0060);
+  const fortyTo100 = best(findAllIntervals(40, 100));
+  const sixtyTo130 = best(findAllIntervals(60, 130));
+
+  return {
+    metrics: {
+      peakKnock, peakTiming, peakTimingRPM,
+      mapWOTmin: safeMin(mapWOT), mapWOTmax: safeMax(mapWOT),
+      ks1max, ks2max,
+      varFT, avgFT1, avgFT2,
+      oilMin, ectMax,
+      misfires,
+      zeroTo60, fortyTo100, sixtyTo130
+    },
+    graphs: { time, speed }
+  };
+}
+
+module.exports = { parseLogFile };
