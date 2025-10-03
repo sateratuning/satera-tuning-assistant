@@ -209,7 +209,8 @@ function formatChecklist(parsed, headers) {
           const diff = values[i] - values[i - 1];
           if (Number.isFinite(diff) && diff > 0 && diff < 1000) count += diff;
         }
-        if (count > 0) misfireReport.push(`- Cylinder ${cyl}: ${count} misfires`);
+        if (count > 0) misfireReport.push(`- Cylinder ${cyl}: ${count.toFixed(2)} misfires`);
+
       }
     }
   });
