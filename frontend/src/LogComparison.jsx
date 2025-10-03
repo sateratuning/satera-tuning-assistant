@@ -484,7 +484,8 @@ export default function LogComparison() {
       datasets.push({
         label: `${startMPH}–${endMPH}: ${r1.duration}s`,
         data: [{ x: r1.data.at(-1).x, y: r1.data.at(-1).y }],
-        pointRadius: 6, pointStyle: 'triangle', showLine: false
+        pointRadius: 6, pointStyle: 'triangle', showLine: false,
+        borderColor: '#00ff88'
       });
       xEnd = Math.max(xEnd, r1.duration);
     }
@@ -493,7 +494,8 @@ export default function LogComparison() {
       datasets.push({
         label: `${startMPH}–${endMPH} (L2): ${r2.duration}s`,
         data: [{ x: r2.data.at(-1).x, y: r2.data.at(-1).y }],
-        pointRadius: 6, pointStyle: 'triangle', showLine: false
+        pointRadius: 6, pointStyle: 'triangle', showLine: false,
+         borderColor: '#ff5733'
       });
       xEnd = Math.max(xEnd, r2.duration);
     }
@@ -505,7 +507,8 @@ export default function LogComparison() {
         data: overlayToUse.data || [],
         borderDash: [6, 4],
         tension: 0.1,
-        parsing: false
+        parsing: false,
+        borderColor: '#3399ff'
       });
       const lastX = overlayToUse.data?.length ? overlayToUse.data.at(-1).x : 0;
       xEnd = Math.max(xEnd, lastX);

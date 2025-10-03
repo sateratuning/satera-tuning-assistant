@@ -48,9 +48,7 @@ const styles = {
     marginTop: 0, marginBottom: 8, fontWeight: 700, fontSize: 26, letterSpacing: 0.4,
     backgroundImage: 'linear-gradient(180deg, #d6ffd9, #7dffa1 55%, #2fff6e)',
     WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
-    textShadow:
-      '0 1px 0 #0c150c, 0 2px 0 #0c150c, 0 3px 0 #0c150c,' +
-      '0 0 16px rgba(61,255,118,.35), 0 0 36px rgba(61,255,118,.18)',
+    textShadow: '0 1px 0 #0c150c, 0 2px 0 #0c150c, 0 3px 0 #0c150c, 0 0 16px rgba(61,255,118,.35), 0 0 36px rgba(61,255,118,.18)',
     animation: 'st-pulseGlow 2.2s ease-in-out infinite'
   },
   titleWrap: { display: 'grid', gap: 6, justifyItems: 'start', alignContent: 'center' },
@@ -58,14 +56,11 @@ const styles = {
     margin: 0, fontWeight: 700, fontSize: 26, letterSpacing: 0.6, textTransform: 'uppercase',
     backgroundImage: 'linear-gradient(90deg, #caffd1, #69ff8a, #caffd1)',
     WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
-    textShadow:
-      '0 1px 0 #0c150c, 0 2px 0 #0c150c, 0 3px 0 #0c150c, 0 4px 0 #0c150c,' +
-      '0 0 12px rgba(52,255,120,.35), 0 0 28px rgba(52,255,120,.18)',
+    textShadow: '0 1px 0 #0c150c, 0 2px 0 #0c150c, 0 3px 0 #0c150c, 0 4px 0 #0c150c, 0 0 12px rgba(52,255,120,.35), 0 0 28px rgba(52,255,120,.18)',
     animation: 'st-pulseGlow 2.2s ease-in-out infinite'
   },
   fieldGrid: { display: 'grid', gap: 8, gridTemplateColumns: '1fr', marginTop: 8 },
 
-  // suggestions styling
   badge: (variant) => ({
     display: 'inline-block', padding: '2px 8px', borderRadius: 999,
     fontSize: 12, marginRight: 8,
@@ -87,9 +82,10 @@ export default function MainApp() {
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '', logFile: null,
   });
-  const [result, setResult] = useState('');
+  const [metrics, setMetrics] = useState(null);
+  const [aiResult, setAiResult] = useState('');
   const [status, setStatus] = useState('');
-  const suggestions = useMemo(() => deriveAdvice(result), [result]);
+  const suggestions = useMemo(() => deriveAdvice(aiResult), [aiResult]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -100,21 +96,46 @@ export default function MainApp() {
   };
 
   const handleSubmit = async () => {
-    setStatus('');
-    const data = new FormData();
-    Object.entries(formData).forEach(([k, v]) => {
-      if (k === 'logFile' && v) data.append('log', v);
-      else data.append(k, v ?? '');
-    });
+    if (!formData.logFile) {
+      alert('Please upload a CSV log first.');
+      return;
+    }
+    setStatus('Analyzing...');
+    setAiResult('');
+    setMetrics(null);
 
     try {
-      const res = await fetch(`${API_BASE}/ai-review`, { method: 'POST', body: data });
-      if (!res.ok) throw new Error(`AI review failed (${res.status})`);
-      const text = await res.text();
-      const [review] = text.split('===SPLIT===');
-      setResult((review || '').trim());
-    } catch (e) {
-      setResult(`❌ Error analyzing log. ${e.message || ''}`);
+      // Step 1: parse log → metrics
+      const fd = new FormData();
+      fd.append('log', formData.logFile);
+      const logRes = await fetch(`${API_BASE}/review-log`, { method: 'POST', body: fd });
+      if (!logRes.ok) throw new Error('Log parsing failed');
+      const logJson = await logRes.json();
+      if (!logJson.ok) throw new Error('No metrics returned');
+      setMetrics(logJson.metrics);
+
+      // Step 2: send vehicle/mods + metrics to AI
+      const reviewRes = await fetch(`${API_BASE}/ai-review-json`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          vehicle: { year: formData.year, model: formData.model },
+          mods: {
+            engine: formData.engine, injectors: formData.injectors, map: formData.map,
+            throttle: formData.throttle, power_adder: formData.power,
+            trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
+          },
+          metrics: logJson.metrics
+        }),
+      });
+      if (!reviewRes.ok) throw new Error('AI review failed');
+      const reviewJson = await reviewRes.json();
+      setAiResult(reviewJson.assessment || 'No AI assessment returned.');
+      setStatus('');
+    } catch (err) {
+      console.error(err);
+      setStatus('');
+      setAiResult(`❌ Error: ${err.message}`);
     }
   };
 
@@ -195,25 +216,32 @@ export default function MainApp() {
               </div>
             </div>
 
-            {result && (
+            {metrics && (
               <div style={styles.card}>
                 <div style={styles.titleWrap}>
-                  <h3 style={styles.sectionTitleFancy}>📋 Diagnostic Summary</h3>
+                  <h3 style={styles.sectionTitleFancy}>📊 Parsed Metrics</h3>
                 </div>
-                <pre style={{
-                  marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4,
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
-                  background: '#0b0f0b', border: '1px solid #142014', borderRadius: 8, padding: 12, color: '#d9ffe0'
-                }}>
-                  {result}
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4, background: '#0b0f0b', border: '1px solid #142014', borderRadius: 8, padding: 12, color: '#d9ffe0' }}>
+                  {JSON.stringify(metrics, null, 2)}
                 </pre>
               </div>
             )}
 
-            {result && (
+            {aiResult && (
               <div style={styles.card}>
                 <div style={styles.titleWrap}>
-                  <h3 style={styles.sectionTitleFancy}>🧠 AI Suggestions</h3>
+                  <h3 style={styles.sectionTitleFancy}>🧠 AI Assessment</h3>
+                </div>
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4, background: '#0b0f0b', border: '1px solid #142014', borderRadius: 8, padding: 12, color: '#d9ffe0' }}>
+                  {aiResult}
+                </pre>
+              </div>
+            )}
+
+            {aiResult && (
+              <div style={styles.card}>
+                <div style={styles.titleWrap}>
+                  <h3 style={styles.sectionTitleFancy}>🔍 AI Suggestions</h3>
                 </div>
                 {suggestions.map(s => (
                   <div key={s.id} style={{ marginTop: 12 }}>
