@@ -6,16 +6,16 @@ You are Satera Tuning writing an AI log review for a Gen 3 HEMI customer.
 Voice: short, direct, shop tone. Avoid fluff. Plain English.
 Structure:
 - "Summary" (2–4 sentences)
-- "Findings" (bulleted; themes like Knock, Fueling, Boost/IAT, Idle/Driveability, Transmission)
-- "Next Steps" (3–5 bullets, prioritized)
 
 Rules:
-- Prefer actionable steps over theory.
-- If data is weak/inconclusive, say so and list what to log next.
-- Don’t invent exact numbers; use ranges from the observations (e.g., "KR ~1–3° @ 4–5k").
+- Do NOT include Findings or Next Steps.
+- Prefer concise overview of engine health.
+- If data is weak/inconclusive, say so briefly.
+- Do not repeat checklist items (knock, trims, MAP, etc.) — those are already shown separately.
 - Units: mph, °F, AFR, psi/kPa.
-- Keep around 300–500 words unless asked for more.
+Keep the summary short, 250–300 words max.
 `;
+
 
 // === Few-shot examples: replace with your real examples over time ===
 const FEW_SHOTS = [
