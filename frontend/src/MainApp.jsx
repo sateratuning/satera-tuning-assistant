@@ -13,8 +13,9 @@ import {
 } from './ui/options';
 import { deriveAdvice, SateraTone } from './ui/advice';
 
-const API_BASE = process.env.REACT_APP_API_BASE || '';
 Chart.register(annotationPlugin);
+
+const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 const styles = {
   page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
@@ -24,17 +25,42 @@ const styles = {
     color: '#000', fontSize: '2rem', fontWeight: 'bold',
     boxShadow: '0 4px 10px rgba(0,255,136,0.4)'
   },
+  headerRight: { display: 'flex', gap: 10 },
   shell: { padding: 20 },
   grid2: { display: 'grid', gridTemplateColumns: '410px 1fr', gap: 16 },
   gridNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 16 },
   card: { backgroundColor: '#1a1a1a', padding: 12, borderRadius: 8, border: '1px solid #2a2a2a' },
   button: { backgroundColor: '#00ff88', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
+  input: {
+    width: '100%', maxWidth: 360,
+    background: '#0f130f', border: '1px solid #1e2b1e',
+    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none'
+  },
+  select: {
+    width: '100%', maxWidth: 360,
+    background: '#0f130f', border: '1px solid #1e2b1e',
+    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none',
+    appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+    backgroundImage:
+      'linear-gradient(45deg, transparent 50%, #28ff6a 50%), linear-gradient(135deg, #28ff6a 50%, transparent 50%), linear-gradient(to right, #1e2b1e, #1e2b1e)',
+    backgroundPosition: 'calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px), calc(100% - 40px) 0',
+    backgroundSize: '6px 6px, 6px 6px, 28px 100%',
+    backgroundRepeat: 'no-repeat'
+  },
+  sidebarTitle: {
+    marginTop: 0, marginBottom: 8, fontWeight: 700, fontSize: 26, letterSpacing: 0.4,
+    backgroundImage: 'linear-gradient(180deg, #d6ffd9, #7dffa1 55%, #2fff6e)',
+    WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
+    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 0 16px rgba(61,255,118,.35),0 0 36px rgba(61,255,118,.18)',
+    animation: 'st-pulseGlow 2.2s ease-in-out infinite'
+  },
+  fieldGrid: { display: 'grid', gap: 8, gridTemplateColumns: '1fr', marginTop: 8 },
   titleWrap: { display: 'grid', gap: 6, justifyItems: 'start', alignContent: 'center' },
   sectionTitleFancy: {
     margin: 0, fontWeight: 700, fontSize: 26, letterSpacing: 0.6, textTransform: 'uppercase',
     backgroundImage: 'linear-gradient(90deg, #caffd1, #69ff8a, #caffd1)',
     WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
-    textShadow: '0 1px 0 #0c150c, 0 2px 0 #0c150c, 0 3px 0 #0c150c, 0 4px 0 #0c150c, 0 0 12px rgba(52,255,120,.35), 0 0 28px rgba(52,255,120,.18)',
+    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 4px 0 #0c150c,0 0 12px rgba(52,255,120,.35),0 0 28px rgba(52,255,120,.18)',
     animation: 'st-pulseGlow 2.2s ease-in-out infinite'
   },
 };
@@ -61,13 +87,11 @@ export default function MainApp() {
     const { name, value } = e.target;
     setFormData((p) => ({ ...p, [name]: value }));
   };
-
   const handleFileChange = (e) => {
     setFormData((p) => ({ ...p, logFile: e.target.files?.[0] || null }));
   };
 
   const handleSubmit = async () => {
-    // Required fields
     const required = ['engine', 'power', 'fuel', 'trans', 'year', 'model'];
     const missing = required.filter(k => !formData[k]);
 
@@ -137,69 +161,37 @@ export default function MainApp() {
   const annotations = metrics ? {
     annotations: {
       zeroToSixty: metrics.zeroTo60 ? {
-        type: 'line',
-        xMin: metrics.zeroTo60,
-        xMax: metrics.zeroTo60,
-        borderColor: '#ff9a9a',
-        borderWidth: 2,
-        label: {
-          enabled: true,
-          content: `0–60: ${metrics.zeroTo60}s`,
-          position: 'start',
-          backgroundColor: 'rgba(255,154,154,0.2)',
-          color: '#ff9a9a'
-        }
+        type: 'line', xMin: metrics.zeroTo60, xMax: metrics.zeroTo60,
+        borderColor: '#ff9a9a', borderWidth: 2,
+        label: { enabled: true, content: `0–60: ${metrics.zeroTo60}s`, position: 'start', backgroundColor: 'rgba(255,154,154,0.2)', color: '#ff9a9a' }
       } : null,
       fortyToHundred: metrics.fortyTo100 ? {
-        type: 'line',
-        xMin: metrics.fortyTo100,
-        xMax: metrics.fortyTo100,
-        borderColor: '#ffc96b',
-        borderWidth: 2,
-        label: {
-          enabled: true,
-          content: `40–100: ${metrics.fortyTo100}s`,
-          position: 'start',
-          backgroundColor: 'rgba(255,201,107,0.2)',
-          color: '#ffc96b'
-        }
+        type: 'line', xMin: metrics.fortyTo100, xMax: metrics.fortyTo100,
+        borderColor: '#ffc96b', borderWidth: 2,
+        label: { enabled: true, content: `40–100: ${metrics.fortyTo100}s`, position: 'start', backgroundColor: 'rgba(255,201,107,0.2)', color: '#ffc96b' }
       } : null,
       sixtyToOneThirty: metrics.sixtyTo130 ? {
-        type: 'line',
-        xMin: metrics.sixtyTo130,
-        xMax: metrics.sixtyTo130,
-        borderColor: '#74ffb0',
-        borderWidth: 2,
-        label: {
-          enabled: true,
-          content: `60–130: ${metrics.sixtyTo130}s`,
-          position: 'start',
-          backgroundColor: 'rgba(116,255,176,0.2)',
-          color: '#74ffb0'
-        }
+        type: 'line', xMin: metrics.sixtyTo130, xMax: metrics.sixtyTo130,
+        borderColor: '#74ffb0', borderWidth: 2,
+        label: { enabled: true, content: `60–130: ${metrics.sixtyTo130}s`, position: 'start', backgroundColor: 'rgba(116,255,176,0.2)', color: '#74ffb0' }
       } : null
     }
   } : {};
 
   const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    parsing: false,
+    responsive: true, maintainAspectRatio: false, parsing: false,
     scales: {
       x: { type: 'linear', title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
       y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
     },
-    plugins: {
-      legend: { labels: { color: '#adff2f' } },
-      annotation: annotations
-    }
+    plugins: { legend: { labels: { color: '#adff2f' } }, annotation: annotations }
   };
 
   return (
     <div style={styles.page}>
       <header style={styles.header}>
         <div>Satera Tuning — AI Log Review (BETA)</div>
-        <div style={{ display:'flex', gap:10 }}>
+        <div style={styles.headerRight}>
           <Link to="/log-comparison" style={{ ...styles.button, textDecoration:'none', lineHeight:'normal' }}>
             Log Comparison
           </Link>
@@ -208,44 +200,50 @@ export default function MainApp() {
 
       <div style={styles.shell}>
         <div style={isNarrow ? styles.gridNarrow : styles.grid2}>
-          {/* LEFT: vehicle details form */}
-          <aside style={styles.card}>
-            <h3 style={styles.sectionTitleFancy}>Vehicle Details</h3>
-            <label>Year</label>
-            <select name="year" value={formData.year} onChange={handleChange}>
-              <option value="">-- Select Year --</option>
-              {years.map(y => <option key={y} value={y}>{y}</option>)}
-            </select>
-            <label>Model</label>
-            <select name="model" value={formData.model} onChange={handleChange}>
-              <option value="">-- Select Model --</option>
-              {models.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <label>Engine</label>
-            <select name="engine" value={formData.engine} onChange={handleChange}>
-              <option value="">-- Select Engine --</option>
-              {engines.map(e => <option key={e} value={e}>{e}</option>)}
-            </select>
-            <label>Power Adder</label>
-            <select name="power" value={formData.power} onChange={handleChange}>
-              <option value="">-- Select Power Adder --</option>
-              {powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
-            </select>
-            <label>Fuel</label>
-            <select name="fuel" value={formData.fuel} onChange={handleChange}>
-              <option value="">-- Select Fuel --</option>
-              {fuels.map(f => <option key={f} value={f}>{f}</option>)}
-            </select>
-            <label>Transmission</label>
-            <select name="trans" value={formData.trans} onChange={handleChange}>
-              <option value="">-- Select Transmission --</option>
-              {transmissions.map(t => <option key={t} value={t}>{t}</option>)}
-            </select>
+          {/* LEFT: Vehicle form */}
+          <aside>
+            <div style={styles.card}>
+              <h3 style={styles.sidebarTitle}>Vehicle / Run Details</h3>
+              <div style={styles.fieldGrid}>
+                <select name="year" value={formData.year} onChange={handleChange} style={styles.select}>
+                  <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+                <select name="model" value={formData.model} onChange={handleChange} style={styles.select}>
+                  <option value="">Model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <select name="engine" value={formData.engine} onChange={handleChange} style={styles.select}>
+                  <option value="">Engine</option>{engines.map(e => <option key={e} value={e}>{e}</option>)}
+                </select>
+                <select name="injectors" value={formData.injectors} onChange={handleChange} style={styles.select}>
+                  <option value="">Injectors</option>{injectors.map(i => <option key={i} value={i}>{i}</option>)}
+                </select>
+                <select name="map" value={formData.map} onChange={handleChange} style={styles.select}>
+                  <option value="">MAP Sensor</option>{mapSensors.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+                <select name="throttle" value={formData.throttle} onChange={handleChange} style={styles.select}>
+                  <option value="">Throttle Body</option>{throttles.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select name="power" value={formData.power} onChange={handleChange} style={styles.select}>
+                  <option value="">Power Adder</option>{powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+                <select name="trans" value={formData.trans} onChange={handleChange} style={styles.select}>
+                  <option value="">Transmission</option>{transmissions.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select name="tire" value={formData.tire} onChange={handleChange} style={styles.select}>
+                  <option value="">Tire Height</option>{tireHeights.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+                <select name="gear" value={formData.gear} onChange={handleChange} style={styles.select}>
+                  <option value="">Rear Gear</option>{gearRatios.map(g => <option key={g} value={g}>{g}</option>)}
+                </select>
+                <select name="fuel" value={formData.fuel} onChange={handleChange} style={styles.select}>
+                  <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </div>
+            </div>
           </aside>
 
           {/* RIGHT: Upload + Graph + AI Results */}
           <main style={{ display: 'grid', gap: 16 }}>
-            {/* Upload card */}
             <div style={styles.card}>
               <h3 style={styles.sectionTitleFancy}>Upload a Datalog</h3>
               <input type="file" accept=".csv" onChange={handleFileChange} />
@@ -253,7 +251,6 @@ export default function MainApp() {
               {status && <div style={{ marginTop: 8 }}>{status}</div>}
             </div>
 
-            {/* Graph */}
             {graphs && (
               <div style={{ ...styles.card, height: 300 }}>
                 <div style={styles.titleWrap}>
@@ -263,7 +260,6 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* Parsed Metrics */}
             {metrics && (
               <div style={styles.card}>
                 <h3 style={styles.sectionTitleFancy}>📊 Parsed Metrics</h3>
@@ -273,17 +269,13 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* AI Assessment */}
             {aiResult && (
               <div style={styles.card}>
                 <h3 style={styles.sectionTitleFancy}>🧠 AI Assessment</h3>
-                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
-                  {aiResult}
-                </pre>
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>{aiResult}</pre>
               </div>
             )}
 
-            {/* AI Suggestions */}
             {aiResult && (
               <div style={styles.card}>
                 <h3 style={styles.sectionTitleFancy}>🔍 AI Suggestions</h3>
@@ -300,14 +292,10 @@ export default function MainApp() {
                       </span>
                     )}
                     <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.label}</strong>
-                    <ul>
-                      {s.bullets.map((t, i) => <li key={i}>{t}</li>)}
-                    </ul>
+                    <ul>{s.bullets.map((t, i) => <li key={i}>{t}</li>)}</ul>
                   </div>
                 ))}
-                {!suggestions.length && (
-                  <div style={{ opacity: .9, marginTop: 8 }}>No additional suggestions.</div>
-                )}
+                {!suggestions.length && <div style={{ opacity: .9, marginTop: 8 }}>No additional suggestions.</div>}
               </div>
             )}
           </main>
