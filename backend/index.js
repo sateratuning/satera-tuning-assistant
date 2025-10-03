@@ -26,7 +26,7 @@ const processLog = require('./routes/processLog');
 const trainerAI = require('./routes/trainerAI');
 const overlayRoutes = require('./routes/overlay');
 const { buildMessages } = require('./prompt');
-const parseCSV = require('./utils/parseCSV'); // compact parser
+const parseCSV = require('./utils/parseCSV'); // NEW compact parser
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
@@ -58,38 +58,28 @@ app.use('/', overlayRoutes);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 /* ------------------------
-   FIXED CSV PARSER (match processLog.js)
+   LEGACY CSV AI REVIEW (upload)
 ------------------------- */
 function analyzeCsvContent(content) {
-  const lines = content.split(/\r?\n/).map(l => l.trimEnd());
+  const lines = content.split(/\r?\n/).map(l => l.trim());
   if (!lines.length) throw new Error('CSV file empty');
-
-  // Match processLog.js: 15 headers, 16 units, 17–18 blank, 19+ data
-  const after15 = lines.slice(15);
-  if (after15.length < 5) throw new Error('CSV incomplete after header row');
-
-  const headers = (after15[0] || '').split(',').map(h => h.trim());
-  const dataRows = after15.slice(4).filter(r => r && r.includes(','));
-
-  const toNum = (v) => {
-    const n = parseFloat(v);
-    return Number.isFinite(n) ? n : undefined;
-  };
-
+  const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) throw new Error('Could not locate header row');
+  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+  const dataStart = headerRowIndex + 4;
+  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(','));
+  const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
   const parsed = dataRows.map(row => {
     const values = row.split(',');
     const obj = {};
     headers.forEach((h, i) => { obj[h] = toNum(values[i]); });
     return obj;
   });
-
   if (!parsed.length) throw new Error('No data rows found in CSV.');
   return { headers, parsed };
 }
 
-/* ------------------------
-   STRICT AI REVIEW (10-item checklist)
-------------------------- */
+// Legacy AI review (CSV upload)
 app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res) => {
   let filePath;
   try {
@@ -98,49 +88,35 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     const content = fs.readFileSync(filePath, 'utf8');
     const { headers, parsed } = analyzeCsvContent(content);
 
-    // Downsample for efficiency
-    const sampled = parsed.filter((_, i) => i % 400 === 0);
+    const out = [`⚡ Legacy checks enabled (CSV upload mode)`];
+    const rpmCol = 'Engine RPM (SAE)';
+    const knockCol = 'Total Knock Retard';
+    const knockVals = parsed.map(r => r[knockCol]).filter(Number.isFinite);
+    if (knockVals.length && Math.max(...knockVals) > 0) out.push(`⚠️ Knock detected`);
+    else out.push('✅ No knock detected');
 
-    // AI prompt (strict 10 items)
-    const prompt = `
-You are an automotive diagnostic assistant for Gen 3 HEMI vehicles.
-Analyze the following sampled log data.
+    const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
+      rpm: r[rpmCol],
+      airmass: r['Cylinder Airmass'],
+      knock: r[knockCol],
+    }));
 
-Only check the following 10 items, in this exact order:
-1. Knock events (amount and associated RPM)
-2. Peak spark timing under WOT (Throttle > 85%), with RPM
-3. MAP sensor range under WOT
-4. Knock sensor voltages > 3.0V
-5. Fuel trim variance between banks (>10%)
-6. Average fuel correction per bank
-7. Oil pressure drops (below 20 psi when RPM > 500)
-8. Coolant temperature (if above 230°F)
-9. Misfires per cylinder
-10. Best acceleration times (0–60, 40–100, 60–130 mph)
-
-Output one line per item, in order. 
-If data is missing, write: "ℹ️ [Item] data missing".
-Do not provide tuning advice or speculation.
-`;
+    const observations = out.join('\n') + '\n' + JSON.stringify(reduced.slice(0, 200), null, 2);
+    const messages = buildMessages({ meta: {}, observations });
 
     let finalReview = '';
     try {
       const completion = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        temperature: 0.2,
-        max_tokens: 700,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: JSON.stringify(sampled.slice(0, 200), null, 2) }
-        ]
+        temperature: 0.3,
+        messages
       });
       finalReview = completion.choices?.[0]?.message?.content?.trim() || '';
     } catch (e) {
       finalReview = 'Model unavailable. Showing quick checks only.';
     }
 
-    // Return with SPLIT delimiter (frontend expects this)
-    res.type('text/plain').send('⚡ AI Diagnostic Review\n===SPLIT===\n' + finalReview);
+    res.type('text/plain').send(out.join('\n') + '\n===SPLIT===\n' + finalReview);
   } catch (err) {
     console.error(err);
     res.status(500).send('Failed to analyze log.');
@@ -173,7 +149,15 @@ function buildUserPrompt({ vehicle, mods, metrics }) {
   return [
 `VEHICLE: ${vehicle?.year || ''} ${vehicle?.model || ''} | Engine: ${mods.engine} | Trans: ${mods.trans}`,
 `Mods: ${mods.power_adder}, Fuel: ${mods.fuel}, NN: ${mods.nn}`,
-`Metrics:` + JSON.stringify(metrics)
+`Metrics:`,
+`Knock: ${metrics.knock?.length ? JSON.stringify(metrics.knock) : 'None'}`,
+`Peak timing: ${metrics.peakTiming}° @ ${metrics.peakTimingRPM} RPM`,
+`KS volts: B1 ${metrics.ks1max}, B2 ${metrics.ks2max}`,
+`Fuel trims: var ${metrics.varFT}, Avg B1 ${metrics.avgFT1}, Avg B2 ${metrics.avgFT2}`,
+`Oil min: ${metrics.oilMin}, ECT max: ${metrics.ectMax}`,
+`Misfires: ${JSON.stringify(metrics.misfires)}`,
+`0–60: ${metrics.zeroTo60}, 40–100: ${metrics.fortyTo100}, 60–130: ${metrics.sixtyTo130}`,
+`Please summarize neutrally.`
   ].join('\n');
 }
 
@@ -192,7 +176,7 @@ app.post('/review-log', upload.single('log'), (req, res) => {
   }
 });
 
-// Token-efficient AI review (JSON mode)
+// Token-efficient AI review
 app.post('/ai-review-json', async (req, res) => {
   try {
     const { vehicle, mods, metrics } = req.body || {};
