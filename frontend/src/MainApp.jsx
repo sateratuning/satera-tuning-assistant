@@ -82,11 +82,12 @@ export default function MainApp() {
       const logRes = await fetch(`${API_BASE}/review-log`, { method: 'POST', body: fd });
       if (!logRes.ok) throw new Error('Log parsing failed');
       const logJson = await logRes.json();
-      if (!logJson.ok) throw new Error('No metrics returned');
+      if (!logJson.metrics) throw new Error('No metrics returned');
       setMetrics(logJson.metrics);
       setGraphs(logJson.graphs || null);
 
-      const reviewRes = await fetch(`${API_BASE}/ai-review-json`, {
+      // FIXED: Use /ai-review instead of /ai-review-json
+      const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -126,15 +127,15 @@ export default function MainApp() {
 
   const annotations = metrics ? {
     annotations: {
-      zeroToSixty: metrics.zeroToSixty ? {
+      zeroToSixty: metrics.zeroTo60 ? {
         type: 'line',
-        xMin: metrics.zeroToSixty,
-        xMax: metrics.zeroToSixty,
+        xMin: metrics.zeroTo60,
+        xMax: metrics.zeroTo60,
         borderColor: '#ff9a9a',
         borderWidth: 2,
         label: {
           enabled: true,
-          content: `0–60: ${metrics.zeroToSixty}s`,
+          content: `0–60: ${metrics.zeroTo60}s`,
           position: 'start',
           backgroundColor: 'rgba(255,154,154,0.2)',
           color: '#ff9a9a'
@@ -198,12 +199,17 @@ export default function MainApp() {
 
       <div style={styles.shell}>
         <div style={isNarrow ? styles.gridNarrow : styles.grid2}>
-          {/* LEFT: unchanged form ... */}
+          {/* LEFT: vehicle details form (unchanged) */}
 
-          {/* CENTER: Upload + Graph + AI */}
+          {/* CENTER: Upload + Graph + AI Results */}
           <main style={{ display: 'grid', gap: 16 }}>
-            {/* Upload Card */}
-            {/* ... existing upload card code ... */}
+            {/* Upload card */}
+            <div style={styles.card}>
+              <h3 style={styles.sectionTitleFancy}>Upload a Datalog</h3>
+              <input type="file" accept=".csv" onChange={handleFileChange} />
+              <button onClick={handleSubmit} style={{ ...styles.button, marginTop: 8 }}>Analyze</button>
+              {status && <div style={{ marginTop: 8 }}>{status}</div>}
+            </div>
 
             {/* Graph */}
             {graphs && (
@@ -215,7 +221,53 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* Parsed Metrics, AI Assessment, Suggestions remain unchanged */}
+            {/* Parsed Metrics */}
+            {metrics && (
+              <div style={styles.card}>
+                <h3 style={styles.sectionTitleFancy}>📊 Parsed Metrics</h3>
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
+                  {JSON.stringify(metrics, null, 2)}
+                </pre>
+              </div>
+            )}
+
+            {/* AI Assessment */}
+            {aiResult && (
+              <div style={styles.card}>
+                <h3 style={styles.sectionTitleFancy}>🧠 AI Assessment</h3>
+                <pre style={{ marginTop: 12, whiteSpace: 'pre-wrap', lineHeight: 1.4 }}>
+                  {aiResult}
+                </pre>
+              </div>
+            )}
+
+            {/* AI Suggestions */}
+            {aiResult && (
+              <div style={styles.card}>
+                <h3 style={styles.sectionTitleFancy}>🔍 AI Suggestions</h3>
+                {suggestions.map(s => (
+                  <div key={s.id} style={{ marginTop: 12 }}>
+                    {SateraTone.showSeverityBadges && (
+                      <span style={{
+                        display: 'inline-block', padding: '2px 8px', borderRadius: 999,
+                        fontSize: 12, marginRight: 8,
+                        background: s.severity === 'high' ? '#ff9a9a' : s.severity === 'med' ? '#ffc96b' : '#74ffb0',
+                        color: '#111'
+                      }}>
+                        {s.severity === 'high' ? 'High Priority' : s.severity === 'med' ? 'Medium' : 'Info'}
+                      </span>
+                    )}
+                    <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.label}</strong>
+                    <ul>
+                      {s.bullets.map((t, i) => <li key={i}>{t}</li>)}
+                    </ul>
+                  </div>
+                ))}
+                {!suggestions.length && (
+                  <div style={{ opacity: .9, marginTop: 8 }}>No additional suggestions.</div>
+                )}
+              </div>
+            )}
           </main>
         </div>
       </div>
