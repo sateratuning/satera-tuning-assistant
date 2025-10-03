@@ -8,7 +8,7 @@ const cors = require('cors');
 const multer = require('multer');
 const { OpenAI } = require('openai');
 
-// Debug (safe): show token length/role only
+// Debug: show SR key length only
 const dumpRole = (k) => {
   try {
     const [h, p] = String(k || '').split('.');
@@ -25,9 +25,8 @@ const leaderboardRoutes = require('./routes/leaderboard');
 const processLog = require('./routes/processLog');
 const trainerAI = require('./routes/trainerAI');
 const overlayRoutes = require('./routes/overlay');
-
-// NEW: style-guided prompt builder for AI reviews
 const { buildMessages } = require('./prompt');
+const parseCSV = require('./utils/parseCSV'); // compact parser
 
 const app = express();
 const PORT = Number(process.env.PORT || 5000);
@@ -58,24 +57,24 @@ app.use('/', overlayRoutes);
 // OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-/**
- * Shared CSV analyzer (with header auto-detect)
- */
+/* ------------------------
+   FIXED CSV PARSER (match processLog.js)
+------------------------- */
 function analyzeCsvContent(content) {
-  const lines = content.split(/\r?\n/).map(l => l.trim());
+  const lines = content.split(/\r?\n/).map(l => l.trimEnd());
   if (!lines.length) throw new Error('CSV file empty');
 
-  // 🔎 Find header row (must start with "Offset")
-  const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
-  if (headerRowIndex === -1) throw new Error('Could not locate header row');
+  // Match processLog.js: 15 headers, 16 units, 17–18 blank, 19+ data
+  const after15 = lines.slice(15);
+  if (after15.length < 5) throw new Error('CSV incomplete after header row');
 
-  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+  const headers = (after15[0] || '').split(',').map(h => h.trim());
+  const dataRows = after15.slice(4).filter(r => r && r.includes(','));
 
-  // Skip header + units + 2 spacer rows
-  const dataStart = headerRowIndex + 4;
-  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(','));
-
-  const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
+  const toNum = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
 
   const parsed = dataRows.map(row => {
     const values = row.split(',');
@@ -85,132 +84,63 @@ function analyzeCsvContent(content) {
   });
 
   if (!parsed.length) throw new Error('No data rows found in CSV.');
-
-  const safeMax = (arr) => (arr.length ? Math.max(...arr) : undefined);
-  const safeMin = (arr) => (arr.length ? Math.min(...arr) : undefined);
-  const avg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined);
-
-  const out = [];
-
-  // Knock
-  const knockValues = parsed.map(r => r['Total Knock Retard']).filter(Number.isFinite).map(v => Math.abs(v));
-  const peakKnock = safeMax(knockValues);
-  if (peakKnock !== undefined) out.push(peakKnock > 0 ? `⚠️ Knock detected: up to ${peakKnock.toFixed(1)}°` : '✅ No knock detected.');
-
-  // WOT
-  const accel = parsed.map(r => r['Accelerator Position D (SAE)']).filter(Number.isFinite);
-  const wotRows = accel.length ? parsed.filter(r => (r['Accelerator Position D (SAE)'] ?? 0) > 86) : [];
-  const rpmCol = 'Engine RPM (SAE)';
-  const timingCol = 'Timing Advance (SAE)';
-  const mapCol = 'Intake Manifold Absolute Pressure (SAE)';
-
-  if (wotRows.length) {
-    const peakTimingRow = wotRows.reduce((best, r) => ((r[timingCol] ?? -Infinity) > (best[timingCol] ?? -Infinity) ? r : best), wotRows[0]);
-    const peakTiming = peakTimingRow[timingCol], rpmAtPeak = peakTimingRow[rpmCol];
-    if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak))
-      out.push(`📈 Peak timing under WOT: ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
-
-    const mapWOT = wotRows.map(r => r[mapCol]).filter(Number.isFinite);
-    if (mapWOT.length)
-      out.push(`🌡 MAP under WOT: ${safeMin(mapWOT).toFixed(1)} – ${safeMax(mapWOT).toFixed(1)} kPa`);
-  } else {
-    out.push('ℹ️ No WOT conditions found.');
-  }
-
-  // Knock sensors
-  ['Knock Sensor 1', 'Knock Sensor 2'].forEach(s => {
-    const volts = parsed.map(r => r[s]).filter(Number.isFinite);
-    if (volts.length) {
-      const peak = safeMax(volts);
-      out.push(peak > 3.0 ? `⚠️ ${s} exceeded 3.0V threshold (Peak: ${peak.toFixed(2)}V)` : `✅ ${s} within safe range (Peak: ${peak.toFixed(2)}V)`);
-    }
-  });
-
-  // Fuel trims
-  const lt1 = parsed.map(r => r['Long Term Fuel Trim Bank 1 (SAE)']).filter(Number.isFinite);
-  const lt2 = parsed.map(r => r['Long Term Fuel Trim Bank 2 (SAE)']).filter(Number.isFinite);
-  if (lt1.length && lt2.length) {
-    const variance = lt1.map((v, i) => (Number.isFinite(v) && Number.isFinite(lt2[i])) ? Math.abs(v - lt2[i]) : undefined).filter(Number.isFinite);
-    if (variance.some(v => v > 10)) out.push('⚠️ Fuel trim variance > 10% between banks');
-  }
-
-  const st1 = parsed.map(r => r['Short Term Fuel Trim Bank 1 (SAE)']).filter(Number.isFinite);
-  const st2 = parsed.map(r => r['Short Term Fuel Trim Bank 2 (SAE)']).filter(Number.isFinite);
-  if (st1.length && lt1.length) {
-    const combo1 = st1.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt1[i]) ? lt1[i] : 0)).filter(Number.isFinite);
-    const a1 = avg(combo1); if (a1 !== undefined) out.push(`📊 Avg fuel correction (Bank 1): ${a1.toFixed(1)}%`);
-  }
-  if (st2.length && lt2.length) {
-    const combo2 = st2.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt2[i]) ? lt2[i] : 0)).filter(Number.isFinite);
-    const a2 = avg(combo2); if (a2 !== undefined) out.push(`📊 Avg fuel correction (Bank 2): ${a2.toFixed(1)}%`);
-  }
-
-  // Oil pressure
-  const oil = parsed.map(r => r['Engine Oil Pressure']).filter(Number.isFinite);
-  if (oil.length && parsed.some(r => (r[rpmCol] ?? 0) > 500 && r['Engine Oil Pressure'] < 20)) {
-    out.push('⚠️ Oil pressure dropped below 20 psi.');
-  }
-
-  // Coolant
-  const ect = parsed.map(r => r['Engine Coolant Temp (SAE)']).filter(Number.isFinite);
-  if (ect.length && ect.some(v => v > 230)) out.push('⚠️ Coolant temp exceeded 230°F.');
-
-  return { headers, parsed, out };
+  return { headers, parsed };
 }
 
-// -------- AI REVIEW (CSV upload) --------
+/* ------------------------
+   STRICT AI REVIEW (10-item checklist)
+------------------------- */
 app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res) => {
   let filePath;
   try {
     if (!req.file) return res.status(400).send('No CSV file uploaded.');
     filePath = req.file.path;
     const content = fs.readFileSync(filePath, 'utf8');
+    const { headers, parsed } = analyzeCsvContent(content);
 
-    const { headers, parsed, out } = analyzeCsvContent(content);
-    const quickChecks = out.join('\n');
+    // Downsample for efficiency
+    const sampled = parsed.filter((_, i) => i % 400 === 0);
 
-    const rpmCol = 'Engine RPM (SAE)';
-    const reduced = parsed
-      .filter((_, i) => i % 400 === 0)
-      .map(row => ({
-        rpm: row[rpmCol],
-        airmass: row['Cylinder Airmass'],
-        knock: row['Total Knock Retard'],
-      }))
-      .filter(r => Number.isFinite(r.rpm) && Number.isFinite(r.airmass) && Number.isFinite(r.knock));
+    // AI prompt (strict 10 items)
+    const prompt = `
+You are an automotive diagnostic assistant for Gen 3 HEMI vehicles.
+Analyze the following sampled log data.
 
-    const observations = [
-      'Quick checks:',
-      quickChecks,
-      '',
-      'Reduced telemetry sample (rpm, airmass, knock):',
-      JSON.stringify(reduced.slice(0, 200), null, 2)
-    ].join('\n');
+Only check the following 10 items, in this exact order:
+1. Knock events (amount and associated RPM)
+2. Peak spark timing under WOT (Throttle > 85%), with RPM
+3. MAP sensor range under WOT
+4. Knock sensor voltages > 3.0V
+5. Fuel trim variance between banks (>10%)
+6. Average fuel correction per bank
+7. Oil pressure drops (below 20 psi when RPM > 500)
+8. Coolant temperature (if above 230°F)
+9. Misfires per cylinder
+10. Best acceleration times (0–60, 40–100, 60–130 mph)
 
-    const meta = {
-      year: req.body.year || '',
-      model: req.body.model || '',
-      engine: req.body.engine || '',
-      fuel: req.body.fuel || '',
-      power: req.body.power || '',
-      trans: req.body.trans || ''
-    };
-    const messages = buildMessages({ meta, observations });
+Output one line per item, in order. 
+If data is missing, write: "ℹ️ [Item] data missing".
+Do not provide tuning advice or speculation.
+`;
 
     let finalReview = '';
     try {
       const completion = await openai.chat.completions.create({
         model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
-        temperature: 0.3,
-        messages
+        temperature: 0.2,
+        max_tokens: 700,
+        messages: [
+          { role: 'system', content: prompt },
+          { role: 'user', content: JSON.stringify(sampled.slice(0, 200), null, 2) }
+        ]
       });
       finalReview = completion.choices?.[0]?.message?.content?.trim() || '';
     } catch (e) {
-      console.warn('AI review failed:', e.message);
       finalReview = 'Model unavailable. Showing quick checks only.';
     }
 
-    res.type('text/plain').send(`${quickChecks}\n===SPLIT===\n${finalReview}`);
+    // Return with SPLIT delimiter (frontend expects this)
+    res.type('text/plain').send('⚡ AI Diagnostic Review\n===SPLIT===\n' + finalReview);
   } catch (err) {
     console.error(err);
     res.status(500).send('Failed to analyze log.');
@@ -219,34 +149,89 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
   }
 });
 
-// -------- AI TABLE (unchanged) --------
+/* ------------------------
+   NEW METRICS-BASED AI REVIEW
+------------------------- */
+
+// Validation + tone helpers
+function sanitizeTone(text) {
+  if (!text) return text;
+  return text
+    .replace(/the tune is (too|overly) aggressive/gi, 'the timing/load behavior may merit review')
+    .replace(/\bfix\b/gi, 'address')
+    .replace(/\bincorrect\b/gi, 'inconsistent');
+}
+function buildSystemPrompt({ mods }) {
+  return [
+    `You are an automotive log *assessor* for Gen 3 HEMI vehicles.`,
+    `Rules: neutral, no tuning edits, no blame.`,
+    mods.power_adder === 'N/A' ? `Do not mention boost/psi.` : ``,
+    `Sections: Summary, Knock, Timing, Fueling, Sensors, Temps/Oil, Misfires, Acceleration, Next Steps.`
+  ].join('\n');
+}
+function buildUserPrompt({ vehicle, mods, metrics }) {
+  return [
+`VEHICLE: ${vehicle?.year || ''} ${vehicle?.model || ''} | Engine: ${mods.engine} | Trans: ${mods.trans}`,
+`Mods: ${mods.power_adder}, Fuel: ${mods.fuel}, NN: ${mods.nn}`,
+`Metrics:` + JSON.stringify(metrics)
+  ].join('\n');
+}
+
+// Parse CSV → metrics (raw values)
+app.post('/review-log', upload.single('log'), (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const raw = fs.readFileSync(req.file.path, 'utf8');
+    const metrics = parseCSV(raw);
+    fs.unlinkSync(req.file.path);
+    if (!metrics) return res.status(400).json({ error: 'Parse failed' });
+    res.json({ ok: true, metrics });
+  } catch (err) {
+    console.error('review-log error', err);
+    res.status(500).json({ error: 'Failed to process log' });
+  }
+});
+
+// Token-efficient AI review (JSON mode)
+app.post('/ai-review-json', async (req, res) => {
+  try {
+    const { vehicle, mods, metrics } = req.body || {};
+    const system = buildSystemPrompt({ mods });
+    const user = buildUserPrompt({ vehicle, mods, metrics });
+    const resp = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      max_tokens: 600,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user }
+      ]
+    });
+    let text = resp.choices?.[0]?.message?.content || '';
+    text = sanitizeTone(text);
+    if (mods.power_adder === 'N/A') {
+      text = text.split('\n').filter(l => !/\b(boost|psi)\b/i.test(l)).join('\n');
+    }
+    res.json({ ok: true, assessment: text });
+  } catch (e) {
+    console.error('ai-review-json error', e);
+    res.status(500).json({ error: 'AI review failed' });
+  }
+});
+
+/* ------------------------
+   AI TABLE (unchanged)
+------------------------- */
 app.post(['/ai-table', '/api/ai-table'], async (req, res) => {
   try {
     const { table, vehicleInfo, reducedLogData } = req.body || {};
     if (!table || !vehicleInfo) return res.status(400).send('Missing table or vehicleInfo.');
-
-    const prompt = `
-You are a Gen 3 HEMI calibration expert.
-Given the timing table (copied from HP Tuners, includes axis) and vehicle setup${reducedLogData ? ' (plus a small sample of RPM/knock/airmass)' : ''},
-return ONLY the corrected table in tab-delimited format. No explanations.
-
-Vehicle Setup:
-${JSON.stringify(vehicleInfo, null, 2)}
-
-${reducedLogData ? `Telemetry Sample:\n${JSON.stringify(reducedLogData, null, 2)}\n` : ''}
-
-Original Table:
-${table}
-
-ONLY return the corrected table (no headers, no notes):
-`.trim();
-
+    const prompt = `You are a Gen 3 HEMI calibration expert. Return only corrected table:\n${table}`;
     const aiResponse = await openai.chat.completions.create({
       model: 'gpt-4o',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.2,
     });
-
     const correctedTable = (aiResponse.choices?.[0]?.message?.content || '').trim();
     if (!correctedTable) return res.status(500).send('AI returned empty table.');
     res.send(correctedTable);

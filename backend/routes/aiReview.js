@@ -13,9 +13,7 @@ const REQUIRED_ENUMS = {
 
 function validateMods(mods) {
   const missing = [];
-  // Required presence
   ['engine','power_adder','fuel','trans','nn'].forEach(k => { if (!mods?.[k]) missing.push(k); });
-  // Enum checks
   Object.entries(REQUIRED_ENUMS).forEach(([k, list]) => {
     if (mods?.[k] && !list.includes(mods[k])) missing.push(`${k}:invalid`);
   });
@@ -24,7 +22,6 @@ function validateMods(mods) {
 
 function sanitizeTone(text) {
   if (!text) return text;
-  // Convert blamey/reco language to neutral observations
   const replacements = [
     [/the tune is (too|overly) aggressive/gi, 'the current timing/load behavior shows signs that may merit further review'],
     [/retard (timing|spark) by [\d\.\-]+°/gi, 'consider further investigation based on your process'],
@@ -39,52 +36,46 @@ function sanitizeTone(text) {
 }
 
 function buildSystemPrompt({ mods }) {
-  const isNA = mods.power_adder === 'N/A';
   return [
-`You are an automotive log *assessor* for Gen 3 HEMI vehicles. Your job is to neutrally describe what the log shows.`,
+`You are an automotive log *assessor* for Gen 3 HEMI vehicles.`,
 `HARD RULES:`,
-`- Do NOT recommend tuning changes. Do NOT provide degrees, percentages, or prescriptive edits.`,
-`- Do NOT blame the tuner or owner. Use neutral language: “signals”, “indicates”, “may merit review”.`,
-`- If the vehicle is Naturally Aspirated (power_adder = N/A), do NOT mention boost, psi, or boosted behavior. Interpret MAP only as atmospheric/reference.`,
-`- If power_adder is not N/A, you may discuss boosted behavior, but still avoid prescriptive edits.`,
-`- Focus on: knock events (amount/RPM), WOT timing peaks, MAP range when TPS>85%, knock sensor peak volts, fuel-trim variance, average fuel correction by RPM, oil pressure dips (RPM>500), coolant temp >230°F, misfire counts.`,
-`- Output sections: Summary, Knock, Timing @ WOT, MAP @ High TPS, Fuel Trims, Sensor Flags, Temps/Oil, Misfires, Next Steps.`,
-`- “Next Steps” should be *non-prescriptive* suggestions for further checks (mechanical, logging more channels, verifying sensors, etc.), never tune edits.`,
+`- Do NOT recommend tuning changes. Do NOT provide prescriptive edits.`,
+`- Use neutral, advisory language: “signals”, “indicates”, “may merit review”.`,
+`- If power_adder = N/A, do NOT mention boost, psi, or boosted behavior.`,
+`- Focus only on the metrics provided: knock, peak timing, knock sensor volts, fuel trims, avg fuel correction, oil pressure, coolant temp, misfires, acceleration intervals.`,
+`- Output sections: Summary, Knock, Timing, Fueling, Sensors, Temps/Oil, Misfires, Acceleration, Next Steps.`,
+`- Next Steps should be non-prescriptive suggestions (mechanical checks, more logging, sensor verification).`,
   ].join('\n');
 }
 
-function buildUserPrompt({ vehicle, mods, sample, columns }) {
+function buildUserPrompt({ vehicle, mods, metrics }) {
   return [
 `VEHICLE: ${vehicle?.year || ''} ${vehicle?.model || ''} | Engine: ${mods.engine} | Trans: ${mods.trans}`,
-`MODS: Power Adder: ${mods.power_adder} | Fuel: ${mods.fuel} | Injectors: ${mods.injectors || 'Unknown'} | MAP: ${mods.map || 'OEM'} | TB: ${mods.throttle || 'OEM'} | NN: ${mods.nn}`,
-`DATA COLUMNS (subset): ${columns.join(', ')}`,
-`SAMPLED ROWS (every ~400th):`,
-'```csv',
-sample.map(r => r.join(',')).join('\n'),
-'```',
-`Please produce the neutral *assessment* per the HARD RULES.`,
+`MODS: Power Adder: ${mods.power_adder} | Fuel: ${mods.fuel} | NN: ${mods.nn}`,
+`KEY METRICS:`,
+`- Knock events: ${metrics.knock?.length ? JSON.stringify(metrics.knock) : 'None'}`,
+`- Peak timing: ${metrics.peakTiming}° @ ${metrics.peakTimingRPM} RPM`,
+`- Knock Sensor Voltages: B1 ${metrics.ks1max} V, B2 ${metrics.ks2max} V`,
+`- Fuel trim variance: ${metrics.varFT?.toFixed(1)}%`,
+`- Avg Fuel Corr: B1 ${metrics.avgFT1?.toFixed(1)}%, B2 ${metrics.avgFT2?.toFixed(1)}%`,
+`- Oil min: ${metrics.oilMin} psi`,
+`- ECT max: ${metrics.ectMax} °F`,
+`- Misfires: ${JSON.stringify(metrics.misfires)}`,
+`- 0–60 mph: ${metrics.zeroTo60 || 'N/A'}`,
+`- 40–100 mph: ${metrics.fortyTo100 || 'N/A'}`,
+`- 60–130 mph: ${metrics.sixtyTo130 || 'N/A'}`,
+`Please produce a neutral *assessment* using these values per the HARD RULES.`,
   ].join('\n');
-}
-
-// util: thin CSV sampling already done upstream; keep interface compatible
-function pickColumnsForAI(rows, headers) {
-  // Only send what’s necessary
-  const keep = ['Engine RPM','Cylinder Airmass','Knock Retard','Vehicle Speed (SAE)','Manifold Absolute Pressure','Throttle Position','Knock Sensor 1','Knock Sensor 2'];
-  const idx = keep.map(name => headers.indexOf(name)).filter(i => i >= 0);
-  const columns = idx.map(i => headers[i]);
-  const sampled = rows.map(r => idx.map(i => r[i]));
-  return { sampled, columns };
 }
 
 router.post('/ai-review', async (req, res) => {
   try {
-    const { vehicle, mods, csvHeaders, sampledRows } = req.body || {};
+    const { vehicle, mods, metrics } = req.body || {};
     const missing = validateMods(mods);
     if (missing.length) return res.status(400).json({ error: 'Missing or invalid fields', fields: missing });
 
-    const { sampled, columns } = pickColumnsForAI(sampledRows || [], csvHeaders || []);
     const system = buildSystemPrompt({ mods });
-    const user = buildUserPrompt({ vehicle, mods, sample: sampled, columns });
+    const user = buildUserPrompt({ vehicle, mods, metrics });
 
     const openai = new OpenAI();
     const resp = await openai.chat.completions.create({
@@ -94,13 +85,12 @@ router.post('/ai-review', async (req, res) => {
         { role: 'user', content: user },
       ],
       temperature: 0.2,
-      max_tokens: 900,
+      max_tokens: 600, // lower token limit since prompt is compact
     });
 
     let text = resp.choices?.[0]?.message?.content || '';
     text = sanitizeTone(text);
 
-    // Final guard: if N/A and model hallucinated boost language, strip lines containing “boost/psi”
     if (mods.power_adder === 'N/A') {
       text = text
         .split('\n')
