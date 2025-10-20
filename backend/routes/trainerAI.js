@@ -41,32 +41,39 @@ function safeUnlink(p) {
 
 /**
  * Parse HPT "Copy with Axis" spark table pasted as tab-delimited text.
- * Accepts both:
- *  - 19 cells per data row: [airmass, 17 values, 'g']
- *  - 18 cells per data row: [airmass, 17 values]
- * Ignores a trailing lone "g" line if present.
- * Returns: { rpm:number[17], load:number[17], data:number[17][17] }
+ * Accepts:
+ *  - Header: [unit, 17 RPMs..., 'rpm']
+ *  - Data rows:
+ *      19 cells -> [airmass, 17 values, 'g']
+ *      18 cells -> [airmass, 17 values]
+ * Ignores lone trailing "g" lines.
+ * Returns: { rpm:number[17], load:number[17], data:number[17][17], _debug }
  */
 function parseHptSpark(text) {
-  const rows = String(text || "").trim().split(/\r?\n/);
+  const rows = String(text || "").trim().split(/\r?\n/).filter(Boolean);
   if (rows.length < 2) throw new Error("Spark table appears empty.");
 
   // Prefer tabs; tolerate commas
   const split = (line) => line.split(/\t|,/).map((s) => s.trim());
 
   // ----- Header -----
-  // Expected: [unit, 17 RPMs..., 'rpm']  => length >= 19
   const header = split(rows[0]);
+  const debug = { headerLen: header.length, dataRowLens: [] };
+
   if (header.length < 19) {
-    throw new Error(
-      `Header malformed (expected >= 19 columns, got ${header.length}).`
-    );
+    const msg = `Header malformed (expected >= 19 columns including unit + 17 RPM + 'rpm', got ${header.length}).`;
+    const e = new Error(msg);
+    e._debug = debug;
+    throw e;
   }
 
-  // Remove first (unit, e.g., "°") and last ("rpm"), keep 17 numbers
+  // Remove first (unit) and last ("rpm"), keep 17 numbers
   const rpm = header.slice(1, 18).map(Number);
   if (rpm.length !== 17 || rpm.some((n) => !Number.isFinite(n))) {
-    throw new Error("RPM header parse failed — ensure 17 RPM columns present.");
+    const msg = "RPM header parse failed — ensure 17 numeric RPM columns present.";
+    const e = new Error(msg);
+    e._debug = { ...debug, rpmPreview: header.slice(1, 18) };
+    throw e;
   }
 
   // ----- Data rows -----
@@ -76,41 +83,38 @@ function parseHptSpark(text) {
   for (let r = 1; r < rows.length; r++) {
     const cells = split(rows[r]);
     if (!cells.length) continue;
+    debug.dataRowLens.push(cells.length);
 
-    // Skip a lone trailing 'g' line (common when copying)
+    // Skip lone trailing 'g'
     if (cells.length === 1 && (cells[0].toLowerCase?.() === "g")) continue;
 
-    // Valid rows: 18 or 19 cells
-    //  - 18 = [airmass, 17 values]
-    //  - 19 = [airmass, 17 values, 'g']
+    // Valid rows: >= 18
     if (cells.length < 18) continue;
 
     const rowLoad = Number(cells[0]);
     if (!Number.isFinite(rowLoad)) continue;
 
-    // If 19 and last token is 'g', drop it; otherwise still take 17 values
+    // If last token is 'g', drop it (common when copying)
     const maybeUnit = cells[cells.length - 1];
-    const valueSlice =
-      cells.length >= 19 && maybeUnit?.toLowerCase?.() === "g"
-        ? cells.slice(1, 18)
-        : cells.slice(1, 18);
+    const valueSlice = (cells.length >= 19 && maybeUnit?.toLowerCase?.() === "g")
+      ? cells.slice(1, 18)
+      : cells.slice(1, 18);
 
     const rowVals = valueSlice.map(Number);
-    if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) {
-      continue;
-    }
+    if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) continue;
 
     load.push(rowLoad);
     data.push(rowVals);
   }
 
   if (data.length !== 17) {
-    throw new Error(
-      `Expected 17 load rows; got ${data.length}. Paste full 17×17 with axes.`
-    );
+    const msg = `Expected 17 load rows; got ${data.length}. Paste full 17×17 with axes.`;
+    const e = new Error(msg);
+    e._debug = { ...debug, loadCount: data.length };
+    throw e;
   }
 
-  return { rpm, load, data };
+  return { rpm, load, data, _debug: debug };
 }
 
 /**
@@ -127,7 +131,12 @@ function diffSparkTables(startTbl, finalTbl) {
     load.length === load2.length && load.every((v, i) => v === load2[i]);
 
   if (!sameRpm || !sameLoad) {
-    throw new Error("Axes mismatch between Start and Final spark tables.");
+    const e = new Error("Axes mismatch between Start and Final spark tables.");
+    e._debug = {
+      start: { rpm, load },
+      final: { rpm: rpm2, load: load2 },
+    };
+    throw e;
   }
 
   const out = [];
@@ -180,7 +189,7 @@ router.post(
       } catch (e) {
         return res
           .status(400)
-          .json({ error: `Spark table parse failed: ${e.message}` });
+          .json({ error: `Spark table parse failed: ${e.message}`, debug: e._debug || null });
       }
 
       // 2) Diff spark tables (wrap to avoid 500s on mismatch)
@@ -188,27 +197,26 @@ router.post(
       try {
         sparkChanges = diffSparkTables(startTbl, finalTbl);
       } catch (e) {
-        return res.status(400).json({ error: e.message || "Spark diff failed." });
+        return res.status(400).json({ error: e.message, debug: e._debug || null });
       }
 
       // 3) Logs (optional) — parse CSVs if present
       beforePath = req.files?.beforeLog?.[0]?.path || null;
-      afterPath = req.files?.afterLog?.[0]?.path || null;
+      afterPath  = req.files?.afterLog?.[0]?.path  || null;
 
       let beforeLogRows = [];
       let afterLogRows = [];
       try {
         if (beforePath) beforeLogRows = await parseCSV(beforePath);
-        if (afterPath) afterLogRows = await parseCSV(afterPath);
+        if (afterPath)  afterLogRows  = await parseCSV(afterPath);
       } catch (e) {
-        // Not fatal — continue without logs
         console.warn("CSV parse warning:", e.message);
       }
 
       // Sample every 400th row for AI context
       const sample = (rows) => rows.filter((_, idx) => idx % 400 === 0);
       const beforeSample = sample(beforeLogRows).slice(0, 200);
-      const afterSample = sample(afterLogRows).slice(0, 200);
+      const afterSample  = sample(afterLogRows).slice(0, 200);
 
       // 4) Build AI prompt and get summary (non-fatal if model unavailable)
       const prompt = `You are a professional HEMI tuner training an AI. Given:
