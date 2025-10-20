@@ -1,5 +1,5 @@
 // routes/trainerAI.js
-require("dotenv").config(); // load .env locally
+require("dotenv").config();
 
 const express = require("express");
 const router = express.Router();
@@ -21,7 +21,7 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB/file
 });
 
-// ---------- CSV helper ----------
+// ---------- Helpers ----------
 function parseCSV(filePath) {
   return new Promise((resolve, reject) => {
     const rows = [];
@@ -39,43 +39,62 @@ function safeUnlink(p) {
   } catch {}
 }
 
-// ---------- HPT spark table parser (robust 17×17 with axes) ----------
 /**
- * Parses HPT "Copy with Axis" spark tables (tab-delimited):
- * Row 1: [unit, 17 RPM headers..., 'rpm']  -> strip unit + 'rpm'
- * Each data row: [airmass, 17 values..., 'g'] -> strip airmass + 'g'
+ * Parse HPT "Copy with Axis" spark table pasted as tab-delimited text.
+ * Accepts both:
+ *  - 19 cells per data row: [airmass, 17 values, 'g']
+ *  - 18 cells per data row: [airmass, 17 values]
+ * Ignores a trailing lone "g" line if present.
  * Returns: { rpm:number[17], load:number[17], data:number[17][17] }
  */
 function parseHptSpark(text) {
   const rows = String(text || "").trim().split(/\r?\n/);
   if (rows.length < 2) throw new Error("Spark table appears empty.");
 
-  const split = (line) => line.split(/\t|,/);
+  // Prefer tabs; tolerate commas
+  const split = (line) => line.split(/\t|,/).map((s) => s.trim());
 
-  const header = split(rows[0]).map((s) => s.trim());
+  // ----- Header -----
+  // Expected: [unit, 17 RPMs..., 'rpm']  => length >= 19
+  const header = split(rows[0]);
   if (header.length < 19) {
     throw new Error(
       `Header malformed (expected >= 19 columns, got ${header.length}).`
     );
   }
-  // Remove unit and trailing 'rpm'; keep 17 RPMs
-  const rpm = header.slice(1, 18).map((v) => Number(v));
+
+  // Remove first (unit, e.g., "°") and last ("rpm"), keep 17 numbers
+  const rpm = header.slice(1, 18).map(Number);
   if (rpm.length !== 17 || rpm.some((n) => !Number.isFinite(n))) {
     throw new Error("RPM header parse failed — ensure 17 RPM columns present.");
   }
 
+  // ----- Data rows -----
   const data = [];
   const load = [];
 
   for (let r = 1; r < rows.length; r++) {
-    const cells = split(rows[r]).map((s) => s.trim());
-    if (cells.length < 19) continue; // skip malformed/blank lines
+    const cells = split(rows[r]);
+    if (!cells.length) continue;
+
+    // Skip a lone trailing 'g' line (common when copying)
+    if (cells.length === 1 && (cells[0].toLowerCase?.() === "g")) continue;
+
+    // Valid rows: 18 or 19 cells
+    //  - 18 = [airmass, 17 values]
+    //  - 19 = [airmass, 17 values, 'g']
+    if (cells.length < 18) continue;
 
     const rowLoad = Number(cells[0]);
-    const rowVals = cells.slice(1, 18).map((v) => Number(v));
-    // trailing 'g' ignored
-
     if (!Number.isFinite(rowLoad)) continue;
+
+    // If 19 and last token is 'g', drop it; otherwise still take 17 values
+    const maybeUnit = cells[cells.length - 1];
+    const valueSlice = (cells.length >= 19 && maybeUnit.toLowerCase?.() === "g")
+      ? cells.slice(1, 18)
+      : cells.slice(1, 18);
+
+    const rowVals = valueSlice.map(Number);
     if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) {
       continue;
     }
@@ -105,6 +124,7 @@ function diffSparkTables(startTbl, finalTbl) {
     rpm.length === rpm2.length && rpm.every((v, i) => v === rpm2[i]);
   const sameLoad =
     load.length === load2.length && load.every((v, i) => v === load2[i]);
+
   if (!sameRpm || !sameLoad) {
     throw new Error("Axes mismatch between Start and Final spark tables.");
   }
@@ -157,7 +177,9 @@ router.post(
         startTbl = parseHptSpark(rawStart);
         finalTbl = parseHptSpark(rawFinal);
       } catch (e) {
-        return res.status(400).json({ error: `Spark table parse failed: ${e.message}` });
+        return res
+          .status(400)
+          .json({ error: `Spark table parse failed: ${e.message}` });
       }
 
       // 2) Diff spark tables
