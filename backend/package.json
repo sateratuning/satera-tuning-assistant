@@ -12,12 +12,14 @@
   "type": "commonjs",
   "dependencies": {
     "@supabase/supabase-js": "^2.55.0",
+    "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "csv-parser": "^3.2.0",
     "dotenv": "^17.1.0",
     "express": "^5.1.0",
     "multer": "^2.0.1",
     "nodemailer": "^7.0.5",
-    "openai": "^5.8.2"
+    "openai": "^5.8.2",
+    "stripe": "^19.1.0"
   }
 }
