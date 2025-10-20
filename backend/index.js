@@ -4,7 +4,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const express = require('express');
-const cors = require('cors');
+const cors = require('cors'); // kept import, not using the default middleware
 const multer = require('multer');
 const { OpenAI } = require('openai');
 
@@ -35,9 +35,37 @@ const uploadsDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 const upload = multer({ dest: uploadsDir });
 
-// middleware
-app.use(cors());
-app.use(express.json());
+/* ------------------------
+   CORS (strict) + Preflight
+------------------------- */
+// IMPORTANT: Put this BEFORE any routes to ensure headers on all responses
+const ALLOWED_ORIGINS = [
+  'https://app.sateratuning.com', // production frontend
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  // If you use cookies in the future:
+  // res.header('Access-Control-Allow-Credentials', 'true');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+/* ------------------------
+   Body limits (avoid 502 on large payloads)
+------------------------- */
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
+// feedback route first (as you had it)
 app.use(require('./routes/feedback'));
 
 // health
@@ -210,7 +238,6 @@ function formatChecklist(parsed, headers) {
           if (Number.isFinite(diff) && diff > 0 && diff < 1000) count += diff;
         }
         if (count > 0) misfireReport.push(`- Cylinder ${cyl}: ${count.toFixed(2)} misfires`);
-
       }
     }
   });
@@ -318,6 +345,14 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
 // 404 guard
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'Not found', path: req.originalUrl });
+});
+
+/* ------------------------
+   Global error handler (LAST)
+------------------------- */
+app.use((err, req, res, next) => {
+  console.error('GLOBAL ERROR:', err);
+  res.status(err.status || 500).json({ error: err.message || 'Server error' });
 });
 
 app.listen(PORT, () => {

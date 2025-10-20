@@ -1,236 +1,354 @@
-    // routes/trainerAI.js
-    require('dotenv').config(); // force-load .env locally
+// routes/trainerAI.js
+require("dotenv").config(); // load .env locally
 
-    const express = require('express');
-    const router = express.Router();
-    const multer = require('multer');
-    const fs = require('fs');
-    const path = require('path');
-    const csvParser = require('csv-parser');
-    const { OpenAI } = require('openai');
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const express = require("express");
+const router = express.Router();
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
+const csvParser = require("csv-parser");
+const { OpenAI } = require("openai");
 
+// ---------- OpenAI ----------
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// ---------- Uploads (disk) ----------
+const uploadsDir = path.join(__dirname, "..", "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-    const upload = multer({ dest: 'uploads/' });
-
-    function parseCSV(filePath) {
-    return new Promise((resolve, reject) => {
-        const rows = [];
-        fs.createReadStream(filePath)
-        .pipe(csvParser())
-        .on('data', (row) => rows.push(row))
-        .on('end', () => resolve(rows))
-        .on('error', reject);
-    });
-    }
-
-    function cleanSparkTable(text) {
-    const lines = text.trim().split('\n');
-    const table = lines.slice(1).map(line =>
-        line.trim().split('\t').slice(1, -1)
-    );
-    return table;
-    }
-
-    function compareTables(startTable, finalTable) {
-    const changes = [];
-    for (let i = 0; i < finalTable.length; i++) {
-        for (let j = 0; j < finalTable[i].length; j++) {
-        const start = parseFloat(startTable[i][j]);
-        const end = parseFloat(finalTable[i][j]);
-        if (!isNaN(start) && !isNaN(end) && start !== end) {
-            changes.push({ row: i, col: j, from: start, to: end });
-        }
-        }
-    }
-    return changes;
-    }
-
-    router.post('/trainer-ai', upload.fields([
-    { name: 'beforeLog', maxCount: 1 },
-    { name: 'afterLog', maxCount: 1 }
-    ]), async (req, res) => {
-    try {
-        const form = req.body;
-        const startSpark = cleanSparkTable(form.sparkTableStart);
-        const finalSpark = cleanSparkTable(form.sparkTableFinal);
-        const changes = compareTables(startSpark, finalSpark);
-
-        const beforeLogPath = req.files.beforeLog[0].path;
-        const afterLogPath = req.files.afterLog[0].path;
-        const beforeLogRows = await parseCSV(beforeLogPath);
-        const afterLogRows = await parseCSV(afterLogPath);
-
-        // Sample every 400th row for AI context
-        const sample = (rows) => rows.filter((_, idx) => idx % 400 === 0);
-        const beforeSample = sample(beforeLogRows);
-        const afterSample = sample(afterLogRows);
-
-        const prompt = `You are a professional HEMI tuner training an AI. Given the following:
-
-    Vehicle Info:
-    ${JSON.stringify(form, null, 2)}
-
-    Spark Table Changes:
-    ${JSON.stringify(changes.slice(0, 30), null, 2)}
-
-    Before Log (sampled):
-    ${JSON.stringify(beforeSample.slice(0, 10), null, 2)}
-
-    After Log (sampled):
-    ${JSON.stringify(afterSample.slice(0, 10), null, 2)}
-
-    Explain in human terms what changed in the spark table and why. Include logic around knock, throttle, airmass, airflow, fueling, torque, MAP scaling, injector changes, neural network logic, etc. Be clear and thorough for model training purposes.`;
-
-        const chatResponse = await openai.chat.completions.create({
-        model: 'gpt-3.5-turbo-0125', // ✅ Supported
-
-        messages: [
-            { role: 'system', content: 'You are an expert HEMI tuning AI trainer.' },
-            { role: 'user', content: prompt }
-        ],
-        temperature: 0.4
-        });
-
-        const aiSummary = chatResponse.choices[0].message.content;
-
-        const trainingEntry = {
-  vehicle: form,
-  sparkChanges: changes,
-  aiSummary,
-  feedback: form.feedback || null,
-  created_at: new Date().toISOString()
-};
-
-// ✅ Initialize Supabase client inside route (safe env timing)
-const { createClient } = require('@supabase/supabase-js');
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('❌ Supabase environment variables not loaded');
-}
-
-const supabase = createClient(supabaseUrl, supabaseKey);
-
-
-// ✅ Insert into Supabase
-const { data, error } = await supabase
-  .from('trainer_entries')
-  .insert([trainingEntry])
-  .select(); // ✅ return the inserted row
-
-if (error) {
-  console.error('❌ Supabase insert error:', error);
-}
-const insertedEntry = data?.[0];
-
-
-if (error) {
-  console.error('❌ Supabase insert error:', error);
-}
-
-// ✅ Clean up uploaded files
-fs.unlinkSync(beforeLogPath);
-fs.unlinkSync(afterLogPath);
-
-// ✅ Respond to frontend
-res.json({ trainingEntry: insertedEntry, aiSummary });
-
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'AI training failed.' });
-    }
-    });
-
-    module.exports = router;
-router.post('/update-feedback', express.json(), async (req, res) => {
-  const { id, feedback } = req.body;
-  if (!id || !feedback) {
-    return res.status(400).json({ error: 'Missing id or feedback' });
-  }
-
-  const { createClient } = require('@supabase/supabase-js');
-  const supabase = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
-
-  const { error } = await supabase
-    .from('trainer_entries')
-    .update({ feedback })
-    .eq('id', id);
-
-  if (error) {
-    console.error('❌ Feedback update error:', error);
-    return res.status(500).json({ error: 'Update failed' });
-  }
-
-  res.json({ success: true });
+const upload = multer({
+  dest: uploadsDir,
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100MB/file
 });
 
-// new new new
+// ---------- CSV helper ----------
+function parseCSV(filePath) {
+  return new Promise((resolve, reject) => {
+    const rows = [];
+    fs.createReadStream(filePath)
+      .pipe(csvParser())
+      .on("data", (row) => rows.push(row))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
+  });
+}
 
-
-router.post('/fine-tune-now', async (req, res) => {
+function safeUnlink(p) {
   try {
-    const { createClient } = require('@supabase/supabase-js');
+    if (p && fs.existsSync(p)) fs.unlinkSync(p);
+  } catch {}
+}
+
+// ---------- HPT spark table parser (robust 17×17 with axes) ----------
+/**
+ * Parses HPT "Copy with Axis" spark tables (tab-delimited):
+ * Row 1: [unit, 17 RPM headers..., 'rpm']  -> strip unit + 'rpm'
+ * Each data row: [airmass, 17 values..., 'g'] -> strip airmass + 'g'
+ * Returns: { rpm:number[17], load:number[17], data:number[17][17] }
+ */
+function parseHptSpark(text) {
+  const rows = String(text || "").trim().split(/\r?\n/);
+  if (rows.length < 2) throw new Error("Spark table appears empty.");
+
+  const split = (line) => line.split(/\t|,/);
+
+  const header = split(rows[0]).map((s) => s.trim());
+  if (header.length < 19) {
+    throw new Error(
+      `Header malformed (expected >= 19 columns, got ${header.length}).`
+    );
+  }
+  // Remove unit and trailing 'rpm'; keep 17 RPMs
+  const rpm = header.slice(1, 18).map((v) => Number(v));
+  if (rpm.length !== 17 || rpm.some((n) => !Number.isFinite(n))) {
+    throw new Error("RPM header parse failed — ensure 17 RPM columns present.");
+  }
+
+  const data = [];
+  const load = [];
+
+  for (let r = 1; r < rows.length; r++) {
+    const cells = split(rows[r]).map((s) => s.trim());
+    if (cells.length < 19) continue; // skip malformed/blank lines
+
+    const rowLoad = Number(cells[0]);
+    const rowVals = cells.slice(1, 18).map((v) => Number(v));
+    // trailing 'g' ignored
+
+    if (!Number.isFinite(rowLoad)) continue;
+    if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) {
+      continue;
+    }
+
+    load.push(rowLoad);
+    data.push(rowVals);
+  }
+
+  if (data.length !== 17) {
+    throw new Error(
+      `Expected 17 load rows; got ${data.length}. Paste full 17×17 with axes.`
+    );
+  }
+
+  return { rpm, load, data };
+}
+
+/**
+ * Diffs two parsed tables by aligned axes.
+ * Returns [{ rpm, airmass, before, after, delta }]
+ */
+function diffSparkTables(startTbl, finalTbl) {
+  const { rpm, load, data: A } = startTbl;
+  const { rpm: rpm2, load: load2, data: B } = finalTbl;
+
+  const sameRpm =
+    rpm.length === rpm2.length && rpm.every((v, i) => v === rpm2[i]);
+  const sameLoad =
+    load.length === load2.length && load.every((v, i) => v === load2[i]);
+  if (!sameRpm || !sameLoad) {
+    throw new Error("Axes mismatch between Start and Final spark tables.");
+  }
+
+  const out = [];
+  for (let r = 0; r < load.length; r++) {
+    for (let c = 0; c < rpm.length; c++) {
+      const before = A[r][c];
+      const after = B[r][c];
+      if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
+      if (before === after) continue;
+      out.push({
+        rpm: rpm[c],
+        airmass: load[r],
+        before,
+        after,
+        delta: Number((after - before).toFixed(2)),
+      });
+    }
+  }
+  return out;
+}
+
+// ---------- Main Trainer Endpoint ----------
+router.post(
+  "/trainer-ai",
+  upload.fields([
+    { name: "beforeLog", maxCount: 1 }, // files
+    { name: "afterLog", maxCount: 1 },  // files
+    // sparkTableStart/Final come from TEXTAREAS -> req.body
+  ]),
+  async (req, res) => {
+    let beforePath = null;
+    let afterPath = null;
+
+    try {
+      const form = req.body || {};
+
+      // 1) Validate + parse spark tables (text)
+      const rawStart = (form.sparkTableStart || "").trim();
+      const rawFinal = (form.sparkTableFinal || "").trim();
+      if (!rawStart || !rawFinal) {
+        return res
+          .status(400)
+          .json({ error: "Missing sparkTableStart or sparkTableFinal in body." });
+      }
+
+      let startTbl, finalTbl;
+      try {
+        startTbl = parseHptSpark(rawStart);
+        finalTbl = parseHptSpark(rawFinal);
+      } catch (e) {
+        return res.status(400).json({ error: `Spark table parse failed: ${e.message}` });
+      }
+
+      // 2) Diff spark tables
+      const sparkChanges = diffSparkTables(startTbl, finalTbl);
+
+      // 3) Logs (optional) — parse CSVs if present
+      beforePath = req.files?.beforeLog?.[0]?.path || null;
+      afterPath = req.files?.afterLog?.[0]?.path || null;
+
+      let beforeLogRows = [];
+      let afterLogRows = [];
+      try {
+        if (beforePath) beforeLogRows = await parseCSV(beforePath);
+        if (afterPath) afterLogRows = await parseCSV(afterPath);
+      } catch (e) {
+        // Not fatal — continue without logs
+        console.warn("CSV parse warning:", e.message);
+      }
+
+      // Sample every 400th row for AI context
+      const sample = (rows) => rows.filter((_, idx) => idx % 400 === 0);
+      const beforeSample = sample(beforeLogRows).slice(0, 200);
+      const afterSample = sample(afterLogRows).slice(0, 200);
+
+      // 4) Build AI prompt and get summary (non-fatal if model unavailable)
+      const prompt = `You are a professional HEMI tuner training an AI. Given:
+
+Vehicle Info:
+${JSON.stringify(form, null, 2)}
+
+Spark Table Changes (subset):
+${JSON.stringify(sparkChanges.slice(0, 50), null, 2)}
+
+Before Log (sampled):
+${JSON.stringify(beforeSample.slice(0, 20), null, 2)}
+
+After Log (sampled):
+${JSON.stringify(afterSample.slice(0, 20), null, 2)}
+
+Explain clearly what changed in the spark table and why (knock, throttle, airmass, airflow, fueling, torque, MAP scaling, injector data, NN on/off, etc.).`;
+
+      let aiSummary = "";
+      try {
+        const chatResponse = await openai.chat.completions.create({
+          model: process.env.OPENAI_MODEL || "gpt-3.5-turbo-0125",
+          messages: [
+            { role: "system", content: "You are an expert HEMI tuning AI trainer." },
+            { role: "user", content: prompt },
+          ],
+          temperature: 0.4,
+        });
+        aiSummary = chatResponse?.choices?.[0]?.message?.content || "";
+      } catch (e) {
+        console.warn("OpenAI summary skipped:", e.message);
+        aiSummary = "Model unavailable. Table diff computed successfully.";
+      }
+
+      // 5) Build training entry
+      const trainingEntry = {
+        vehicle: form,
+        axes: { rpm: startTbl.rpm, load: startTbl.load },
+        sparkChanges,
+        aiSummary,
+        feedback: form.feedback || null,
+        created_at: new Date().toISOString(),
+      };
+
+      // 6) Optional Supabase save (skip if env missing)
+      let insertedEntry = trainingEntry;
+      try {
+        const { createClient } = require("@supabase/supabase-js");
+        const supabaseUrl = process.env.SUPABASE_URL;
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+        if (supabaseUrl && supabaseKey) {
+          const supabase = createClient(supabaseUrl, supabaseKey);
+          const { data, error } = await supabase
+            .from("trainer_entries")
+            .insert([trainingEntry])
+            .select()
+            .single();
+
+          if (error) {
+            console.warn("Supabase insert warning:", error.message);
+          } else {
+            insertedEntry = data;
+          }
+        } else {
+          console.warn("Supabase env missing — skipping DB insert.");
+        }
+      } catch (e) {
+        console.warn("Supabase save skipped:", e.message);
+      }
+
+      // 7) Respond
+      return res.json({ trainingEntry: insertedEntry, aiSummary, sparkChanges });
+    } catch (err) {
+      console.error("trainer-ai error:", err);
+      return res.status(500).json({ error: err.message || "AI training failed." });
+    } finally {
+      // Cleanup files
+      safeUnlink(beforePath);
+      safeUnlink(afterPath);
+    }
+  }
+);
+
+// ---------- Feedback update ----------
+router.use(express.json());
+router.post("/update-feedback", async (req, res) => {
+  try {
+    const { id, feedback } = req.body || {};
+    if (!id || !feedback) {
+      return res.status(400).json({ error: "Missing id or feedback" });
+    }
+
+    const { createClient } = require("@supabase/supabase-js");
     const supabase = createClient(
       process.env.SUPABASE_URL,
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
 
-    const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+    const { error } = await supabase
+      .from("trainer_entries")
+      .update({ feedback })
+      .eq("id", id);
 
-    // Step 1: Pull entries from Supabase
-    const { data: entries, error } = await supabase
-      .from('trainer_entries')
-      .select('*')
-      .order('created_at', { ascending: true });
-
-    if (error) throw new Error('Failed to fetch trainer entries');
-
-    // Step 2: Format to JSONL
-    const fineTuneData = entries
-      .filter(entry => entry.aiSummary && entry.vehicle) // Only valid entries
-      .map(entry => {
-        const context = `Vehicle Info:\n${JSON.stringify(entry.vehicle, null, 2)}\n\nSpark Table Changes:\n${JSON.stringify(entry.sparkChanges || [], null, 2)}`;
-        const feedbackNote = entry.feedback ? `\n\nTrainer Feedback:\n${entry.feedback}` : '';
-        return {
-          prompt: context,
-          completion: entry.aiSummary + feedbackNote
-        };
-      });
-
-    if (fineTuneData.length === 0) {
-      return res.status(400).json({ error: 'No valid entries found to fine-tune on.' });
+    if (error) {
+      console.error("Feedback update error:", error.message);
+      return res.status(500).json({ error: "Update failed" });
     }
 
-    // Step 3: Write to temp .jsonl file
-    const fs = require('fs');
-    const path = require('path');
-    const tempFilePath = path.join(__dirname, 'fine-tune-upload.jsonl');
-
-    const jsonlContent = fineTuneData.map(entry => JSON.stringify(entry)).join('\n');
-    fs.writeFileSync(tempFilePath, jsonlContent);
-
-    // Step 4: Upload file to OpenAI
-    const file = await openai.files.create({
-      file: fs.createReadStream(tempFilePath),
-      purpose: 'fine-tune'
-    });
-
-    // Step 5: Start fine-tuning job
-    const fineTune = await openai.fineTuning.jobs.create({
-      training_file: file.id,
-      model: 'gpt-3.5-turbo-0125'
-    });
-
-    res.json({ message: 'Fine-tuning started', job: fineTune });
-  } catch (err) {
-    console.error('❌ Fine-tuning failed:', err);
-    res.status(500).json({ error: 'Fine-tuning failed' });
+    res.json({ success: true });
+  } catch (e) {
+    console.error("update-feedback error:", e.message);
+    res.status(500).json({ error: "Update failed" });
   }
 });
+
+// ---------- Fine-tune trigger (optional) ----------
+router.post("/fine-tune-now", async (req, res) => {
+  try {
+    const { createClient } = require("@supabase/supabase-js");
+    const supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_SERVICE_ROLE_KEY
+    );
+
+    const entriesResp = await supabase
+      .from("trainer_entries")
+      .select("*")
+      .order("created_at", { ascending: true });
+
+    if (entriesResp.error) {
+      throw new Error("Failed to fetch trainer entries");
+    }
+    const entries = entriesResp.data || [];
+
+    const fineTuneData = entries
+      .filter((e) => e?.aiSummary && e?.vehicle)
+      .map((entry) => {
+        const context =
+          `Vehicle Info:\n${JSON.stringify(entry.vehicle, null, 2)}\n\n` +
+          `Spark Table Changes:\n${JSON.stringify(entry.sparkChanges || [], null, 2)}`;
+        const feedbackNote = entry.feedback ? `\n\nTrainer Feedback:\n${entry.feedback}` : "";
+        return { prompt: context, completion: (entry.aiSummary || "") + feedbackNote };
+      });
+
+    if (!fineTuneData.length) {
+      return res.status(400).json({ error: "No valid entries found to fine-tune on." });
+    }
+
+    const tempFilePath = path.join(__dirname, "fine-tune-upload.jsonl");
+    const jsonlContent = fineTuneData.map((e) => JSON.stringify(e)).join("\n");
+    fs.writeFileSync(tempFilePath, jsonlContent);
+
+    const file = await openai.files.create({
+      file: fs.createReadStream(tempFilePath),
+      purpose: "fine-tune",
+    });
+
+    const job = await openai.fineTuning.jobs.create({
+      training_file: file.id,
+      model: process.env.OPENAI_FINETUNE_MODEL || "gpt-3.5-turbo-0125",
+    });
+
+    return res.json({ message: "Fine-tuning started", job });
+  } catch (err) {
+    console.error("fine-tune-now error:", err.message);
+    res.status(500).json({ error: "Fine-tuning failed" });
+  }
+});
+
+module.exports = router;
