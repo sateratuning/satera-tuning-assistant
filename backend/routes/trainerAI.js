@@ -90,9 +90,10 @@ function parseHptSpark(text) {
 
     // If 19 and last token is 'g', drop it; otherwise still take 17 values
     const maybeUnit = cells[cells.length - 1];
-    const valueSlice = (cells.length >= 19 && maybeUnit.toLowerCase?.() === "g")
-      ? cells.slice(1, 18)
-      : cells.slice(1, 18);
+    const valueSlice =
+      cells.length >= 19 && maybeUnit?.toLowerCase?.() === "g"
+        ? cells.slice(1, 18)
+        : cells.slice(1, 18);
 
     const rowVals = valueSlice.map(Number);
     if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) {
@@ -182,8 +183,13 @@ router.post(
           .json({ error: `Spark table parse failed: ${e.message}` });
       }
 
-      // 2) Diff spark tables
-      const sparkChanges = diffSparkTables(startTbl, finalTbl);
+      // 2) Diff spark tables (wrap to avoid 500s on mismatch)
+      let sparkChanges = [];
+      try {
+        sparkChanges = diffSparkTables(startTbl, finalTbl);
+      } catch (e) {
+        return res.status(400).json({ error: e.message || "Spark diff failed." });
+      }
 
       // 3) Logs (optional) — parse CSVs if present
       beforePath = req.files?.beforeLog?.[0]?.path || null;
