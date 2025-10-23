@@ -159,6 +159,81 @@ function formatChecklist(parsed, headers) {
     } else {
       summary.push('ℹ️ MAP data under WOT not found.');
     }
+
+    /* ------------------------
+       NEW: Boost (PSI) metrics
+       - Peak Boost (with RPM)
+       - Average Boost during WOT
+       - Boost at Highest RPM within WOT (turbo taper visibility)
+    ------------------------- */
+    const PSI_PER_KPA = 0.1450377377;
+    const baroCandidates = [
+      'Barometric Pressure (SAE)',
+      'Baro Pressure (SAE)',
+      'Ambient Pressure (SAE)'
+    ];
+
+    // Pick the first BARO column that exists; default to sea level if none
+    const baroName = baroCandidates.find(hasCol);
+    const defaultBaroKpa = 101.325;
+
+    // Helper
+    const computeBoostPsi = (mapKpa, baroKpa) => {
+      const boost = (Number(mapKpa) - Number(baroKpa)) * PSI_PER_KPA;
+      if (!Number.isFinite(boost)) return 0;
+      return Math.max(0, Number(boost.toFixed(2))); // clamp vacuum to 0 for customer display
+    };
+
+    // Build arrays for WOT rows
+    const wotBoostPsi = [];
+    const wotRpm = [];
+
+    for (const r of wotRows) {
+      const mapKpa = r[mapName];
+      const baroKpa = baroName ? r[baroName] : defaultBaroKpa;
+      if (!Number.isFinite(mapKpa)) continue;
+      const boostPsi = computeBoostPsi(mapKpa, Number.isFinite(baroKpa) ? baroKpa : defaultBaroKpa);
+      wotBoostPsi.push(boostPsi);
+      wotRpm.push(Number.isFinite(r[rpmName]) ? r[rpmName] : NaN);
+    }
+
+    if (wotBoostPsi.length) {
+      // Peak boost + RPM at that point
+      let peakBoostPsi = -Infinity;
+      let peakIdx = -1;
+      for (let i = 0; i < wotBoostPsi.length; i++) {
+        if (wotBoostPsi[i] > peakBoostPsi) {
+          peakBoostPsi = wotBoostPsi[i];
+          peakIdx = i;
+        }
+      }
+      const peakBoostRpm = Number.isFinite(wotRpm[peakIdx]) ? Math.round(wotRpm[peakIdx]) : null;
+
+      // Average boost during WOT
+      const avg = (arr) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
+      const avgBoostPsiWot = Number(avg(wotBoostPsi).toFixed(2));
+
+      // Boost at highest RPM within WOT
+      let highestRpm = -Infinity;
+      let highestRpmIdx = -1;
+      for (let i = 0; i < wotRpm.length; i++) {
+        if (Number.isFinite(wotRpm[i]) && wotRpm[i] > highestRpm) {
+          highestRpm = wotRpm[i];
+          highestRpmIdx = i;
+        }
+      }
+      const boostAtHighestRpm = highestRpmIdx !== -1 ? Number(wotBoostPsi[highestRpmIdx].toFixed(2)) : 0;
+      const highestRpmRounded = Number.isFinite(highestRpm) && highestRpm !== -Infinity ? Math.round(highestRpm) : null;
+
+      // Append summary lines (customer-facing)
+      summary.push(`🌀 Peak Boost (TPS ≥ 86%): ${peakBoostPsi.toFixed(2)} psi${peakBoostRpm ? ` @ ${peakBoostRpm} RPM` : ''}`);
+      summary.push(`📊 Average Boost (TPS ≥ 86%): ${avgBoostPsiWot.toFixed(2)} psi`);
+      summary.push(`🎯 Boost @ Highest RPM${highestRpmRounded ? ` (${highestRpmRounded} RPM)` : ''}: ${boostAtHighestRpm.toFixed(2)} psi`);
+    } else {
+      summary.push('ℹ️ Boost (PSI) could not be computed in WOT window.');
+    }
+    /* ---------------------- END NEW ---------------------- */
+
   } else {
     summary.push('ℹ️ No WOT conditions found.');
   }
