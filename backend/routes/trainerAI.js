@@ -6,7 +6,6 @@ const router = express.Router();
 const multer = require("multer");
 const fs = require("fs");
 const path = require("path");
-const csvParser = require("csv-parser");
 const { OpenAI } = require("openai");
 
 // ---------- OpenAI ----------
@@ -21,16 +20,29 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB/file
 });
 
-// ---------- Helpers ----------
-function parseCSV(filePath) {
-  return new Promise((resolve, reject) => {
-    const rows = [];
-    fs.createReadStream(filePath)
-      .pipe(csvParser())
-      .on("data", (row) => rows.push(row))
-      .on("end", () => resolve(rows))
-      .on("error", reject);
+// ---------- Helpers (match backend/index.js parsing) ----------
+function analyzeCsvContent(content) {
+  const lines = String(content).split(/\r?\n/).map(l => l.trim());
+  if (!lines.length) throw new Error('CSV file empty');
+  const headerRowIndex = lines.findIndex(r => r.toLowerCase().startsWith('offset'));
+  if (headerRowIndex === -1) throw new Error('Could not locate header row');
+  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+  const dataStart = headerRowIndex + 4;
+  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(','));
+  const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
+  const parsed = dataRows.map(row => {
+    const values = row.split(',');
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = toNum(values[i]); });
+    return obj;
   });
+  if (!parsed.length) throw new Error('No data rows found in CSV.');
+  return { headers, parsed };
+}
+
+function readCsvAsParsed(filePath) {
+  const content = fs.readFileSync(filePath, 'utf8');
+  return analyzeCsvContent(content);
 }
 
 function safeUnlink(p) {
@@ -41,22 +53,15 @@ function safeUnlink(p) {
 
 /**
  * Parse HPT "Copy with Axis" spark table pasted as tab-delimited text.
- * Accepts:
- *  - Header: [unit, 17 RPMs..., 'rpm']
- *  - Data rows:
- *      19 cells -> [airmass, 17 values, 'g']
- *      18 cells -> [airmass, 17 values]
- * Ignores lone trailing "g" lines.
  * Returns: { rpm:number[17], load:number[17], data:number[17][17], _debug }
  */
 function parseHptSpark(text) {
   const rows = String(text || "").trim().split(/\r?\n/).filter(Boolean);
   if (rows.length < 2) throw new Error("Spark table appears empty.");
 
-  // Prefer tabs; tolerate commas
   const split = (line) => line.split(/\t|,/).map((s) => s.trim());
 
-  // ----- Header -----
+  // Header
   const header = split(rows[0]);
   const debug = { headerLen: header.length, dataRowLens: [] };
 
@@ -67,7 +72,6 @@ function parseHptSpark(text) {
     throw e;
   }
 
-  // Remove first (unit) and last ("rpm"), keep 17 numbers
   const rpm = header.slice(1, 18).map(Number);
   if (rpm.length !== 17 || rpm.some((n) => !Number.isFinite(n))) {
     const msg = "RPM header parse failed — ensure 17 numeric RPM columns present.";
@@ -76,7 +80,7 @@ function parseHptSpark(text) {
     throw e;
   }
 
-  // ----- Data rows -----
+  // Data rows
   const data = [];
   const load = [];
 
@@ -85,21 +89,14 @@ function parseHptSpark(text) {
     if (!cells.length) continue;
     debug.dataRowLens.push(cells.length);
 
-    // Skip lone trailing 'g'
-    if (cells.length === 1 && (cells[0].toLowerCase?.() === "g")) continue;
+    if (cells.length === 1 && (cells[0].toLowerCase?.() === "g")) continue; // trailing unit
 
-    // Valid rows: >= 18
     if (cells.length < 18) continue;
 
     const rowLoad = Number(cells[0]);
     if (!Number.isFinite(rowLoad)) continue;
 
-    // If last token is 'g', drop it (common when copying)
-    const maybeUnit = cells[cells.length - 1];
-    const valueSlice = (cells.length >= 19 && maybeUnit?.toLowerCase?.() === "g")
-      ? cells.slice(1, 18)
-      : cells.slice(1, 18);
-
+    const valueSlice = cells.slice(1, 18);
     const rowVals = valueSlice.map(Number);
     if (rowVals.length !== 17 || rowVals.some((n) => !Number.isFinite(n))) continue;
 
@@ -162,9 +159,10 @@ function diffSparkTables(startTbl, finalTbl) {
 router.post(
   "/trainer-ai",
   upload.fields([
-    { name: "beforeLog", maxCount: 1 }, // files
-    { name: "afterLog", maxCount: 1 },  // files
-    // sparkTableStart/Final come from TEXTAREAS -> req.body
+    { name: "beforeLog", maxCount: 1 }, // files (optional)
+    { name: "afterLog", maxCount: 1 },  // files (optional)
+    // sparkTableStart/Final come from TEXTAREAS -> req.body (optional now)
+    { name: "meta", maxCount: 1 },      // optional metadata JSON from frontend
   ]),
   async (req, res) => {
     let beforePath = null;
@@ -173,72 +171,71 @@ router.post(
     try {
       const form = req.body || {};
 
-      // 1) Validate + parse spark tables (text)
+      // 0) Parse meta (if sent as JSON string)
+      let meta = {};
+      try {
+        meta = form.meta ? JSON.parse(form.meta) : {};
+      } catch {
+        meta = {};
+      }
+
+      // 1) Spark tables (now OPTIONAL)
       const rawStart = (form.sparkTableStart || "").trim();
       const rawFinal = (form.sparkTableFinal || "").trim();
-      if (!rawStart || !rawFinal) {
-        return res
-          .status(400)
-          .json({ error: "Missing sparkTableStart or sparkTableFinal in body." });
+
+      let startTbl = null, finalTbl = null, sparkChanges = [];
+      if (rawStart && rawFinal) {
+        try {
+          startTbl = parseHptSpark(rawStart);
+          finalTbl = parseHptSpark(rawFinal);
+          sparkChanges = diffSparkTables(startTbl, finalTbl);
+        } catch (e) {
+          return res
+            .status(400)
+            .json({ error: `Spark table parse/diff failed: ${e.message}`, debug: e._debug || null });
+        }
       }
 
-      let startTbl, finalTbl;
-      try {
-        startTbl = parseHptSpark(rawStart);
-        finalTbl = parseHptSpark(rawFinal);
-      } catch (e) {
-        return res
-          .status(400)
-          .json({ error: `Spark table parse failed: ${e.message}`, debug: e._debug || null });
-      }
-
-      // 2) Diff spark tables (wrap to avoid 500s on mismatch)
-      let sparkChanges = [];
-      try {
-        sparkChanges = diffSparkTables(startTbl, finalTbl);
-      } catch (e) {
-        return res.status(400).json({ error: e.message, debug: e._debug || null });
-      }
-
-      // 3) Logs (optional) — parse CSVs if present
+      // 2) Logs (optional) — parse with SAME logic as AI Review
       beforePath = req.files?.beforeLog?.[0]?.path || null;
       afterPath  = req.files?.afterLog?.[0]?.path  || null;
 
-      let beforeLogRows = [];
-      let afterLogRows = [];
+      let beforeParsed = null;
+      let afterParsed  = null;
       try {
-        if (beforePath) beforeLogRows = await parseCSV(beforePath);
-        if (afterPath)  afterLogRows  = await parseCSV(afterPath);
+        if (beforePath) beforeParsed = readCsvAsParsed(beforePath);
+        if (afterPath)  afterParsed  = readCsvAsParsed(afterPath);
       } catch (e) {
         console.warn("CSV parse warning:", e.message);
       }
 
-      // Sample every 400th row for AI context
-      const sample = (rows) => rows.filter((_, idx) => idx % 400 === 0);
-      const beforeSample = sample(beforeLogRows).slice(0, 200);
-      const afterSample  = sample(afterLogRows).slice(0, 200);
+      // Sample every 400th row for AI context (same as AI Review)
+      const sample = (arr) => Array.isArray(arr) ? arr.filter((_, i) => i % 400 === 0).slice(0, 200) : [];
 
-      // 4) Build AI prompt and get summary (non-fatal if model unavailable)
+      const beforeSample = beforeParsed ? sample(beforeParsed.parsed) : [];
+      const afterSample  = afterParsed  ? sample(afterParsed.parsed)  : [];
+
+      // 3) Build AI prompt (non-fatal if model unavailable)
       const prompt = `You are a professional HEMI tuner training an AI. Given:
 
 Vehicle Info:
-${JSON.stringify(form, null, 2)}
+${JSON.stringify(meta, null, 2)}
 
-Spark Table Changes (subset):
-${JSON.stringify(sparkChanges.slice(0, 50), null, 2)}
+Spark Table Changes (subset, may be empty):
+${JSON.stringify((sparkChanges || []).slice(0, 50), null, 2)}
 
-Before Log (sampled):
+Before Log (sampled, may be empty):
 ${JSON.stringify(beforeSample.slice(0, 20), null, 2)}
 
-After Log (sampled):
+After Log (sampled, may be empty):
 ${JSON.stringify(afterSample.slice(0, 20), null, 2)}
 
-Explain clearly what changed in the spark table and why (knock, throttle, airmass, airflow, fueling, torque, MAP scaling, injector data, NN on/off, etc.).`;
+Explain clearly what changed in the spark table and/or what the logs imply for spark corrections (knock behavior, airmass, airflow, fueling, torque, MAP scaling, injector data, NN on/off, etc.).`;
 
       let aiSummary = "";
       try {
         const chatResponse = await openai.chat.completions.create({
-          model: process.env.OPENAI_MODEL || "gpt-3.5-turbo-0125",
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini",
           messages: [
             { role: "system", content: "You are an expert HEMI tuning AI trainer." },
             { role: "user", content: prompt },
@@ -248,20 +245,19 @@ Explain clearly what changed in the spark table and why (knock, throttle, airmas
         aiSummary = chatResponse?.choices?.[0]?.message?.content || "";
       } catch (e) {
         console.warn("OpenAI summary skipped:", e.message);
-        aiSummary = "Model unavailable. Table diff computed successfully.";
+        aiSummary = "Model unavailable. Entry saved with logs/tables.";
       }
 
-      // 5) Build training entry
+      // 4) Build training entry
       const trainingEntry = {
-        vehicle: form,
-        axes: { rpm: startTbl.rpm, load: startTbl.load },
+        vehicle: meta,                   // use parsed meta object
+        axes: startTbl ? { rpm: startTbl.rpm, load: startTbl.load } : null,
         sparkChanges,
         aiSummary,
-        feedback: form.feedback || null,
         created_at: new Date().toISOString(),
       };
 
-      // 6) Optional Supabase save (skip if env missing)
+      // 5) Optional Supabase save
       let insertedEntry = trainingEntry;
       try {
         const { createClient } = require("@supabase/supabase-js");
@@ -288,8 +284,17 @@ Explain clearly what changed in the spark table and why (knock, throttle, airmas
         console.warn("Supabase save skipped:", e.message);
       }
 
-      // 7) Respond
-      return res.json({ trainingEntry: insertedEntry, aiSummary, sparkChanges });
+      // 6) Respond
+      return res.json({
+        trainingEntry: insertedEntry,
+        aiSummary,
+        sparkChanges,
+        meta,
+        logs: {
+          beforeSampleCount: beforeSample.length,
+          afterSampleCount: afterSample.length,
+        }
+      });
     } catch (err) {
       console.error("trainer-ai error:", err);
       return res.status(500).json({ error: err.message || "AI training failed." });
