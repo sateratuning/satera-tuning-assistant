@@ -6,6 +6,7 @@ import { Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import { Chart } from 'chart.js';
+import BoostSummary from './components/BoostSummary';
 
 import {
   years, models, engines, injectors, mapSensors, throttles,
@@ -142,11 +143,18 @@ export default function MainApp() {
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '', logFile: null,
   });
+
+  // NEW: hold split parts from backend
+  const [leftText, setLeftText] = useState('');  // checklist / quick checks
+  const [aiText, setAiText] = useState('');      // AI portion only
+
   const [metrics, setMetrics] = useState(null);
   const [graphs, setGraphs] = useState(null);
-  const [aiResult, setAiResult] = useState('');
+  const [aiResult, setAiResult] = useState('');  // keep combined text for your existing display
   const [status, setStatus] = useState('');
-  const suggestions = useMemo(() => deriveAdvice(aiResult), [aiResult]);
+
+  // Use only the AI portion for suggestions
+  const suggestions = useMemo(() => deriveAdvice(aiText), [aiText]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -186,6 +194,8 @@ export default function MainApp() {
 
     setStatus('Analyzing...');
     setAiResult('');
+    setLeftText('');
+    setAiText('');
 
     try {
       const form = new FormData();
@@ -206,10 +216,17 @@ export default function MainApp() {
 
       const text = await reviewRes.text();
       const [quickChecks, aiPart] = text.split('===SPLIT===');
+
+      // keep your combined output for the current “AI Assessment” card
       const combined =
         (quickChecks || '').trim() +
         (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
       setAiResult(combined || 'No AI assessment returned.');
+
+      // NEW: store split parts for BoostSummary + suggestions
+      setLeftText((quickChecks || '').trim());
+      setAiText((aiPart || '').trim());
+
       setStatus('');
     } catch (err) {
       console.error(err);
@@ -314,6 +331,13 @@ export default function MainApp() {
                   <h3 style={styles.sectionTitleFancy}>📈 Vehicle Speed vs Time</h3>
                 </div>
                 <Line data={chartData} options={chartOptions} />
+              </div>
+            )}
+
+            {/* NEW: Boost cards, parsed from the checklist (leftText) */}
+            {!!leftText && (
+              <div style={styles.card}>
+                <BoostSummary checklistText={leftText} />
               </div>
             )}
 
