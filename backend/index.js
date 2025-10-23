@@ -153,12 +153,6 @@ function formatChecklist(parsed, headers) {
       summary.push('ℹ️ Could not determine peak timing @ RPM under WOT.');
     }
 
-    const mapWOT = wotRows.map(r => r[mapName]).filter(Number.isFinite);
-    if (mapWOT.length) {
-      summary.push(`🌡 MAP under WOT: ${safeMin(mapWOT).toFixed(1)} – ${safeMax(mapWOT).toFixed(1)} kPa`);
-    } else {
-      summary.push('ℹ️ MAP data under WOT not found.');
-    }
 
     /* ------------------------
        NEW: Boost (PSI) metrics
