@@ -127,14 +127,20 @@ function formatChecklist(parsed, headers) {
   }
 
   // WOT group
-  const accelName = 'Accelerator Position D (SAE)';
+  const accelName = 'Accelerator Position D (SAE)'; // pedal
+  const throttleName = 'Throttle Position (SAE)';    // TPS (blade)
   const timingName = 'Timing Advance (SAE)';
   const rpmName = 'Engine RPM (SAE)';
   const mapName = 'Intake Manifold Absolute Pressure (SAE)';
 
   let wotRows = [];
   if (hasCol(accelName)) {
-    wotRows = parsed.filter(r => Number.isFinite(r[accelName]) && r[accelName] > 86);
+    // ✅ NEW: require BOTH Pedal and TPS > 86% (if TPS column exists)
+    wotRows = parsed.filter(r => {
+      const pedalOK = Number.isFinite(r[accelName]) && r[accelName] > 86;
+      const tpsOK = !hasCol(throttleName) || (Number.isFinite(r[throttleName]) && r[throttleName] > 86);
+      return pedalOK && tpsOK;
+    });
   }
 
   if (wotRows.length) {
@@ -148,17 +154,13 @@ function formatChecklist(parsed, headers) {
     const rpmAtPeak = peakTimingRow[rpmName];
 
     if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak)) {
-      summary.push(`📈 Peak timing under WOT: ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
+      summary.push(`📈 Peak timing (Pedal & TPS ≥ 86%): ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
     } else {
-      summary.push('ℹ️ Could not determine peak timing @ RPM under WOT.');
+      summary.push('ℹ️ Could not determine peak timing @ RPM under true WOT (pedal & TPS).');
     }
 
-
     /* ------------------------
-       NEW: Boost (PSI) metrics
-       - Peak Boost (with RPM)
-       - Average Boost during WOT
-       - Boost at Highest RPM within WOT (turbo taper visibility)
+       Boost (PSI) metrics — computed within the same true-WOT window
     ------------------------- */
     const PSI_PER_KPA = 0.1450377377;
     const baroCandidates = [
@@ -203,11 +205,11 @@ function formatChecklist(parsed, headers) {
       }
       const peakBoostRpm = Number.isFinite(wotRpm[peakIdx]) ? Math.round(wotRpm[peakIdx]) : null;
 
-      // Average boost during WOT
+      // Average boost during true WOT
       const avg = (arr) => arr.length ? (arr.reduce((a, b) => a + b, 0) / arr.length) : 0;
       const avgBoostPsiWot = Number(avg(wotBoostPsi).toFixed(2));
 
-      // Boost at highest RPM within WOT
+      // Boost at highest RPM within true WOT
       let highestRpm = -Infinity;
       let highestRpmIdx = -1;
       for (let i = 0; i < wotRpm.length; i++) {
@@ -219,17 +221,17 @@ function formatChecklist(parsed, headers) {
       const boostAtHighestRpm = highestRpmIdx !== -1 ? Number(wotBoostPsi[highestRpmIdx].toFixed(2)) : 0;
       const highestRpmRounded = Number.isFinite(highestRpm) && highestRpm !== -Infinity ? Math.round(highestRpm) : null;
 
-      // Append summary lines (customer-facing)
-      summary.push(`🌀 Peak Boost (TPS ≥ 86%): ${peakBoostPsi.toFixed(2)} psi${peakBoostRpm ? ` @ ${peakBoostRpm} RPM` : ''}`);
-      summary.push(`📊 Average Boost (TPS ≥ 86%): ${avgBoostPsiWot.toFixed(2)} psi`);
-      summary.push(`🎯 Boost @ Highest RPM${highestRpmRounded ? ` (${highestRpmRounded} RPM)` : ''}: ${boostAtHighestRpm.toFixed(2)} psi`);
+      // Customer-facing lines
+      summary.push(`🌀 Peak Boost (Pedal & TPS ≥ 86%): ${peakBoostPsi.toFixed(2)} psi${peakBoostRpm ? ` @ ${peakBoostRpm} RPM` : ''}`);
+      summary.push(`📊 Average Boost (Pedal & TPS ≥ 86%): ${avgBoostPsiWot.toFixed(2)} psi`);
+      summary.push(`🎯 Boost @ Highest RPM (Pedal & TPS ≥ 86%)${highestRpmRounded ? ` (${highestRpmRounded} RPM)` : ''}: ${boostAtHighestRpm.toFixed(2)} psi`);
     } else {
-      summary.push('ℹ️ Boost (PSI) could not be computed in WOT window.');
+      summary.push('ℹ️ Boost (PSI) could not be computed in true WOT window.');
     }
-    /* ---------------------- END NEW ---------------------- */
+    /* ---------------------- END ---------------------- */
 
   } else {
-    summary.push('ℹ️ No WOT conditions found.');
+    summary.push('ℹ️ No true WOT conditions found (pedal & TPS).');
   }
 
   // Knock sensor volts
@@ -316,7 +318,7 @@ function formatChecklist(parsed, headers) {
     summary.push('✅ No misfires detected.');
   }
 
-  // Timers (must be WOT)
+  // Timers (unchanged: still use pedal WOT; tell me if you want TPS enforced here too)
   const speed = getColumn('Vehicle Speed (SAE)');
   const time = getColumn('Offset');
 
@@ -326,7 +328,7 @@ function formatChecklist(parsed, headers) {
     for (let i = 0; i < speed.length; i++) {
       const s = speed[i], t = time[i], accel = parsed[i][accelName];
       if (!Number.isFinite(s) || !Number.isFinite(t) || !Number.isFinite(accel)) continue;
-      if (accel < 86) continue; // require WOT
+      if (accel < 86) continue; // require WOT (pedal only). Say the word and I'll gate on TPS here too.
       if (startTime === null && s >= start && s < end) startTime = t;
       if (startTime !== null && s >= end) {
         times.push((t - startTime).toFixed(2));
@@ -343,7 +345,7 @@ function formatChecklist(parsed, headers) {
     for (let i = 1; i < speed.length; i++) {
       const s = speed[i], t = time[i], accel = parsed[i][accelName];
       if (!Number.isFinite(s) || !Number.isFinite(t) || !Number.isFinite(accel)) continue;
-      if (accel < 86) continue; // require WOT
+      if (accel < 86) continue; // pedal only
       if (!foundStop && s < 1.5) foundStop = true;
       if (foundStop && startTime === null && s > 1.5) startTime = t;
       if (startTime !== null && s >= 60) {
