@@ -1,12 +1,110 @@
 import React, { useState, useMemo } from 'react';
 import axios from 'axios';
 
-// Use same-origin API by default; allow override via REACT_APP_API_BASE
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
-
-// Global system instruction for training examples (optional)
 const TRAINING_SYSTEM_MSG =
   'Answer only with corrected spark table or concise tuning result. No explanations, no prose.';
+
+/* ----------------- Helpers: IDs & Normalization ----------------- */
+
+// Try very hard to find the entry id, no matter what the backend called it.
+function extractEntryId(data) {
+  if (!data) return null;
+  const candidates = [
+    data?.trainingEntry?.id,
+    data?.trainer_entry_id,
+    data?.entryId,
+    data?.entry_id,
+    data?.entry?.id,
+    data?.id,
+    data?.trainerId,
+    data?.trainer_id
+  ];
+  return candidates.find(Boolean) || null;
+}
+
+// Try to coerce various payload shapes into the one the UI expects.
+function normalizeComparisonPayload(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+
+  // Some backends may send lowercase or alternative keys.
+  const src = { ...raw };
+
+  const knockBefore = src.before?.KR || src.before?.knock || src.before?.kr || {};
+  const knockAfter  = src.after?.KR  || src.after?.knock  || src.after?.kr  || {};
+  const knockDelta  = src.deltas     || src.delta         || {};
+
+  const timesBefore = src.before?.times || src.before?.accel || {};
+  const timesAfter  = src.after?.times  || src.after?.accel  || {};
+  const timesDelta  = src.deltas        || {};
+
+  const wotBefore   = src.before?.WOT || src.before?.wot || {};
+  const wotAfter    = src.after?.WOT  || src.after?.wot  || {};
+  const wotDelta    = src.deltas       || {};
+
+  const varBeforeST = src.before?.varSTFT ?? src.before?.stftVar ?? src.before?.stft_var;
+  const varBeforeLT = src.before?.varLTFT ?? src.before?.ltftVar ?? src.before?.ltft_var;
+  const varAfterST  = src.after?.varSTFT  ?? src.after?.stftVar  ?? src.after?.stft_var;
+  const varAfterLT  = src.after?.varLTFT  ?? src.after?.ltftVar  ?? src.after?.ltft_var;
+
+  const toNum = (v) => (typeof v === 'string' ? Number(v) : v);
+  const safeN = (v) => (Number.isFinite(toNum(v)) ? Number(v) : null);
+
+  const out = {
+    before: {
+      KR: {
+        maxKR: safeN(knockBefore.maxKR ?? knockBefore.max ?? knockBefore.max_krr),
+        krEvents: safeN(knockBefore.krEvents ?? knockBefore.events ?? knockBefore.count),
+      },
+      times: {
+        zeroToSixty: safeN(timesBefore.zeroToSixty ?? timesBefore.t_0_60 ?? timesBefore['0_60']),
+        fortyToHundred: safeN(timesBefore.fortyToHundred ?? timesBefore.t_40_100 ?? timesBefore['40_100']),
+        sixtyToOneThirty: safeN(timesBefore.sixtyToOneThirty ?? timesBefore.t_60_130 ?? timesBefore['60_130']),
+      },
+      WOT: {
+        sparkMaxWOT: safeN(wotBefore.sparkMaxWOT ?? wotBefore.spark_max ?? wotBefore.peakSpark),
+        mapMinWOT: safeN(wotBefore.mapMinWOT ?? wotBefore.map_min),
+        mapMaxWOT: safeN(wotBefore.mapMaxWOT ?? wotBefore.map_max),
+      },
+      varSTFT: safeN(varBeforeST),
+      varLTFT: safeN(varBeforeLT),
+    },
+    after: {
+      KR: {
+        maxKR: safeN(knockAfter.maxKR ?? knockAfter.max ?? knockAfter.max_krr),
+        krEvents: safeN(knockAfter.krEvents ?? knockAfter.events ?? knockAfter.count),
+      },
+      times: {
+        zeroToSixty: safeN(timesAfter.zeroToSixty ?? timesAfter.t_0_60 ?? timesAfter['0_60']),
+        fortyToHundred: safeN(timesAfter.fortyToHundred ?? timesAfter.t_40_100 ?? timesAfter['40_100']),
+        sixtyToOneThirty: safeN(timesAfter.sixtyToOneThirty ?? timesAfter.t_60_130 ?? timesAfter['60_130']),
+      },
+      WOT: {
+        sparkMaxWOT: safeN(wotAfter.sparkMaxWOT ?? wotAfter.spark_max ?? wotAfter.peakSpark),
+        mapMinWOT: safeN(wotAfter.mapMinWOT ?? wotAfter.map_min),
+        mapMaxWOT: safeN(wotAfter.mapMaxWOT ?? wotAfter.map_max),
+      },
+      varSTFT: safeN(varAfterST),
+      varLTFT: safeN(varAfterLT),
+    },
+    deltas: {
+      KR_max_change: safeN(knockDelta.KR_max_change ?? knockDelta.maxKR_change ?? knockDelta.dKRmax),
+      KR_event_change: safeN(knockDelta.KR_event_change ?? knockDelta.krEvents_change ?? knockDelta.dKRevents),
+      t_0_60_change: safeN(timesDelta.t_0_60_change ?? timesDelta.zeroToSixty_change ?? timesDelta.d0_60),
+      t_40_100_change: safeN(timesDelta.t_40_100_change ?? timesDelta.fortyToHundred_change ?? timesDelta.d40_100),
+      t_60_130_change: safeN(timesDelta.t_60_130_change ?? timesDelta.sixtyToOneThirty_change ?? timesDelta.d60_130),
+      sparkMaxWOT_change: safeN(wotDelta.sparkMaxWOT_change ?? wotDelta.spark_max_change ?? wotDelta.dSparkWOT),
+      mapMinWOT_change: safeN(wotDelta.mapMinWOT_change ?? wotDelta.map_min_change ?? wotDelta.dMapMin),
+      mapMaxWOT_change: safeN(wotDelta.mapMaxWOT_change ?? wotDelta.map_max_change ?? wotDelta.dMapMax),
+      varSTFT_change: safeN(src?.deltas?.varSTFT_change ?? src?.deltas?.stftVar_change),
+      varLTFT_change: safeN(src?.deltas?.varLTFT_change ?? src?.deltas?.ltftVar_change),
+    }
+  };
+
+  return out;
+}
+
+/* ----------------- Component ----------------- */
 
 const TrainerMode = () => {
   const [form, setForm] = useState({
@@ -27,21 +125,19 @@ const TrainerMode = () => {
   const [customFields, setCustomFields] = useState({});
   const [notes, setNotes] = useState('');
 
-  // backend may return { id, ... } or just an id elsewhere
   const [trainingEntry, setTrainingEntry] = useState(null);
-  const [trainerEntryId, setTrainerEntryId] = useState(null); // resilient id we use everywhere
+  const [trainerEntryId, setTrainerEntryId] = useState(null);
 
   const [chat, setChat] = useState([
     { role: 'assistant', content: 'Upload BEFORE and AFTER logs (CSV), click Upload/Analyze, then chat about the results.' }
   ]);
   const [message, setMessage] = useState('');
 
-  // UI for trainer buttons
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [examplesTotal, setExamplesTotal] = useState(null);
 
-  // ---------- formatting helpers for metrics ----------
+  /* ---------- formatting for numbers ---------- */
   const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
   const fmtDeg = (v) => isNum(v) ? `${Number(v).toFixed(1)}°` : '—';
   const fmtSec = (v) => isNum(v) ? `${Number(v).toFixed(2)} s` : '—';
@@ -98,7 +194,6 @@ const TrainerMode = () => {
     const modelLine = text.split('\n').find(line => /\d{4}\s+Dodge/i.test(line));
     const osMatches = text.match(/OS:\s*(\w+)/g);
     const transModelMatch = text.match(/Hardware:\s*(ZF\w+)/i);
-
     const extracted = {
       vin: vinMatch?.[1] || '',
       year: modelLine?.match(/(20\d{2})/)?.[1] || '',
@@ -108,13 +203,29 @@ const TrainerMode = () => {
       transCalid: osMatches?.[1]?.split(':')[1]?.trim() || '',
       transModel: transModelMatch?.[1] || ''
     };
-
     setForm(prev => ({ ...prev, ...extracted }));
+  };
+
+  // If upload didn’t return an id, create one now using VIN/CALID/meta
+  const ensureTrainerEntry = async (meta) => {
+    try {
+      const res = await axios.post(`${API_BASE}/trainer/new-entry`, { meta });
+      const id = extractEntryId(res.data);
+      if (id) {
+        setTrainerEntryId(id);
+        setTrainingEntry({ id });
+        return id;
+      }
+    } catch (e) {
+      console.error('ensureTrainerEntry error:', e);
+    }
+    return null;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setStatus('⏳ Uploading & analyzing…');
+    setToast('');
 
     if (!beforeLog || !afterLog) {
       setStatus('❌ Please upload BOTH before and after CSV logs.');
@@ -132,26 +243,37 @@ const TrainerMode = () => {
       const res = await axios.post(`${API_BASE}/trainer-ai`, fd);
       const data = res.data || {};
 
+      // Summary text
       setAiSummary(data.aiSummary || '');
-      setComparison(data.comparison || null);
-      setConversationId(data.conversationId || null);
 
-      // Capture id regardless of key name
-      const idFromResponse =
-        data?.trainingEntry?.id ||
-        data?.trainer_entry_id ||
-        data?.entryId ||
-        data?.entry?.id ||
-        null;
+      // Normalize metrics so UI always renders
+      const normalized = normalizeComparisonPayload(
+        data.comparison || data.metrics || data.analysis || null
+      );
+      setComparison(normalized);
 
-      setTrainerEntryId(idFromResponse);
-      setTrainingEntry(data.trainingEntry || (idFromResponse ? { id: idFromResponse } : null));
+      // Conversation & entry ids
+      setConversationId(data.conversationId || data.conversation_id || null);
+
+      let id = extractEntryId(data);
+      if (!id) {
+        // last resort: create a new entry now
+        id = await ensureTrainerEntry(meta);
+      }
+      if (id) {
+        setTrainerEntryId(id);
+        setTrainingEntry(data.trainingEntry || { id });
+      }
 
       setChat([{ role: 'assistant', content: data.aiSummary || 'Analysis complete.' }]);
-      setStatus(idFromResponse ? `✅ Done. Entry: ${idFromResponse}` : '✅ Done.');
+      setStatus(id ? `✅ Done. Entry: ${id}` : '✅ Done (no entry id returned).');
+      if (!id) {
+        setToast('Heads up: No entry id returned from /trainer-ai. Created one via /trainer/new-entry if possible.');
+      }
     } catch (err) {
       console.error('❌ Upload error:', err);
       setStatus('❌ Upload failed.');
+      setToast(`❌ ${err?.response?.data?.error || err.message || 'Upload failed'}`);
     }
   };
 
@@ -178,10 +300,7 @@ const TrainerMode = () => {
     }
   };
 
-  // === Trainer Flow Helpers ===
-
-  // Build {system?, user, assistant} pairs from the chat timeline.
-  // Pair each 'user' with the next 'assistant'. Leading assistant-only messages are ignored.
+  // Build (user, assistant) pairs for training append
   const chatPairs = useMemo(() => {
     const pairs = [];
     for (let i = 0; i < chat.length; i++) {
@@ -195,12 +314,7 @@ const TrainerMode = () => {
           }
         }
         if (user && assistant) {
-          pairs.push({
-            system: TRAINING_SYSTEM_MSG,
-            user,
-            assistant,
-            notes: ''
-          });
+          pairs.push({ system: TRAINING_SYSTEM_MSG, user, assistant, notes: '' });
         }
       }
     }
@@ -268,42 +382,7 @@ const TrainerMode = () => {
     }
   };
 
-  const renderInput = (label, name) => (
-    <div style={{ marginBottom: '12px' }}>
-      <label>{label}</label>
-      <input
-        name={name}
-        value={form[name]}
-        onChange={handleChange}
-        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
-      />
-    </div>
-  );
-
-  const renderDropdown = (label, name, options) => (
-    <div style={{ marginBottom: '12px' }}>
-      <label>{label}</label>
-      <select
-        name={name}
-        value={form[name]}
-        onChange={handleChange}
-        style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
-      >
-        <option value="">Select...</option>
-        {options.concat('Custom').map(opt => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </select>
-      {form[name] === 'Custom' && (
-        <input
-          placeholder={`Enter custom ${label.toLowerCase()}`}
-          value={customFields[name] || ''}
-          onChange={e => handleCustomChange(name, e.target.value)}
-          style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
-        />
-      )}
-    </div>
-  );
+  /* ----------------- UI micro-components ----------------- */
 
   const Row = ({ label, value, color }) => (
     <div style={{
@@ -362,6 +441,8 @@ const TrainerMode = () => {
     );
   };
 
+  /* ----------------- Render ----------------- */
+
   return (
     <div style={{ padding: '30px', backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial, sans-serif' }}>
       <h1 style={{ fontSize: '2rem', marginBottom: '20px' }}>Trainer Mode — Log Only</h1>
@@ -377,25 +458,59 @@ const TrainerMode = () => {
       </div>
 
       <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-        {renderInput('VIN', 'vin')}
-        {renderInput('Calibration ID', 'calid')}
-        {renderInput('Transmission Cal ID', 'transCalid')}
-        {renderInput('Transmission Model', 'transModel')}
-        {renderDropdown('Year', 'year', dropdownOptions.year)}
-        {renderDropdown('Model', 'model', dropdownOptions.model)}
-        {renderDropdown('Engine', 'engine', dropdownOptions.engine)}
-        {renderDropdown('Injectors', 'injectors', dropdownOptions.injectors)}
-        {renderDropdown('MAP Sensor', 'map', dropdownOptions.map)}
-        {renderDropdown('Throttle Body', 'throttle', dropdownOptions.throttle)}
-        {renderDropdown('Power Adder', 'power', dropdownOptions.power)}
-        {renderDropdown('Transmission', 'trans', dropdownOptions.trans)}
-        {renderDropdown('Tire Height (inches)', 'tire', dropdownOptions.tire)}
-        {renderDropdown('Rear Gear Ratio', 'gear', dropdownOptions.gear)}
-        {renderDropdown('Fuel Type', 'fuel', dropdownOptions.fuel)}
-        {renderDropdown('Aftermarket Camshaft Installed?', 'cam', dropdownOptions.cam)}
-        {renderDropdown('Neural Network Status', 'neural', dropdownOptions.neural)}
+        {['vin','calid','transCalid','transModel'].map((n) => (
+          <div key={n} style={{ marginBottom: '12px' }}>
+            <label>{({vin:'VIN',calid:'Calibration ID',transCalid:'Transmission Cal ID',transModel:'Transmission Model'})[n]}</label>
+            <input
+              name={n}
+              value={form[n]}
+              onChange={handleChange}
+              style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+            />
+          </div>
+        ))}
 
-        {/* Logs only — no spark tables */}
+        {/* Dropdowns */}
+        {[
+          ['Year','year',dropdownOptions.year],
+          ['Model','model',dropdownOptions.model],
+          ['Engine','engine',dropdownOptions.engine],
+          ['Injectors','injectors',dropdownOptions.injectors],
+          ['MAP Sensor','map',dropdownOptions.map],
+          ['Throttle Body','throttle',dropdownOptions.throttle],
+          ['Power Adder','power',dropdownOptions.power],
+          ['Transmission','trans',dropdownOptions.trans],
+          ['Tire Height (inches)','tire',dropdownOptions.tire],
+          ['Rear Gear Ratio','gear',dropdownOptions.gear],
+          ['Fuel Type','fuel',dropdownOptions.fuel],
+          ['Aftermarket Camshaft Installed?','cam',dropdownOptions.cam],
+          ['Neural Network Status','neural',dropdownOptions.neural],
+        ].map(([label,name,opts]) => (
+          <div key={name} style={{ marginBottom: '12px' }}>
+            <label>{label}</label>
+            <select
+              name={name}
+              value={form[name]}
+              onChange={handleChange}
+              style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+            >
+              <option value="">Select...</option>
+              {opts.concat('Custom').map(opt => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </select>
+            {form[name] === 'Custom' && (
+              <input
+                placeholder={`Enter custom ${label.toLowerCase()}`}
+                value={customFields[name] || ''}
+                onChange={e => handleCustomChange(name, e.target.value)}
+                style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+              />
+            )}
+          </div>
+        ))}
+
+        {/* Logs */}
         <div>
           <label>Before Log (CSV)</label>
           <input
@@ -479,7 +594,7 @@ const TrainerMode = () => {
             placeholder="Ask about KR, WOT timing, trims, misfires…"
             style={{ flex:1, padding:'10px', borderRadius:6, background:'#222', color:'#fff', border:'1px solid #333' }}
           />
-        <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
+          <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
             Send
           </button>
         </div>
@@ -521,7 +636,7 @@ const TrainerMode = () => {
         )}
       </div>
 
-      {/* Feedback + Fine-tune (works with either trainingEntry.id or trainerEntryId) */}
+      {/* Feedback + Fine-tune */}
       {(trainingEntry?.id || trainerEntryId) && (
         <div style={{ marginTop: '2rem' }}>
           <label>📝 Trainer Notes:</label>
