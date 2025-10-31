@@ -5,7 +5,8 @@ import axios from 'axios';
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
 
 // Global system instruction for training examples (optional)
-const TRAINING_SYSTEM_MSG = 'Answer only with corrected spark table or concise tuning result. No explanations, no prose.';
+const TRAINING_SYSTEM_MSG =
+  'Answer only with corrected spark table or concise tuning result. No explanations, no prose.';
 
 const TrainerMode = () => {
   const [form, setForm] = useState({
@@ -25,18 +26,45 @@ const TrainerMode = () => {
 
   const [customFields, setCustomFields] = useState({});
   const [notes, setNotes] = useState('');
-  const [trainingEntry, setTrainingEntry] = useState(null); // backend may return { id, ... }
-  const [trainerEntryId, setTrainerEntryId] = useState(null); // robust id we use for save/finalize
+
+  // backend may return { id, ... } or just an id elsewhere
+  const [trainingEntry, setTrainingEntry] = useState(null);
+  const [trainerEntryId, setTrainerEntryId] = useState(null); // resilient id we use everywhere
 
   const [chat, setChat] = useState([
     { role: 'assistant', content: 'Upload BEFORE and AFTER logs (CSV), click Upload/Analyze, then chat about the results.' }
   ]);
   const [message, setMessage] = useState('');
 
-  // UI feedback for trainer buttons
+  // UI for trainer buttons
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [examplesTotal, setExamplesTotal] = useState(null);
+
+  // ---------- formatting helpers for metrics ----------
+  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+  const fmtDeg = (v) => isNum(v) ? `${Number(v).toFixed(1)}°` : '—';
+  const fmtSec = (v) => isNum(v) ? `${Number(v).toFixed(2)} s` : '—';
+  const fmtKpa = (v) => isNum(v) ? `${Number(v).toFixed(0)} kPa` : '—';
+  const fmtPlain = (v) => (isNum(v) ? String(v) : (v ?? '—'));
+  const withSign = (v, digits = 2, unit = '') => {
+    if (!isNum(v)) return '—';
+    const s = (v > 0 ? `+${v.toFixed(digits)}` : v.toFixed(digits));
+    return unit ? `${s} ${unit}` : s;
+  };
+  const deltaColor = (key, val) => {
+    if (!isNum(val)) return '';
+    const lowerIsBetter = [
+      't_0_60_change','t_40_100_change','t_60_130_change',
+      'KR_max_change','KR_event_change','varSTFT_change','varLTFT_change',
+      'mapMinWOT_change','mapMaxWOT_change',
+    ];
+    const higherIsBetter = ['sparkMaxWOT_change'];
+    const good = lowerIsBetter.includes(key) ? (val < 0)
+               : higherIsBetter.includes(key) ? (val > 0)
+               : null;
+    return good == null ? '' : (good ? '#39e58c' : '#ff6b6b');
+  };
 
   const dropdownOptions = {
     year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
@@ -107,14 +135,20 @@ const TrainerMode = () => {
       setAiSummary(data.aiSummary || '');
       setComparison(data.comparison || null);
       setConversationId(data.conversationId || null);
-      setTrainingEntry(data.trainingEntry || null);
 
-      // prefer explicit id from backend; fallback to trainingEntry.id if present
-      const idFromResponse = data.trainer_entry_id || data?.trainingEntry?.id || null;
-      if (idFromResponse) setTrainerEntryId(idFromResponse);
+      // Capture id regardless of key name
+      const idFromResponse =
+        data?.trainingEntry?.id ||
+        data?.trainer_entry_id ||
+        data?.entryId ||
+        data?.entry?.id ||
+        null;
+
+      setTrainerEntryId(idFromResponse);
+      setTrainingEntry(data.trainingEntry || (idFromResponse ? { id: idFromResponse } : null));
 
       setChat([{ role: 'assistant', content: data.aiSummary || 'Analysis complete.' }]);
-      setStatus('✅ Done.');
+      setStatus(idFromResponse ? `✅ Done. Entry: ${idFromResponse}` : '✅ Done.');
     } catch (err) {
       console.error('❌ Upload error:', err);
       setStatus('❌ Upload failed.');
@@ -147,13 +181,12 @@ const TrainerMode = () => {
   // === Trainer Flow Helpers ===
 
   // Build {system?, user, assistant} pairs from the chat timeline.
-  // We pair each 'user' with the next 'assistant'. Earlier assistant-only messages (like the intro) are ignored.
+  // Pair each 'user' with the next 'assistant'. Leading assistant-only messages are ignored.
   const chatPairs = useMemo(() => {
     const pairs = [];
     for (let i = 0; i < chat.length; i++) {
       if (chat[i].role === 'user') {
         const user = chat[i].content || '';
-        // find next assistant after this user
         let assistant = '';
         for (let j = i + 1; j < chat.length; j++) {
           if (chat[j].role === 'assistant') {
@@ -163,7 +196,7 @@ const TrainerMode = () => {
         }
         if (user && assistant) {
           pairs.push({
-            system: TRAINING_SYSTEM_MSG, // remove or change if you don’t want a system message
+            system: TRAINING_SYSTEM_MSG,
             user,
             assistant,
             notes: ''
@@ -191,8 +224,8 @@ const TrainerMode = () => {
 
       const res = await axios.post(`${API_BASE}/trainer/save-chat`, {
         trainer_entry_id: id,
-        chatPairs,              // array of {system?, user, assistant, notes?}
-        notes                   // optional notes for the entry
+        chatPairs,
+        notes
       });
 
       const j = res.data || {};
@@ -223,7 +256,11 @@ const TrainerMode = () => {
       const j = res.data || {};
       if (!j.ok) throw new Error(j.error || 'Finalize failed');
       setExamplesTotal(j.totalExamplesInFile ?? null);
-      setToast(`Appended ${j.appended} example(s) → ${j.jsonlPath}. Total in file: ${j.totalExamplesInFile}${(j.totalExamplesInFile ?? 0) < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}`);
+      setToast(
+        `Appended ${j.appended} example(s) → ${j.jsonlPath}. ` +
+        `Total in file: ${j.totalExamplesInFile}` +
+        `${(j.totalExamplesInFile ?? 0) < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}`
+      );
     } catch (e) {
       setToast(`❌ ${e.message || e}`);
     } finally {
@@ -268,35 +305,62 @@ const TrainerMode = () => {
     </div>
   );
 
-  const KV = ({ k, v, suf='' }) => (
-    <div style={{ display:'flex', justifyContent:'space-between', gap:12 }}>
-      <div style={{ opacity:.8 }}>{k}</div>
-      <div>{v == null || Number.isNaN(v) ? '—' : `${v}${suf}`}</div>
+  const Row = ({ label, value, color }) => (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: '1fr auto',
+      gap: 12,
+      alignItems: 'baseline',
+      padding: '6px 0',
+      borderBottom: '1px dashed rgba(255,255,255,0.06)'
+    }}>
+      <div style={{ opacity: .85 }}>{label}</div>
+      <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color }}>{value}</div>
     </div>
   );
 
-  const TimeBlock = ({ t }) => (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
-      <KV k="0–60" v={t?.zeroToSixty?.toFixed ? t.zeroToSixty.toFixed(2) : t?.zeroToSixty} suf=" s" />
-      <KV k="40–100" v={t?.fortyToHundred?.toFixed ? t.fortyToHundred.toFixed(2) : t?.fortyToHundred} suf=" s" />
-      <KV k="60–130" v={t?.sixtyToOneThirty?.toFixed ? t.sixtyToOneThirty.toFixed(2) : t?.sixtyToOneThirty} suf=" s" />
-    </div>
-  );
+  const BeforeAfterCard = ({ title, data }) => {
+    const KR = data?.KR || {};
+    const T = data?.times || {};
+    const W = data?.WOT || {};
+    return (
+      <div style={{ background:'#202020', padding:12, borderRadius:8, boxShadow:'0 0 0 1px rgba(0,255,136,0.08) inset' }}>
+        <h3 style={{ marginTop:0, color:'#adff2f' }}>{title}</h3>
+        <Row label="Max KR" value={fmtDeg(KR?.maxKR)} />
+        <Row label="KR Events" value={fmtPlain(KR?.krEvents)} />
+        <Row label="0–60" value={fmtSec(T?.zeroToSixty)} />
+        <Row label="40–100" value={fmtSec(T?.fortyToHundred)} />
+        <Row label="60–130" value={fmtSec(T?.sixtyToOneThirty)} />
+        <Row label="Peak Spark @WOT" value={fmtDeg(W?.sparkMaxWOT)} />
+        <Row label="MAP min @WOT" value={fmtKpa(W?.mapMinWOT)} />
+        <Row label="MAP max @WOT" value={fmtKpa(W?.mapMaxWOT)} />
+        <Row label="STFT Var" value={fmtPlain(data?.varSTFT)} />
+        <Row label="LTFT Var" value={fmtPlain(data?.varLTFT)} />
+      </div>
+    );
+  };
 
-  const KRBlock = ({ kr }) => (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-      <KV k="Max KR" v={kr?.maxKR} suf="°" />
-      <KV k="KR Events" v={kr?.krEvents} />
-    </div>
-  );
-
-  const WOTBlock = ({ w }) => (
-    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
-      <KV k="Peak Spark @WOT" v={w?.sparkMaxWOT} suf="°" />
-      <KV k="MAP min @WOT" v={w?.mapMinWOT} suf=" kPa" />
-      <KV k="MAP max @WOT" v={w?.mapMaxWOT} suf=" kPa" />
-    </div>
-  );
+  const DeltasCard = ({ deltas }) => {
+    const d = deltas || {};
+    const paint = (key, label, v, digits, unit) => (
+      <Row label={label} value={withSign(v, digits, unit)} color={deltaColor(key, v)} />
+    );
+    return (
+      <div style={{ background:'#202020', padding:12, borderRadius:8, boxShadow:'0 0 0 1px rgba(0,255,136,0.08) inset' }}>
+        <h3 style={{ marginTop:0, color:'#adff2f' }}>Deltas</h3>
+        {paint('KR_max_change','Δ Max KR', d.KR_max_change, 1, '°')}
+        {paint('KR_event_change','Δ KR Events', d.KR_event_change, 0, '')}
+        {paint('t_0_60_change','Δ 0–60', d.t_0_60_change, 2, 's')}
+        {paint('t_40_100_change','Δ 40–100', d.t_40_100_change, 2, 's')}
+        {paint('t_60_130_change','Δ 60–130', d.t_60_130_change, 2, 's')}
+        {paint('sparkMaxWOT_change','Δ Peak Spark @WOT', d.sparkMaxWOT_change, 1, '°')}
+        {paint('mapMinWOT_change','Δ MAP min @WOT', d.mapMinWOT_change, 0, 'kPa')}
+        {paint('mapMaxWOT_change','Δ MAP max @WOT', d.mapMaxWOT_change, 0, 'kPa')}
+        {paint('varSTFT_change','Δ STFT Var', d.varSTFT_change, 2, '')}
+        {paint('varLTFT_change','Δ LTFT Var', d.varLTFT_change, 2, '')}
+      </div>
+    );
+  };
 
   return (
     <div style={{ padding: '30px', backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial, sans-serif' }}>
@@ -387,37 +451,9 @@ const TrainerMode = () => {
         <div style={{ marginTop: '2rem', background:'#1a1a1a', padding:'16px', borderRadius:'10px' }}>
           <h2 style={{ color:'#00FF90', marginBottom: '10px' }}>Before vs After — Key Metrics</h2>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
-            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
-              <h3 style={{ marginTop:0 }}>Before</h3>
-              <KRBlock kr={comparison.before?.KR} />
-              <div style={{ height:10 }} />
-              <TimeBlock t={comparison.before?.times} />
-              <div style={{ height:10 }} />
-              <WOTBlock w={comparison.before?.WOT} />
-            </div>
-            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
-              <h3 style={{ marginTop:0 }}>After</h3>
-              <KRBlock kr={comparison.after?.KR} />
-              <div style={{ height:10 }} />
-              <TimeBlock t={comparison.after?.times} />
-              <div style={{ height:10 }} />
-              <WOTBlock w={comparison.after?.WOT} />
-            </div>
-            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
-              <h3 style={{ marginTop:0 }}>Deltas</h3>
-              <div style={{ display:'grid', gap:8 }}>
-                <KV k="Δ Max KR" v={comparison.deltas?.KR_max_change} suf="°" />
-                <KV k="Δ KR Events" v={comparison.deltas?.KR_event_change} />
-                <KV k="Δ 0–60" v={comparison.deltas?.t_0_60_change?.toFixed ? comparison.deltas.t_0_60_change.toFixed(2) : comparison.deltas?.t_0_60_change} suf=" s" />
-                <KV k="Δ 40–100" v={comparison.deltas?.t_40_100_change?.toFixed ? comparison.deltas.t_40_100_change.toFixed(2) : comparison.deltas?.t_40_100_change} suf=" s" />
-                <KV k="Δ 60–130" v={comparison.deltas?.t_60_130_change?.toFixed ? comparison.deltas.t_60_130_change.toFixed(2) : comparison.deltas?.t_60_130_change} suf=" s" />
-                <KV k="Δ Peak Spark @WOT" v={comparison.deltas?.sparkMaxWOT_change} suf="°" />
-                <KV k="Δ MAP min @WOT" v={comparison.deltas?.mapMinWOT_change} suf=" kPa" />
-                <KV k="Δ MAP max @WOT" v={comparison.deltas?.mapMaxWOT_change} suf=" kPa" />
-                <KV k="Δ STFT Var" v={comparison.deltas?.varSTFT_change} />
-                <KV k="Δ LTFT Var" v={comparison.deltas?.varLTFT_change} />
-              </div>
-            </div>
+            <BeforeAfterCard title="Before" data={comparison.before} />
+            <BeforeAfterCard title="After" data={comparison.after} />
+            <DeltasCard deltas={comparison.deltas} />
           </div>
         </div>
       )}
@@ -443,7 +479,7 @@ const TrainerMode = () => {
             placeholder="Ask about KR, WOT timing, trims, misfires…"
             style={{ flex:1, padding:'10px', borderRadius:6, background:'#222', color:'#fff', border:'1px solid #333' }}
           />
-          <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
+        <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
             Send
           </button>
         </div>
@@ -485,8 +521,8 @@ const TrainerMode = () => {
         )}
       </div>
 
-      {/* Optional: Feedback + Fine-tune (feedback hidden unless we have an ID) */}
-      {trainingEntry?.id && (
+      {/* Feedback + Fine-tune (works with either trainingEntry.id or trainerEntryId) */}
+      {(trainingEntry?.id || trainerEntryId) && (
         <div style={{ marginTop: '2rem' }}>
           <label>📝 Trainer Notes:</label>
           <textarea
@@ -500,7 +536,7 @@ const TrainerMode = () => {
             onClick={async () => {
               try {
                 await axios.post(`${API_BASE}/update-feedback`, {
-                  id: trainingEntry?.id,
+                  id: trainingEntry?.id || trainerEntryId,
                   feedback: notes
                 });
                 alert('✅ Feedback submitted!');
