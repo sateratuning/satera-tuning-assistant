@@ -21,7 +21,14 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB/file
 });
 
-// ---------- In-memory chat store (replace with DB if you want persistence) ----------
+// ---------- Shared AI Review Parser ----------
+/**
+ * We reuse your existing AI Review parser to ensure identical behavior:
+ * backend/utils/parseCSV.js  -> returns a "metrics" object (or null on failure)
+ */
+const parseCSV = require("../utils/parseCSV");
+
+// ---------- In-memory chat store ----------
 /**
  * Map<conversationId, {
  *   system: { role, content },
@@ -31,290 +38,162 @@ const upload = multer({
  */
 const chatStore = new Map();
 
-// ============================================================================
-// CSV HELPERS — dynamic "offset-locate" + multi-delim support
-// ============================================================================
-
-function normalizeNewlines(s) {
-  return String(s || "").replace(/\r\n/g, "\n");
-}
-function splitLines(s) {
-  return normalizeNewlines(s).split("\n");
-}
-function smartSplit(line) {
-  // prefer comma; fallback to semicolon; fallback to tab
-  if (line.includes(",")) return line.split(",");
-  if (line.includes(";")) return line.split(";");
-  return line.split("\t");
-}
-function locateHeaderIndex(lines) {
-  // Find the first row where one of the cells is EXACTLY "Offset"
-  for (let i = 0; i < lines.length; i++) {
-    const cells = smartSplit(lines[i]).map(c => String(c).trim());
-    if (cells.some(c => c === "Offset")) return i;
-  }
-  return -1;
-}
-function nextNonEmptyIndex(lines, startIdx) {
-  for (let i = startIdx; i < lines.length; i++) {
-    const cells = smartSplit(lines[i]).map(c => String(c).trim());
-    const any = cells.some(c => c.length > 0);
-    if (any) return i;
-  }
-  return -1;
-}
-
-function parseCSVDynamic(content) {
-  const lines = splitLines(content);
-  if (!lines.length) throw new Error("CSV file empty");
-
-  const headerRowIndex = locateHeaderIndex(lines);
-  if (headerRowIndex === -1) throw new Error('Could not locate header row containing "Offset".');
-
-  const headers = smartSplit(lines[headerRowIndex]).map(h => h.trim());
-  const unitsRowIndex = headerRowIndex + 1;
-  const dataStartIndex = nextNonEmptyIndex(lines, unitsRowIndex + 1);
-  if (dataStartIndex === -1) throw new Error("No data rows found in CSV.");
-
-  // helper to pick a numeric if possible
-  const toNum = (v) => {
-    if (v === undefined || v === null) return null;
-    const s = String(v).trim();
-    if (s === "") return null;
-    const n = Number(s);
-    return Number.isFinite(n) ? n : s; // keep string if not numeric (rare)
-  };
-
-  const indexOf = (name) => headers.findIndex(h => h === name);
-
-  const cols = {
-    t: indexOf("Offset"),
-    mph: indexOf("Vehicle Speed (SAE)"),
-    tps: indexOf("Throttle Position (%)"),
-    pedal: indexOf("Accelerator Pedal Position (%)"),
-    map: indexOf("Manifold Absolute Pressure (SAE)"),
-    spark: indexOf("Spark Advance"),
-    kr: indexOf("Knock Retard (SAE)"),
-    ect: indexOf("Engine Coolant Temperature"),
-    oil: indexOf("Engine Oil Pressure"),
-    stft1: indexOf("Short Term Fuel Trim Bank 1"),
-    stft2: indexOf("Short Term Fuel Trim Bank 2"),
-    ltft1: indexOf("Long Term Fuel Trim Bank 1"),
-    ltft2: indexOf("Long Term Fuel Trim Bank 2"),
-    mis1: indexOf("Misfire Cylinder 1"),
-    mis2: indexOf("Misfire Cylinder 2"),
-    mis3: indexOf("Misfire Cylinder 3"),
-    mis4: indexOf("Misfire Cylinder 4"),
-    mis5: indexOf("Misfire Cylinder 5"),
-    mis6: indexOf("Misfire Cylinder 6"),
-    mis7: indexOf("Misfire Cylinder 7"),
-    mis8: indexOf("Misfire Cylinder 8"),
-  };
-
-  if (cols.t === -1 || cols.mph === -1) {
-    throw new Error('Required columns missing: need "Offset" and "Vehicle Speed (SAE)".');
-  }
-
-  const rows = [];
-  for (let i = dataStartIndex; i < lines.length; i++) {
-    const raw = lines[i];
-    if (!raw || !raw.trim()) continue;
-    const arr = smartSplit(raw);
-
-    const pick = (idx) => {
-      if (idx === -1 || idx >= arr.length) return null;
-      return toNum(arr[idx]);
-    };
-
-    const misVals = [
-      pick(cols.mis1), pick(cols.mis2), pick(cols.mis3), pick(cols.mis4),
-      pick(cols.mis5), pick(cols.mis6), pick(cols.mis7), pick(cols.mis8),
-    ].filter(v => v !== null && v !== undefined);
-
-    rows.push({
-      t: Number(pick(cols.t)),
-      mph: Number(pick(cols.mph)),
-      tps: typeof pick(cols.tps) === 'number' ? Number(pick(cols.tps)) : pick(cols.tps),
-      pedal: typeof pick(cols.pedal) === 'number' ? Number(pick(cols.pedal)) : pick(cols.pedal),
-      map: typeof pick(cols.map) === 'number' ? Number(pick(cols.map)) : pick(cols.map),
-      spark: typeof pick(cols.spark) === 'number' ? Number(pick(cols.spark)) : pick(cols.spark),
-      kr: typeof pick(cols.kr) === 'number' ? Number(pick(cols.kr)) : pick(cols.kr),
-      ect: typeof pick(cols.ect) === 'number' ? Number(pick(cols.ect)) : pick(cols.ect),
-      oil: typeof pick(cols.oil) === 'number' ? Number(pick(cols.oil)) : pick(cols.oil),
-      stft1: typeof pick(cols.stft1) === 'number' ? Number(pick(cols.stft1)) : pick(cols.stft1),
-      stft2: typeof pick(cols.stft2) === 'number' ? Number(pick(cols.stft2)) : pick(cols.stft2),
-      ltft1: typeof pick(cols.ltft1) === 'number' ? Number(pick(cols.ltft1)) : pick(cols.ltft1),
-      ltft2: typeof pick(cols.ltft2) === 'number' ? Number(pick(cols.ltft2)) : pick(cols.ltft2),
-      mis: misVals.map(v => Number(v)).filter(n => Number.isFinite(n)),
-    });
-  }
-
-  if (!rows.length) throw new Error("No data rows parsed.");
-  return { headers, data: rows, cols };
-}
-
-function readCsvFileParsed(filePath) {
-  const content = fs.readFileSync(filePath, "utf8");
-  return parseCSVDynamic(content);
-}
-
+// ---------- Helpers ----------
 function safeUnlink(p) {
   try { if (p && fs.existsSync(p)) fs.unlinkSync(p); } catch {}
 }
 
-// ============================================================================
-// ANALYSIS HELPERS
-// ============================================================================
+// Build comparison object from parseCSV.js metrics
+function buildComparisonFromMetrics(b, a) {
+  const countKREvents = (knockArr) =>
+    Array.isArray(knockArr) ? knockArr.filter(v => Number.isFinite(v) && v > 0).length : 0;
 
-function bestIntervalTime(rows, mphStart, mphEnd) {
-  // Fastest segment from mphStart->mphEnd (simple crossing detection).
-  let best = null;
-  for (let i = 1; i < rows.length; i++) {
-    const p = rows[i - 1], c = rows[i];
-    if (p.mph < mphStart && c.mph >= mphStart) {
-      const tStart = c.t;
-      for (let j = i; j < rows.length; j++) {
-        const p2 = rows[j - 1] || rows[j], c2 = rows[j];
-        if (p2.mph < mphEnd && c2.mph >= mphEnd) {
-          const tEnd = c2.t;
-          const dt = tEnd - tStart;
-          if (dt > 0 && (best === null || dt < best)) best = dt;
-          break;
-        }
-      }
-    }
-  }
-  return best;
+  const before = {
+    KR: {
+      maxKR: Array.isArray(b.knock) && b.knock.length ? Math.max(...b.knock) : 0,
+      krEvents: countKREvents(b.knock),
+    },
+    times: {
+      zeroToSixty: b.zeroTo60 ?? null,
+      fortyToHundred: b.fortyTo100 ?? null,
+      sixtyToOneThirty: b.sixtyTo130 ?? null,
+    },
+    WOT: {
+      // parseCSV.js "peakTiming" is global max; mirrors AI Review if that's what's used.
+      sparkMaxWOT: b.peakTiming ?? null,
+      mapMinWOT: b.map?.min ?? null,
+      mapMaxWOT: b.map?.max ?? null,
+    },
+    fuel: {
+      stft1: null, stft2: null, // not provided by parseCSV.js
+      ltft1: b.avgFT1 ?? null,
+      ltft2: b.avgFT2 ?? null,
+      varSTFT: null,
+      varLTFT: b.varFT ?? null,
+    },
+    misfires: [
+      b.misfires?.Cyl1 ?? 0, b.misfires?.Cyl2 ?? 0,
+      b.misfires?.Cyl3 ?? 0, b.misfires?.Cyl4 ?? 0,
+      b.misfires?.Cyl5 ?? 0, b.misfires?.Cyl6 ?? 0,
+      b.misfires?.Cyl7 ?? 0, b.misfires?.Cyl8 ?? 0,
+    ],
+  };
+
+  const after = {
+    KR: {
+      maxKR: Array.isArray(a.knock) && a.knock.length ? Math.max(...a.knock) : 0,
+      krEvents: countKREvents(a.knock),
+    },
+    times: {
+      zeroToSixty: a.zeroTo60 ?? null,
+      fortyToHundred: a.fortyTo100 ?? null,
+      sixtyToOneThirty: a.sixtyTo130 ?? null,
+    },
+    WOT: {
+      sparkMaxWOT: a.peakTiming ?? null,
+      mapMinWOT: a.map?.min ?? null,
+      mapMaxWOT: a.map?.max ?? null,
+    },
+    fuel: {
+      stft1: null, stft2: null,
+      ltft1: a.avgFT1 ?? null,
+      ltft2: a.avgFT2 ?? null,
+      varSTFT: null,
+      varLTFT: a.varFT ?? null,
+    },
+    misfires: [
+      a.misfires?.Cyl1 ?? 0, a.misfires?.Cyl2 ?? 0,
+      a.misfires?.Cyl3 ?? 0, a.misfires?.Cyl4 ?? 0,
+      a.misfires?.Cyl5 ?? 0, a.misfires?.Cyl6 ?? 0,
+      a.misfires?.Cyl7 ?? 0, a.misfires?.Cyl8 ?? 0,
+    ],
+  };
+
+  const d = (x, y) => (x == null || y == null) ? null : (y - x);
+
+  const deltas = {
+    KR_max_change: d(before.KR.maxKR, after.KR.maxKR),
+    KR_event_change: d(before.KR.krEvents, after.KR.krEvents),
+    t_0_60_change: d(before.times.zeroToSixty, after.times.zeroToSixty),
+    t_40_100_change: d(before.times.fortyToHundred, after.times.fortyToHundred),
+    t_60_130_change: d(before.times.sixtyToOneThirty, after.times.sixtyToOneThirty),
+    sparkMaxWOT_change: d(before.WOT.sparkMaxWOT, after.WOT.sparkMaxWOT),
+    mapMinWOT_change: d(before.WOT.mapMinWOT, after.WOT.mapMinWOT),
+    mapMaxWOT_change: d(before.WOT.mapMaxWOT, after.WOT.mapMaxWOT),
+    varSTFT_change: d(before.fuel.varSTFT, after.fuel.varSTFT),
+    varLTFT_change: d(before.fuel.varLTFT, after.fuel.varLTFT),
+  };
+
+  return { before, after, deltas };
 }
 
-function summarizeKR(rows) {
-  let maxKR = 0;
-  let krEvents = 0;
-  for (const r of rows) {
-    const k = Number(r.kr);
-    if (Number.isFinite(k)) {
-      if (k > maxKR) maxKR = k;
-      if (k > 0) krEvents++;
-    }
-  }
-  return { maxKR, krEvents };
-}
+// Lightweight sampler for AI context (keeps token usage small)
+// Follows the same header/offset positioning style your parseCSV uses.
+function sampleRowsForAI_fromRaw(raw, step = 400) {
+  const rows = raw.split(/\r?\n/).map(r => r.trim());
+  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith("offset"));
+  if (headerRowIndex === -1) return [];
+  const headers = rows[headerRowIndex].split(",").map(h => h.trim());
+  const dataStart = headerRowIndex + 4;
+  const dataRows = rows.slice(dataStart).filter(r => r && r.includes(","));
 
-function wotFilter(rows) {
-  const hasTPS = rows.some(r => Number.isFinite(r.tps));
-  return rows.filter(r => {
-    if (hasTPS) return Number.isFinite(r.tps) && r.tps > 85;
-    return Number.isFinite(r.pedal) && r.pedal > 85;
-  });
-}
+  const col = (name) => headers.findIndex(h => h === name);
+  const idx = {
+    t: col("Offset"),
+    mph: col("Vehicle Speed (SAE)"),
+    tps: col("Throttle Position (%)"),
+    pedal: col("Accelerator Pedal Position (%)"),
+    map: col("Manifold Absolute Pressure (SAE)"),
+    spark: col("Spark Advance"),
+    kr: col("Total Knock Retard") !== -1 ? col("Total Knock Retard") : col("Knock Retard (SAE)"),
+  };
 
-function summarizeWOT(rows) {
-  const wot = wotFilter(rows);
-  let sparkMaxWOT = null, mapMinWOT = null, mapMaxWOT = null;
-  for (const r of wot) {
-    if (Number.isFinite(r.spark)) {
-      sparkMaxWOT = sparkMaxWOT === null ? r.spark : Math.max(sparkMaxWOT, r.spark);
-    }
-    if (Number.isFinite(r.map)) {
-      mapMinWOT = mapMinWOT === null ? r.map : Math.min(mapMinWOT, r.map);
-      mapMaxWOT = mapMaxWOT === null ? r.map : Math.max(mapMaxWOT, r.map);
-    }
-  }
-  return { sparkMaxWOT, mapMinWOT, mapMaxWOT };
-}
-
-function summarizeTrims(rows) {
-  const acc = { stft1: [], stft2: [], ltft1: [], ltft2: [] };
-  for (const r of rows) {
-    if (Number.isFinite(r.stft1)) acc.stft1.push(r.stft1);
-    if (Number.isFinite(r.stft2)) acc.stft2.push(r.stft2);
-    if (Number.isFinite(r.ltft1)) acc.ltft1.push(r.ltft1);
-    if (Number.isFinite(r.ltft2)) acc.ltft2.push(r.ltft2);
-  }
-  const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
-  const stft1 = avg(acc.stft1), stft2 = avg(acc.stft2);
-  const ltft1 = avg(acc.ltft1), ltft2 = avg(acc.ltft2);
-  const varSTFT = (Number.isFinite(stft1) && Number.isFinite(stft2)) ? Math.abs(stft1 - stft2) : null;
-  const varLTFT = (Number.isFinite(ltft1) && Number.isFinite(ltft2)) ? Math.abs(ltft1 - ltft2) : null;
-  return { stft1, stft2, ltft1, ltft2, varSTFT, varLTFT };
-}
-
-function summarizeMisfires(rows) {
-  const totals = new Array(8).fill(0);
-  for (const r of rows) {
-    if (Array.isArray(r.mis) && r.mis.length) {
-      r.mis.forEach((v, i) => { if (Number.isFinite(v)) totals[i] += v; });
-    }
-  }
-  return totals;
-}
-
-function sampleRowsForAI(rows, step = 400) {
-  const out = [];
-  for (let i = 0; i < rows.length; i += step) {
-    const r = rows[i];
-    out.push({
-      t: r.t, mph: r.mph, tps: r.tps, pedal: r.pedal, map: r.map, spark: r.spark, kr: r.kr,
+  const parsed = [];
+  for (let i = 0; i < dataRows.length; i += step) {
+    const r = dataRows[i].split(",");
+    const pick = (i) => (i >= 0 && i < r.length) ? r[i] : null;
+    const num = (v) => v == null ? null : Number(v);
+    parsed.push({
+      t: num(pick(idx.t)),
+      mph: num(pick(idx.mph)),
+      tps: num(pick(idx.tps)),
+      pedal: num(pick(idx.pedal)),
+      map: num(pick(idx.map)),
+      spark: num(pick(idx.spark)),
+      kr: num(pick(idx.kr)),
     });
   }
   // ensure last row is included
-  if (rows.length && out[out.length - 1]?.t !== rows[rows.length - 1].t) {
-    const r = rows[rows.length - 1];
-    out.push({ t: r.t, mph: r.mph, tps: r.tps, pedal: r.pedal, map: r.map, spark: r.spark, kr: r.kr });
+  if (dataRows.length) {
+    const r = dataRows[dataRows.length - 1].split(",");
+    const pick = (i) => (i >= 0 && i < r.length) ? r[i] : null;
+    const num = (v) => v == null ? null : Number(v);
+    const last = {
+      t: num(pick(idx.t)),
+      mph: num(pick(idx.mph)),
+      tps: num(pick(idx.tps)),
+      pedal: num(pick(idx.pedal)),
+      map: num(pick(idx.map)),
+      spark: num(pick(idx.spark)),
+      kr: num(pick(idx.kr)),
+    };
+    if (!parsed.length || parsed[parsed.length - 1].t !== last.t) parsed.push(last);
   }
-  return out;
+  return parsed.filter(r => Number.isFinite(r.t) && Number.isFinite(r.mph));
 }
 
-function buildComparison(before, after) {
-  const bRows = before.data, aRows = after.data;
-
-  const bKR = summarizeKR(bRows), aKR = summarizeKR(aRows);
-  const bTimes = {
-    zeroToSixty: bestIntervalTime(bRows, 0, 60),
-    fortyToHundred: bestIntervalTime(bRows, 40, 100),
-    sixtyToOneThirty: bestIntervalTime(bRows, 60, 130),
-  };
-  const aTimes = {
-    zeroToSixty: bestIntervalTime(aRows, 0, 60),
-    fortyToHundred: bestIntervalTime(aRows, 40, 100),
-    sixtyToOneThirty: bestIntervalTime(aRows, 60, 130),
-  };
-  const bWOT = summarizeWOT(bRows), aWOT = summarizeWOT(aRows);
-  const bTrim = summarizeTrims(bRows), aTrim = summarizeTrims(aRows);
-  const bMis = summarizeMisfires(bRows), aMis = summarizeMisfires(aRows);
-
-  return {
-    before: { KR: bKR, times: bTimes, WOT: bWOT, fuel: bTrim, misfires: bMis },
-    after:  { KR: aKR, times: aTimes, WOT: aWOT, fuel: aTrim, misfires: aMis },
-    deltas: {
-      KR_max_change: (aKR.maxKR ?? 0) - (bKR.maxKR ?? 0),
-      KR_event_change: (aKR.krEvents ?? 0) - (bKR.krEvents ?? 0),
-      t_0_60_change: (aTimes.zeroToSixty ?? NaN) - (bTimes.zeroToSixty ?? NaN),
-      t_40_100_change: (aTimes.fortyToHundred ?? NaN) - (bTimes.fortyToHundred ?? NaN),
-      t_60_130_change: (aTimes.sixtyToOneThirty ?? NaN) - (bTimes.sixtyToOneThirty ?? NaN),
-      sparkMaxWOT_change: (aWOT.sparkMaxWOT ?? NaN) - (bWOT.sparkMaxWOT ?? NaN),
-      mapMinWOT_change: (aWOT.mapMinWOT ?? NaN) - (bWOT.mapMinWOT ?? NaN),
-      mapMaxWOT_change: (aWOT.mapMaxWOT ?? NaN) - (bWOT.mapMaxWOT ?? NaN),
-      varSTFT_change: (aTrim.varSTFT ?? NaN) - (bTrim.varSTFT ?? NaN),
-      varLTFT_change: (aTrim.varLTFT ?? NaN) - (bTrim.varLTFT ?? NaN),
-    },
-  };
-}
-
-// ============================================================================
-// PROMPTS
-// ============================================================================
-function systemPrompt() {
+// ---------- System prompt ----------
+function trainerSystemPrompt() {
   return `
-You are Satera Trainer, a Gen 3 HEMI datalog expert. Compare BEFORE and AFTER logs and explain changes in:
-- KR behavior (max & frequency), WOT timing peak, WOT MAP range, 0–60 / 40–100 / 60–130 times,
-- Fuel trim variance (bank-to-bank) and any misfire totals if available.
-Be concise, mechanics-friendly, and say plainly when data is missing. Never ask for tables; rely only on logs and provided metrics.
+You are Satera Trainer (Gen3 HEMI). Compare BEFORE and AFTER logs using the metrics provided.
+- If a time target wasn't reached (e.g., car never hit 100 mph), say: "not achieved in this log".
+- If a channel isn't present, say: "not logged".
+- Be precise, mechanics-friendly, and do not request tune tables.
 `.trim();
 }
 
 // ============================================================================
-// ROUTES
+// Routes
 // ============================================================================
 
 /**
@@ -322,7 +201,7 @@ Be concise, mechanics-friendly, and say plainly when data is missing. Never ask 
  * form-data:
  *   - beforeLog (file, CSV)
  *   - afterLog  (file, CSV)
- *   - meta (stringified JSON) optional (vehicle info, etc.)
+ *   - meta (stringified JSON) optional vehicle info
  *
  * Returns: { conversationId, comparison, aiSummary, meta, logs:{beforeSampleCount, afterSampleCount} }
  */
@@ -331,41 +210,47 @@ router.post(
   upload.fields([
     { name: "beforeLog", maxCount: 1 },
     { name: "afterLog", maxCount: 1 },
-    { name: "meta", maxCount: 1 }, // stringified JSON
+    { name: "meta", maxCount: 1 },
   ]),
   async (req, res) => {
     let beforePath = null, afterPath = null;
     try {
-      // Parse meta
+      // meta
       let meta = {};
       try { meta = req.body?.meta ? JSON.parse(req.body.meta) : {}; } catch { meta = {}; }
 
-      // Logs (required for this log-only trainer)
+      // require logs
       beforePath = req.files?.beforeLog?.[0]?.path || null;
       afterPath  = req.files?.afterLog?.[0]?.path  || null;
       if (!beforePath || !afterPath) {
         return res.status(400).json({ error: "Please upload both beforeLog and afterLog CSV files." });
       }
 
-      const beforeParsed = readCsvFileParsed(beforePath);
-      const afterParsed  = readCsvFileParsed(afterPath);
+      // Parse with the SAME parser as AI Review
+      const beforeRaw = fs.readFileSync(beforePath, "utf8");
+      const afterRaw  = fs.readFileSync(afterPath, "utf8");
 
-      const comparison = buildComparison(beforeParsed, afterParsed);
+      const beforeMetrics = parseCSV(beforeRaw);
+      const afterMetrics  = parseCSV(afterRaw);
+      if (!beforeMetrics || !afterMetrics) {
+        return res.status(400).json({ error: "CSV could not be parsed by parseCSV.js" });
+      }
+
+      // Build comparison
+      const comparison = buildComparisonFromMetrics(beforeMetrics, afterMetrics);
+
+      // Sample rows for chat context (every 400th)
       const samples = {
-        before: sampleRowsForAI(beforeParsed.data, 400),
-        after:  sampleRowsForAI(afterParsed.data, 400),
+        before: sampleRowsForAI_fromRaw(beforeRaw, 400),
+        after:  sampleRowsForAI_fromRaw(afterRaw, 400),
       };
 
       // Seed conversation
       const conversationId = crypto.randomUUID();
-      const systemMsg = { role: "system", content: systemPrompt() };
+      const systemMsg = { role: "system", content: trainerSystemPrompt() };
       const seedUser = {
         role: "user",
-        content: JSON.stringify({
-          vehicle: meta,
-          comparison,
-          samples
-        }, null, 2),
+        content: JSON.stringify({ vehicle: meta, comparison, samples }, null, 2),
       };
 
       let aiSummary = "No summary generated.";
@@ -380,30 +265,25 @@ router.post(
         console.warn("OpenAI summary error:", e.message);
       }
 
-      // store convo in memory
       chatStore.set(conversationId, {
         system: systemMsg,
         context: { vehicle: meta, comparison, samples },
         messages: [seedUser, { role: "assistant", content: aiSummary }],
       });
 
-      // Optional: save training entry shell to Supabase (kept compatible with your fine-tune path)
+      // Optional: store a shell entry in Supabase for feedback/fine-tune continuity
       try {
         const { createClient } = require("@supabase/supabase-js");
         const supabaseUrl = process.env.SUPABASE_URL;
         const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
         if (supabaseUrl && supabaseKey) {
           const supabase = createClient(supabaseUrl, supabaseKey);
-          await supabase
-            .from("trainer_entries")
-            .insert([{
-              vehicle: meta,
-              sparkChanges: [],         // no tables now; keep column compatibility
-              aiSummary,
-              created_at: new Date().toISOString(),
-            }]);
-        } else {
-          console.warn("Supabase env missing — skipping trainer_entries insert.");
+          await supabase.from("trainer_entries").insert([{
+            vehicle: meta,
+            sparkChanges: [], // log-only mode; keep column for compatibility
+            aiSummary,
+            created_at: new Date().toISOString(),
+          }]);
         }
       } catch (e) {
         console.warn("Supabase insert skipped:", e.message);
@@ -443,10 +323,10 @@ router.post("/trainer-chat", express.json(), async (req, res) => {
     const convo = chatStore.get(conversationId);
     if (!convo) return res.status(404).json({ error: "Conversation not found. Start with /trainer-ai." });
 
-    // Keep context fresh but bounded
+    // Keep context bounded
     const contextReminder = {
       role: "system",
-      content: `Context (do not request tables; rely on logs): ${JSON.stringify(convo.context).slice(0, 12000)}`
+      content: `Context (log-only; do not request tables): ${JSON.stringify(convo.context).slice(0, 12000)}`
     };
 
     const recent = convo.messages.slice(-10);
@@ -471,7 +351,7 @@ router.post("/trainer-chat", express.json(), async (req, res) => {
 });
 
 // ============================================================================
-// FEEDBACK + FINE-TUNE (UNCHANGED INTERFACES)
+// Feedback + Fine-tune (same interfaces you already had)
 // ============================================================================
 
 router.use(express.json());
@@ -527,7 +407,6 @@ router.post("/fine-tune-now", async (req, res) => {
       .map((entry) => {
         const context =
           `Vehicle Info:\n${JSON.stringify(entry.vehicle, null, 2)}\n\n` +
-          // Keep compatibility: sparkChanges may be empty in log-only mode
           `Spark Table Changes:\n${JSON.stringify(entry.sparkChanges || [], null, 2)}`;
         const feedbackNote = entry.feedback ? `\n\nTrainer Feedback:\n${entry.feedback}` : "";
         return { prompt: context, completion: (entry.aiSummary || "") + feedbackNote };
