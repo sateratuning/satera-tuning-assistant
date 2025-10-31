@@ -9,6 +9,8 @@ const multer = require('multer');
 const { OpenAI } = require('openai');
 // backend/index.js  (only the new lines shown)
 const trainerChat = require("./routes/trainerChat");
+// after other requires
+const trainerTrainer = require("./routes/trainerTrainer");
 
 // Debug
 const dumpRole = (k) => {
@@ -47,8 +49,7 @@ const ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
 ];
 
-app.use(trainerChat);
-// app.use(trainerUploadDraft); // if used
+
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
@@ -85,6 +86,10 @@ app.use('/', submitRunRoutes);
 app.use('/', processLog);
 app.use('/', trainerAI);
 app.use('/', overlayRoutes);
+app.use(trainerChat);
+// app.use(trainerUploadDraft); // if used
+// after app initialization & other routers
+app.use("/api", trainerTrainer);
 
 // OpenAI
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
