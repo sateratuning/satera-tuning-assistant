@@ -6,18 +6,27 @@ const API_BASE = process.env.REACT_APP_API_BASE || '/api';
 
 const TrainerMode = () => {
   const [form, setForm] = useState({
-    vin: '', calid: '', transCalid: '', transModel: '', year: '', model: '', engine: '', injectors: '', map: '',
-    throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '', cam: '', neural: '',
-    sparkTableStart: '', sparkTableFinal: ''
+    vin: '', calid: '', transCalid: '', transModel: '',
+    year: '', model: '', engine: '', injectors: '', map: '',
+    throttle: '', power: '', trans: '', tire: '', gear: '',
+    fuel: '', cam: '', neural: ''
   });
+
   const [beforeLog, setBeforeLog] = useState(null);
   const [afterLog, setAfterLog] = useState(null);
+
   const [status, setStatus] = useState('');
-  const [sparkChanges, setSparkChanges] = useState([]);
-  const [customFields, setCustomFields] = useState({});
   const [aiSummary, setAiSummary] = useState('');
+  const [conversationId, setConversationId] = useState(null);
+  const [comparison, setComparison] = useState(null);
+
+  const [customFields, setCustomFields] = useState({});
   const [notes, setNotes] = useState('');
-  const [trainingEntry, setTrainingEntry] = useState(null);
+  const [trainingEntry, setTrainingEntry] = useState(null); // may remain null if backend doesn't return it
+  const [chat, setChat] = useState([
+    { role: 'assistant', content: 'Upload BEFORE and AFTER logs (CSV), click Upload/Analyze, then chat about the results.' }
+  ]);
+  const [message, setMessage] = useState('');
 
   const dropdownOptions = {
     year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
@@ -45,43 +54,6 @@ const TrainerMode = () => {
     setForm(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setStatus('⏳ Uploading...');
-    if (!beforeLog || !afterLog || !form.sparkTableStart || !form.sparkTableFinal) {
-      return setStatus('❌ Please fill out all required fields and upload both logs.');
-    }
-
-    const formData = new FormData();
-    Object.entries(form).forEach(([key, value]) => formData.append(key, value));
-    formData.append('beforeLog', beforeLog);
-    formData.append('afterLog', afterLog);
-    formData.append('feedback', notes);
-
-    try {
-      const res = await axios.post(`${API_BASE}/trainer-ai`, formData);
-      const data = res.data;
-      setAiSummary(data.aiSummary || '');
-      setSparkChanges(data.sparkChanges || []);
-      setTrainingEntry(data.trainingEntry || null);
-      setStatus('✅ Upload complete.');
-    } catch (err) {
-      console.error('❌ Upload error:', err);
-      setStatus('❌ Upload failed.');
-    }
-  };
-
-  const exportJSONL = () => {
-    if (!trainingEntry) return;
-    const blob = new Blob([JSON.stringify(trainingEntry) + '\n'], { type: 'application/jsonl' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${form.vin || 'entry'}.jsonl`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
   const handleVCMPaste = (e) => {
     const text = e.target.value;
     const vinMatch = text.match(/VIN:\s*(\w{17})/);
@@ -100,6 +72,62 @@ const TrainerMode = () => {
     };
 
     setForm(prev => ({ ...prev, ...extracted }));
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setStatus('⏳ Uploading & analyzing…');
+
+    if (!beforeLog || !afterLog) {
+      setStatus('❌ Please upload BOTH before and after CSV logs.');
+      return;
+    }
+
+    try {
+      const meta = { ...form };
+      const fd = new FormData();
+      fd.append('beforeLog', beforeLog);
+      fd.append('afterLog', afterLog);
+      fd.append('meta', JSON.stringify(meta));
+      fd.append('feedback', notes || '');
+
+      const res = await axios.post(`${API_BASE}/trainer-ai`, fd);
+      const data = res.data;
+
+      setAiSummary(data.aiSummary || '');
+      setComparison(data.comparison || null);
+      setConversationId(data.conversationId || null);
+      setTrainingEntry(data.trainingEntry || null); // will be null unless backend returns it
+
+      setChat([{ role: 'assistant', content: data.aiSummary || 'Analysis complete.' }]);
+      setStatus('✅ Done.');
+    } catch (err) {
+      console.error('❌ Upload error:', err);
+      setStatus('❌ Upload failed.');
+    }
+  };
+
+  const sendChat = async () => {
+    if (!conversationId) {
+      alert('No conversation yet. Please upload/analyze logs first.');
+      return;
+    }
+    if (!message.trim()) return;
+
+    const userMsg = { role: 'user', content: message.trim() };
+    setChat(prev => [...prev, userMsg]);
+    setMessage('');
+
+    try {
+      const res = await axios.post(`${API_BASE}/trainer-chat`, {
+        conversationId,
+        message: userMsg.content
+      });
+      setChat(prev => [...prev, { role: 'assistant', content: res.data.reply || 'No response.' }]);
+    } catch (err) {
+      console.error('❌ Chat error:', err);
+      setChat(prev => [...prev, { role: 'assistant', content: `Chat failed: ${err.message}` }]);
+    }
   };
 
   const renderInput = (label, name) => (
@@ -139,9 +167,39 @@ const TrainerMode = () => {
     </div>
   );
 
+  const KV = ({ k, v, suf='' }) => (
+    <div style={{ display:'flex', justifyContent:'space-between', gap:12 }}>
+      <div style={{ opacity:.8 }}>{k}</div>
+      <div>{v == null || Number.isNaN(v) ? '—' : `${v}${suf}`}</div>
+    </div>
+  );
+
+  const TimeBlock = ({ t }) => (
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+      <KV k="0–60" v={t?.zeroToSixty?.toFixed ? t.zeroToSixty.toFixed(2) : t?.zeroToSixty} suf=" s" />
+      <KV k="40–100" v={t?.fortyToHundred?.toFixed ? t.fortyToHundred.toFixed(2) : t?.fortyToHundred} suf=" s" />
+      <KV k="60–130" v={t?.sixtyToOneThirty?.toFixed ? t.sixtyToOneThirty.toFixed(2) : t?.sixtyToOneThirty} suf=" s" />
+    </div>
+  );
+
+  const KRBlock = ({ kr }) => (
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+      <KV k="Max KR" v={kr?.maxKR} suf="°" />
+      <KV k="KR Events" v={kr?.krEvents} />
+    </div>
+  );
+
+  const WOTBlock = ({ w }) => (
+    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:10 }}>
+      <KV k="Peak Spark @WOT" v={w?.sparkMaxWOT} suf="°" />
+      <KV k="MAP min @WOT" v={w?.mapMinWOT} suf=" kPa" />
+      <KV k="MAP max @WOT" v={w?.mapMaxWOT} suf=" kPa" />
+    </div>
+  );
+
   return (
     <div style={{ padding: '30px', backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ fontSize: '2rem', marginBottom: '20px' }}>Trainer Mode Upload</h1>
+      <h1 style={{ fontSize: '2rem', marginBottom: '20px' }}>Trainer Mode — Log Only</h1>
 
       <div style={{ marginBottom: '20px' }}>
         <label>Paste VCM Info</label>
@@ -172,28 +230,7 @@ const TrainerMode = () => {
         {renderDropdown('Aftermarket Camshaft Installed?', 'cam', dropdownOptions.cam)}
         {renderDropdown('Neural Network Status', 'neural', dropdownOptions.neural)}
 
-        <div style={{ gridColumn: '1 / -1' }}>
-          <label>Spark Table — Starting (Paste full 17x17 with axes)</label>
-          <textarea
-            name="sparkTableStart"
-            rows="6"
-            value={form.sparkTableStart}
-            onChange={handleChange}
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
-          />
-        </div>
-
-        <div style={{ gridColumn: '1 / -1' }}>
-          <label>Spark Table — Final (Paste full 17x17 with axes)</label>
-          <textarea
-            name="sparkTableFinal"
-            rows="6"
-            value={form.sparkTableFinal}
-            onChange={handleChange}
-            style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
-          />
-        </div>
-
+        {/* Logs only — no spark tables */}
         <div>
           <label>Before Log (CSV)</label>
           <input
@@ -219,11 +256,12 @@ const TrainerMode = () => {
             type="submit"
             style={{ backgroundColor: '#00ff88', color: '#000', padding: '12px 20px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
           >
-            Upload Training Data
+            Upload / Analyze
           </button>
         </div>
       </form>
 
+      {/* AI summary */}
       {aiSummary && (
         <div
           style={{
@@ -243,34 +281,75 @@ const TrainerMode = () => {
         </div>
       )}
 
-     {sparkChanges.length > 0 && (
-  <div style={{ marginTop: '2rem' }}>
-    <h2 style={{ color: '#00FF90', marginBottom: '10px' }}>🔥 Spark Table Changes</h2>
-    <table style={{ width: '100%', borderCollapse: 'collapse', background: '#222', color: '#fff' }}>
-      <thead>
-        <tr>
-          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>RPM</th>
-          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Airmass</th>
-          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>Before</th>
-          <th style={{ padding: '8px', borderBottom: '1px solid #444' }}>After</th>
-        </tr>
-      </thead>
-      <tbody>
-        {sparkChanges.map((row, idx) => (
-          <tr key={idx}>
-            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.rpm}</td>
-            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.airmass}</td>
-            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.before}</td>
-            <td style={{ padding: '8px', borderBottom: '1px solid #333' }}>{row.after}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  </div>
-)}
+      {/* Before vs After Metrics */}
+      {comparison && (
+        <div style={{ marginTop: '2rem', background:'#1a1a1a', padding:'16px', borderRadius:'10px' }}>
+          <h2 style={{ color:'#00FF90', marginBottom: '10px' }}>Before vs After — Key Metrics</h2>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
+            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
+              <h3 style={{ marginTop:0 }}>Before</h3>
+              <KRBlock kr={comparison.before?.KR} />
+              <div style={{ height:10 }} />
+              <TimeBlock t={comparison.before?.times} />
+              <div style={{ height:10 }} />
+              <WOTBlock w={comparison.before?.WOT} />
+            </div>
+            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
+              <h3 style={{ marginTop:0 }}>After</h3>
+              <KRBlock kr={comparison.after?.KR} />
+              <div style={{ height:10 }} />
+              <TimeBlock t={comparison.after?.times} />
+              <div style={{ height:10 }} />
+              <WOTBlock w={comparison.after?.WOT} />
+            </div>
+            <div style={{ background:'#202020', padding:12, borderRadius:8 }}>
+              <h3 style={{ marginTop:0 }}>Deltas</h3>
+              <div style={{ display:'grid', gap:8 }}>
+                <KV k="Δ Max KR" v={comparison.deltas?.KR_max_change} suf="°" />
+                <KV k="Δ KR Events" v={comparison.deltas?.KR_event_change} />
+                <KV k="Δ 0–60" v={comparison.deltas?.t_0_60_change?.toFixed ? comparison.deltas.t_0_60_change.toFixed(2) : comparison.deltas?.t_0_60_change} suf=" s" />
+                <KV k="Δ 40–100" v={comparison.deltas?.t_40_100_change?.toFixed ? comparison.deltas.t_40_100_change.toFixed(2) : comparison.deltas?.t_40_100_change} suf=" s" />
+                <KV k="Δ 60–130" v={comparison.deltas?.t_60_130_change?.toFixed ? comparison.deltas.t_60_130_change.toFixed(2) : comparison.deltas?.t_60_130_change} suf=" s" />
+                <KV k="Δ Peak Spark @WOT" v={comparison.deltas?.sparkMaxWOT_change} suf="°" />
+                <KV k="Δ MAP min @WOT" v={comparison.deltas?.mapMinWOT_change} suf=" kPa" />
+                <KV k="Δ MAP max @WOT" v={comparison.deltas?.mapMaxWOT_change} suf=" kPa" />
+                <KV k="Δ STFT Var" v={comparison.deltas?.varSTFT_change} />
+                <KV k="Δ LTFT Var" v={comparison.deltas?.varLTFT_change} />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
+      {/* Trainer Chat */}
+      <div style={{ marginTop: '2rem', background:'#1a1a1a', padding:'16px', borderRadius:'10px' }}>
+        <h2 style={{ color:'#00FF90', marginBottom: '10px' }}>Trainer Chat</h2>
+        <div style={{ maxHeight: 340, overflowY: 'auto', padding: '10px', background: '#181818', borderRadius: 8 }}>
+          {chat.map((m, i) => (
+            <div key={i} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize:12, opacity:.7 }}>{m.role === 'assistant' ? 'Satera' : 'You'}</div>
+              <div style={{ background: m.role === 'assistant' ? '#0b2' : '#333', color:'#fff', padding:'8px 10px', borderRadius:8, whiteSpace:'pre-wrap' }}>
+                {m.content}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{ display:'flex', gap:8, marginTop:10 }}>
+          <input
+            value={message}
+            onChange={e => setMessage(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
+            placeholder="Ask about KR, WOT timing, trims, misfires…"
+            style={{ flex:1, padding:'10px', borderRadius:6, background:'#222', color:'#fff', border:'1px solid #333' }}
+          />
+          <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
+            Send
+          </button>
+        </div>
+      </div>
 
-      {trainingEntry && (
+      {/* Optional: Feedback + Fine-tune (feedback hidden unless we have an ID) */}
+      {trainingEntry?.id && (
         <div style={{ marginTop: '2rem' }}>
           <label>📝 Trainer Notes:</label>
           <textarea
@@ -305,31 +384,32 @@ const TrainerMode = () => {
           >
             💬 Submit Feedback
           </button>
-
-          <button
-            onClick={async () => {
-              try {
-                const res = await axios.post(`${API_BASE}/fine-tune-now`);
-                alert(`✅ Fine-tune started. Job ID: ${res.data.job.id}`);
-              } catch (err) {
-                console.error('❌ Fine-tune failed:', err);
-                alert('❌ Fine-tune failed.');
-              }
-            }}
-            style={{
-              marginTop: '10px',
-              backgroundColor: '#ff00cc',
-              padding: '10px 16px',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              color: '#000'
-            }}
-          >
-            🤖 Fine-Tune GPT-4 Now
-          </button>
         </div>
       )}
+
+      <div style={{ marginTop: '1rem' }}>
+        <button
+          onClick={async () => {
+            try {
+              const res = await axios.post(`${API_BASE}/fine-tune-now`);
+              alert(`✅ Fine-tune started. Job ID: ${res.data.job.id}`);
+            } catch (err) {
+              console.error('❌ Fine-tune failed:', err);
+              alert('❌ Fine-tune failed.');
+            }
+          }}
+          style={{
+            backgroundColor: '#ff00cc',
+            padding: '10px 16px',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            color: '#000'
+          }}
+        >
+          🤖 Fine-Tune GPT-4 Now
+        </button>
+      </div>
 
       <pre style={{ marginTop: '20px', background: '#222', padding: '20px', color: '#adff2f', borderRadius: '6px' }}>{status}</pre>
     </div>
