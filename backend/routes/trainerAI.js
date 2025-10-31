@@ -174,8 +174,23 @@ function buildAliasIndex(headers) {
     pedal:  find(['accelerator position d (sae)','accelerator pedal position (%)','accel pedal pos (%)','accelerator pedal position']),
     map:    find(['manifold absolute pressure (sae)','intake manifold absolute pressure (sae)','manifold absolute pressure','map (kpa)','map']),
     baro:   find(['barometric pressure (sae)','barometric pressure','baro']),
-    iat:    find(['intake air temperature (sae)','intake air temperature','iat']),
-    cat:    find(['charge air temp','charge air temperature','manifold air temperature','intake manifold temperature','imt','cat']),
+    iat: find([
+  'intake air temperature (sae)',
+  'intake air temperature',
+  'intake air temp (sae)',
+  'intake air temp',
+  'iat (sae)',
+  'iat'
+]),
+    cat: find([
+  'charge air temp',
+  'charge air temperature',
+  'manifold air temperature',
+  'intake manifold temperature',
+  'imt',
+  'cat',
+  'Aircharge Temperature'
+]),
     maf:    find(['mass airflow (sae)','mass air flow (sae)','mass airflow','mass air flow','maf']),
     mafPer: find(['mass airflow period','maf period']),
     cylAir: find(['cylinder airmass','cylinder airmass (g)','cyl airmass','aircharge','air charge','cyl air (g)']),
