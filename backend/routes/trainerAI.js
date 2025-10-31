@@ -12,6 +12,21 @@ const { OpenAI } = require("openai");
 // ---------- OpenAI ----------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+// ---------- Config ----------
+const KR_EVENT_THRESHOLD = Number.isFinite(+process.env.KR_EVENT_THRESHOLD)
+  ? +process.env.KR_EVENT_THRESHOLD
+  : 0.10; // degrees
+
+// Where we stage per-entry training examples before finalize
+const trainerDataDir = path.join(__dirname, "..", "trainer_data");
+const trainerStageDir = path.join(trainerDataDir, "staging");
+for (const dir of [trainerDataDir, trainerStageDir]) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+}
+
+// Master JSONL (chat format) we append to on finalize
+const MASTER_JSONL = path.join(__dirname, "fine-tune-upload-chat.jsonl");
+
 // ---------- Uploads (disk) ----------
 const uploadsDir = path.join(__dirname, "..", "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -21,12 +36,8 @@ const upload = multer({
   limits: { fileSize: 100 * 1024 * 1024 },
 });
 
-// ---------- Shared (kept) ----------
-/**
- * In-memory chat store:
- * Map<conversationId, { system, context, messages }>
- */
-const chatStore = new Map();
+// ---------- Shared AI Review Parser ----------
+const parseCSV = require("../utils/parseCSV");
 
 // ---------- Supabase (optional, graceful no-op if env missing) ----------
 let supabase = null;
@@ -38,14 +49,13 @@ try {
       process.env.SUPABASE_SERVICE_ROLE_KEY
     );
   }
-} catch {
-  /* ignore */
-}
+} catch { /* ignore */ }
 
-// ============================================================================
-// Helpers
-// ============================================================================
+// ---------- In-memory chat store ----------
+/** Map<conversationId, { system, context, messages }> */
+const chatStore = new Map();
 
+// ---------- Helpers ----------
 const toNumber = (v) =>
   v == null || v === "" ? null : Number(String(v).replace(",", "."));
 function safeUnlink(p) {
@@ -54,11 +64,17 @@ function safeUnlink(p) {
   } catch {}
 }
 const d = (x, y) => (x == null || y == null ? null : y - x);
+const krMag = (v) => (Number.isFinite(v) ? Math.abs(v) : null);
+const isKrEvent = (v) => {
+  const m = krMag(v);
+  return Number.isFinite(m) && m >= KR_EVENT_THRESHOLD;
+};
 
 function toFahrenheit(val, unitHint) {
   if (!Number.isFinite(val)) return val;
   const u = String(unitHint || "").toLowerCase();
-  if (u.includes("°c") || u === "c" || u.includes("celsius")) return (val * 9) / 5 + 32;
+  if (u.includes("°c") || u === "c" || u.includes("celsius"))
+    return (val * 9) / 5 + 32;
   return val; // assume already °F
 }
 function toKPa(val, unitHint) {
@@ -68,234 +84,107 @@ function toKPa(val, unitHint) {
   return val; // assume already kPa
 }
 
-// ===== Dynamic CSV parser + headline metric extractor (replacement for utils/parseCSV) =====
-function parseCsvDynamic(raw) {
-  const lines = String(raw || "").replace(/\r\n/g, "\n").split("\n");
-  const headerRowIdx = lines.findIndex((r) => /(^|,)\s*Offset\s*(,|$)/i.test(r));
-  if (headerRowIdx < 0) throw new Error('Could not find header row (no "Offset" column).');
-  const headers = lines[headerRowIdx].split(",").map((s) => s.trim());
-  const dataRows = lines
-    .slice(headerRowIdx + 1)
-    .filter((r) => r.trim().length && r.includes(","));
-  const data = dataRows.map((line) => line.split(","));
-  return { headers, data };
+function stagePathFor(entryId) {
+  return path.join(trainerStageDir, `${entryId}.jsonl`);
 }
-function findHeaderIndex(headers, aliases) {
-  const H = headers.map((h) => String(h || "").trim().toLowerCase());
-  for (const a of aliases) {
-    const i = H.indexOf(String(a).toLowerCase());
-    if (i !== -1) return i;
-  }
-  // fuzzy contains
-  for (let i = 0; i < H.length; i++) {
-    if (aliases.some((a) => H[i].includes(String(a).toLowerCase()))) return i;
-  }
-  return -1;
+function countLines(p) {
+  if (!fs.existsSync(p)) return 0;
+  const buf = fs.readFileSync(p, "utf8");
+  if (!buf.trim()) return 0;
+  return buf.split(/\r?\n/).filter(Boolean).length;
 }
-function colNum(data, idx) {
-  if (idx < 0) return [];
-  return data.map((r) => Number(r[idx]));
-}
-function bestIntervalTime(time, speed, lo, hi) {
-  let best = null;
-  for (let i = 1; i < speed.length; i++) {
-    const s0 = speed[i - 1],
-      s1 = speed[i];
-    const t0 = time[i - 1],
-      t1 = time[i];
-    if (
-      !Number.isFinite(s0) ||
-      !Number.isFinite(s1) ||
-      !Number.isFinite(t0) ||
-      !Number.isFinite(t1)
-    )
-      continue;
 
-    // crossing at lo
-    if ((s0 < lo && s1 >= lo) || (s0 === lo && s1 > lo)) {
-      const fracLo = (lo - s0) / (s1 - s0 || 1);
-      const tLo = t0 + fracLo * (t1 - t0);
+// ---------- Comparison (from parseCSV headline metrics) ----------
+function buildComparisonFromMetrics(b, a) {
+  const maxKrMag = (arr) =>
+    Array.isArray(arr) && arr.length
+      ? Math.max(...arr.map(krMag).filter(Number.isFinite))
+      : 0;
 
-      // find hi crossing ahead
-      for (let j = i; j < speed.length; j++) {
-        const sA = speed[j - 1],
-          sB = speed[j];
-        const tA = time[j - 1],
-          tB = time[j];
-        if (
-          !Number.isFinite(sA) ||
-          !Number.isFinite(sB) ||
-          !Number.isFinite(tA) ||
-          !Number.isFinite(tB)
-        )
-          continue;
-        if ((sA < hi && sB >= hi) || (sA === hi && sB > hi)) {
-          const fracHi = (hi - sA) / (sB - sA || 1);
-          const tHi = tA + fracHi * (tB - tA);
-          const dt = tHi - tLo;
-          if (dt > 0 && (best === null || dt < best)) best = dt;
-          break;
-        }
-      }
-    }
-  }
-  return best;
-}
-function computeLogMetricsFromRaw(raw) {
-  const { headers, data } = parseCsvDynamic(raw);
+  const countKREvents = (arr) =>
+    Array.isArray(arr) ? arr.filter(isKrEvent).length : 0;
 
-  const idxTime = findHeaderIndex(headers, ["offset", "time", "time (s)"]);
-  const idxSpeed = findHeaderIndex(headers, [
-    "vehicle speed (sae)",
-    "vehicle speed",
-    "speed",
-  ]);
-  const idxTPS = findHeaderIndex(headers, [
-    "throttle position (sae)",
-    "tps",
-    "throttle position (%)",
-    "throttle body angle",
-    "throttle angle",
-  ]);
-  const idxPedal = findHeaderIndex(headers, [
-    "accelerator pedal position",
-    "accelerator position d (sae)",
-    "accel pedal pos (%)",
-    "driver demand",
-  ]);
-  const idxKR = findHeaderIndex(headers, [
-    "knock retard (sae)",
-    "knock retard",
-    "kr",
-    "total knock retard",
-  ]);
-  const idxSpark = findHeaderIndex(headers, [
-    "spark advance (sae)",
-    "spark advance",
-    "timing advance (sae)",
-    "ignition timing advance for #1",
-  ]);
-  const idxMAP = findHeaderIndex(headers, [
-    "manifold absolute pressure (sae)",
-    "map (kpa)",
-    "map",
-  ]);
-  const idxBaro = findHeaderIndex(headers, [
-    "barometric pressure (sae)",
-    "barometric pressure",
-    "baro",
-  ]);
-  const idxIAT = findHeaderIndex(headers, [
-    "intake air temperature",
-    "intake air temperature (sae)",
-    "iat",
-    "iat (°c)",
-    "iat (c)",
-  ]);
-  const idxLTFT1 = findHeaderIndex(headers, [
-    "long term fuel trim bank 1",
-    "ltft bank 1",
-    "ltft1",
-  ]);
-  const idxLTFT2 = findHeaderIndex(headers, [
-    "long term fuel trim bank 2",
-    "ltft bank 2",
-    "ltft2",
-  ]);
-
-  const t = colNum(data, idxTime);
-  const mph = colNum(data, idxSpeed);
-  const tps = colNum(data, idxTPS);
-  const ped = colNum(data, idxPedal);
-  const kr = colNum(data, idxKR);
-  const spark = colNum(data, idxSpark);
-  const map = colNum(data, idxMAP);
-  const baro = colNum(data, idxBaro);
-  let iat = colNum(data, idxIAT);
-  const ltft1 = colNum(data, idxLTFT1);
-  const ltft2 = colNum(data, idxLTFT2);
-
-  // IAT °C -> °F if looks like Celsius (most values < 80)
-  if (
-    iat.length &&
-    iat.filter((x) => Number.isFinite(x) && x < 80).length > iat.length * 0.6
-  ) {
-    iat = iat.map((x) => (Number.isFinite(x) ? x * (9 / 5) + 32 : x));
-  }
-
-  // WOT mask: TPS >= 85 or Pedal >= 85
-  const wot = t.map(
-    (_, i) =>
-      (Number.isFinite(tps[i]) && tps[i] >= 85) ||
-      (Number.isFinite(ped[i]) && ped[i] >= 85)
-  );
-  const wotVals = (arr) => arr.filter((_, i) => wot[i] && Number.isFinite(arr[i]));
-  const sparkWOT = wotVals(spark);
-  const mapWOT = wotVals(map);
-
-  // Metrics
-  const zeroToSixty = bestIntervalTime(t, mph, 0, 60) ?? null;
-  const fortyToHundred = bestIntervalTime(t, mph, 40, 100) ?? null;
-  const sixtyToOneThirty = bestIntervalTime(t, mph, 60, 130) ?? null;
-
-  const maxKR = kr.reduce((m, v) => (Number.isFinite(v) ? Math.max(m, v) : m), 0);
-  const krEvents = kr.filter((v) => Number.isFinite(v) && v > 0.1).length;
-
-  const sparkMaxWOT = sparkWOT.length ? Math.max(...sparkWOT) : null;
-  const mapMinWOT = mapWOT.length ? Math.min(...mapWOT) : null;
-  const mapMaxWOT = mapWOT.length ? Math.max(...mapWOT) : null;
-
-  // simple trims variance (bank delta magnitude average)
-  let varLTFT = null;
-  if (ltft1.length && ltft2.length) {
-    const pairs = [];
-    for (let i = 0; i < Math.min(ltft1.length, ltft2.length); i++) {
-      if (Number.isFinite(ltft1[i]) && Number.isFinite(ltft2[i]))
-        pairs.push(Math.abs(ltft1[i] - ltft2[i]));
-    }
-    if (pairs.length)
-      varLTFT = +(
-        pairs.reduce((a, b) => a + b, 0) / pairs.length
-      ).toFixed(2);
-  }
-
-  return {
-    KR: { maxKR, krEvents },
-    times: { zeroToSixty, fortyToHundred, sixtyToOneThirty },
-    WOT: { sparkMaxWOT, mapMinWOT, mapMaxWOT },
+  const before = {
+    KR: { maxKR: maxKrMag(b.knock), krEvents: countKREvents(b.knock) },
+    times: {
+      zeroToSixty: b.zeroTo60 ?? null,
+      fortyToHundred: b.fortyTo100 ?? null,
+      sixtyToOneThirty: b.sixtyTo130 ?? null,
+    },
+    WOT: {
+      sparkMaxWOT: b.peakTiming ?? null,
+      mapMinWOT: b.map?.min ?? null,
+      mapMaxWOT: b.map?.max ?? null,
+    },
     fuel: {
       stft1: null,
       stft2: null,
-      ltft1: null,
-      ltft2: null,
+      ltft1: b.avgFT1 ?? null,
+      ltft2: b.avgFT2 ?? null,
       varSTFT: null,
-      varLTFT,
+      varLTFT: b.varFT ?? null,
     },
+    misfires: [
+      b.misfires?.Cyl1 ?? 0,
+      b.misfires?.Cyl2 ?? 0,
+      b.misfires?.Cyl3 ?? 0,
+      b.misfires?.Cyl4 ?? 0,
+      b.misfires?.Cyl5 ?? 0,
+      b.misfires?.Cyl6 ?? 0,
+      b.misfires?.Cyl7 ?? 0,
+      b.misfires?.Cyl8 ?? 0,
+    ],
   };
-}
-function buildDeltas(before, after) {
-  const dd = (x, y) => (x == null || y == null ? null : y - x);
-  return {
-    KR_max_change: dd(before.KR?.maxKR, after.KR?.maxKR),
-    KR_event_change: dd(before.KR?.krEvents, after.KR?.krEvents),
-    t_0_60_change: dd(before.times?.zeroToSixty, after.times?.zeroToSixty),
-    t_40_100_change: dd(before.times?.fortyToHundred, after.times?.fortyToHundred),
-    t_60_130_change: dd(
-      before.times?.sixtyToOneThirty,
-      after.times?.sixtyToOneThirty
-    ),
-    sparkMaxWOT_change: dd(
-      before.WOT?.sparkMaxWOT,
-      after.WOT?.sparkMaxWOT
-    ),
-    mapMinWOT_change: dd(before.WOT?.mapMinWOT, after.WOT?.mapMinWOT),
-    mapMaxWOT_change: dd(before.WOT?.mapMaxWOT, after.WOT?.mapMaxWOT),
-    varSTFT_change: dd(before.fuel?.varSTFT, after.fuel?.varSTFT),
-    varLTFT_change: dd(before.fuel?.varLTFT, after.fuel?.varLTFT),
+
+  const after = {
+    KR: { maxKR: maxKrMag(a.knock), krEvents: countKREvents(a.knock) },
+    times: {
+      zeroToSixty: a.zeroTo60 ?? null,
+      fortyToHundred: a.fortyTo100 ?? null,
+      sixtyToOneThirty: a.sixtyTo130 ?? null,
+    },
+    WOT: {
+      sparkMaxWOT: a.peakTiming ?? null,
+      mapMinWOT: a.map?.min ?? null,
+      mapMaxWOT: a.map?.max ?? null,
+    },
+    fuel: {
+      stft1: null,
+      stft2: null,
+      ltft1: a.avgFT1 ?? null,
+      ltft2: a.avgFT2 ?? null,
+      varSTFT: null,
+      varLTFT: a.varFT ?? null,
+    },
+    misfires: [
+      a.misfires?.Cyl1 ?? 0,
+      a.misfires?.Cyl2 ?? 0,
+      a.misfires?.Cyl3 ?? 0,
+      a.misfires?.Cyl4 ?? 0,
+      a.misfires?.Cyl5 ?? 0,
+      a.misfires?.Cyl6 ?? 0,
+      a.misfires?.Cyl7 ?? 0,
+      a.misfires?.Cyl8 ?? 0,
+    ],
   };
+
+  const deltas = {
+    KR_max_change: d(before.KR.maxKR, after.KR.maxKR),
+    KR_event_change: d(before.KR.krEvents, after.KR.krEvents),
+    t_0_60_change: d(before.times.zeroToSixty, after.times.zeroToSixty),
+    t_40_100_change: d(before.times.fortyToHundred, after.times.fortyToHundred),
+    t_60_130_change: d(before.times.sixtyToOneThirty, after.times.sixtyToOneThirty),
+    sparkMaxWOT_change: d(before.WOT.sparkMaxWOT, after.WOT.sparkMaxWOT),
+    mapMinWOT_change: d(before.WOT.mapMinWOT, after.WOT.mapMinWOT),
+    mapMaxWOT_change: d(before.WOT.mapMaxWOT, after.WOT.mapMaxWOT),
+    varSTFT_change: d(before.fuel.varSTFT, after.fuel.varSTFT),
+    varLTFT_change: d(before.fuel.varLTFT, after.fuel.varLTFT),
+  };
+
+  return { before, after, deltas };
 }
 
-// ---------- Extended extractor (kept; used for samples/rpmAirBins) ----------
+// ---------- Extended extractor ----------
 function locateHeaderIndex(lines) {
   for (let i = 0; i < lines.length; i++) {
     const cells = lines[i].split(/,|;|\t/).map((c) => String(c).trim());
@@ -368,7 +257,13 @@ function buildAliasIndex(headers) {
       "cat",
       "aircharge temperature",
     ]),
-    maf: find(["mass airflow (sae)", "mass air flow (sae)", "mass airflow", "mass air flow", "maf"]),
+    maf: find([
+      "mass airflow (sae)",
+      "mass air flow (sae)",
+      "mass airflow",
+      "mass air flow",
+      "maf",
+    ]),
     mafPer: find(["mass airflow period", "maf period"]),
     cylAir: find([
       "cylinder airmass",
@@ -445,6 +340,7 @@ function extractExtended(raw, step = 400) {
     const r = dataRows[i].split(",");
     const mapK = mapAtKPa(r, idx.map),
       baroK = mapAtKPa(r, idx.baro);
+    const krRaw = numAt(r, idx.kr);
     samples.push({
       t: numAt(r, idx.t),
       rpm: numAt(r, idx.rpm),
@@ -464,7 +360,7 @@ function extractExtended(raw, step = 400) {
       cylAir: numAt(r, idx.cylAir),
       load: numAt(r, idx.load),
       spark: numAt(r, idx.spark),
-      kr: numAt(r, idx.kr),
+      kr: krMag(krRaw), // magnitude
       injPw: numAt(r, idx.injPw),
       injDuty: numAt(r, idx.injDuty),
       frp: numAt(r, idx.frp),
@@ -481,6 +377,7 @@ function extractExtended(raw, step = 400) {
     const r = dataRows[dataRows.length - 1].split(",");
     const mapK = mapAtKPa(r, idx.map),
       baroK = mapAtKPa(r, idx.baro);
+    const krRaw = numAt(r, idx.kr);
     const last = {
       t: numAt(r, idx.t),
       rpm: numAt(r, idx.rpm),
@@ -500,7 +397,7 @@ function extractExtended(raw, step = 400) {
       cylAir: numAt(r, idx.cylAir),
       load: numAt(r, idx.load),
       spark: numAt(r, idx.spark),
-      kr: numAt(r, idx.kr),
+      kr: krMag(krRaw), // magnitude
       injPw: numAt(r, idx.injPw),
       injDuty: numAt(r, idx.injDuty),
       frp: numAt(r, idx.frp),
@@ -520,11 +417,12 @@ function extractExtended(raw, step = 400) {
   const rows = dataRows
     .map((line) => {
       const a = line.split(",");
+      const krRaw = numAt(a, idx.kr);
       return {
         rpm: numAt(a, idx.rpm),
         cyl: numAt(a, idx.cylAir),
         spark: numAt(a, idx.spark),
-        kr: numAt(a, idx.kr),
+        kr: krMag(krRaw), // magnitude
         iat: tempAtF(a, idx.iat),
         cat: tempAtF(a, idx.cat),
         map: mapAtKPa(a, idx.map),
@@ -578,7 +476,7 @@ function extractExtended(raw, step = 400) {
       m.sparkSum += obj.spark;
       m.sparkMax = m.sparkMax == null ? obj.spark : Math.max(m.sparkMax, obj.spark);
     }
-    if (Number.isFinite(obj.kr)) m.krMax = Math.max(m.krMax, obj.kr);
+    if (Number.isFinite(obj.kr)) m.krMax = Math.max(m.krMax, obj.kr); // magnitude
     if (Number.isFinite(obj.iat)) m.iatSum += obj.iat;
     if (Number.isFinite(obj.cat)) m.catSum += obj.cat;
     if (Number.isFinite(obj.map) && Number.isFinite(obj.baro)) {
@@ -633,7 +531,9 @@ function extractExtended(raw, step = 400) {
   }
 
   const detected = {};
-  Object.entries(idx).forEach(([k, i]) => (detected[k] = i >= 0 ? headers[i] : null));
+  Object.entries(idx).forEach(
+    ([k, i]) => (detected[k] = i >= 0 ? headers[i] : null)
+  );
 
   return {
     detected,
@@ -642,7 +542,7 @@ function extractExtended(raw, step = 400) {
   };
 }
 
-// ---------- Knowledge pack (persistent memory) ----------
+// ---------- Knowledge pack ----------
 async function fetchKnowledgePack(meta) {
   if (!supabase) return { notes: [], history: [] };
 
@@ -699,6 +599,7 @@ function trainerSystemPrompt() {
 You are Satera Trainer (Gen3 HEMI). Use the Knowledge Pack, headline comparison, and extended context.
 - Distinguish "not achieved in this log" vs "not logged".
 - Correlate spark/knock with cyl airmass & IAT/CAT, include fueling (cmd vs measured lambda/AFR), injector PW/duty, FRP, trims.
+- KR note: on Dodge/Hemi, KR in logs may be negative; all KR values provided are magnitudes (abs), KR events counted when |KR| >= ${KR_EVENT_THRESHOLD}°.
 - Use persistent notes and prior entries as remembered baselines or shop policies. Do not request tune tables.
 `.trim();
 }
@@ -735,24 +636,15 @@ router.post(
       const beforeRaw = fs.readFileSync(beforePath, "utf8");
       const afterRaw = fs.readFileSync(afterPath, "utf8");
 
-      // Build comparison directly from CSV (dynamic Offset header, WOT, timers, KR, IAT->°F)
-      let beforeQuick, afterQuick;
-      try {
-        beforeQuick = computeLogMetricsFromRaw(beforeRaw);
-        afterQuick = computeLogMetricsFromRaw(afterRaw);
-      } catch (e) {
-        console.warn("Quick metric parser failed:", e.message);
+      const beforeMetrics = parseCSV(beforeRaw);
+      const afterMetrics = parseCSV(afterRaw);
+      if (!beforeMetrics || !afterMetrics)
         return res
           .status(400)
-          .json({ error: "CSV parse failed (dynamic header). " + e.message });
-      }
-      const comparison = {
-        before: beforeQuick,
-        after: afterQuick,
-        deltas: buildDeltas(beforeQuick, afterQuick),
-      };
+          .json({ error: "CSV could not be parsed by utils/parseCSV.js" });
 
-      // Extended context (downsampled samples + rpm/air bins)
+      const comparison = buildComparisonFromMetrics(beforeMetrics, afterMetrics);
+
       const extBefore = extractExtended(beforeRaw, 400);
       const extAfter = extractExtended(afterRaw, 400);
 
@@ -821,14 +713,7 @@ router.post(
         messages: [seedUser, { role: "assistant", content: aiSummary }],
       });
 
-      // ---------- Ensure a trainer_entry_id for the frontend trainer buttons ----------
-      const trainerEntryId =
-        req.body?.trainer_entry_id ||
-        (crypto.randomUUID
-          ? crypto.randomUUID()
-          : crypto.randomBytes(16).toString("hex"));
-
-      // Optional: store a shell entry (best effort)
+      // Optional: store a shell entry for continuity
       try {
         if (supabase) {
           await supabase.from("trainer_entries").insert([
@@ -844,8 +729,12 @@ router.post(
         console.warn("Supabase insert skipped:", e.message);
       }
 
+      // Provide a fresh trainer_entry_id if the frontend wants to stage examples immediately
+      const trainer_entry_id = crypto.randomUUID();
+
       return res.json({
         conversationId,
+        trainer_entry_id,
         comparison,
         aiSummary,
         meta,
@@ -853,8 +742,6 @@ router.post(
           beforeSampleCount: extBefore.samples.length,
           afterSampleCount: extAfter.samples.length,
         },
-        trainer_entry_id: trainerEntryId,
-        trainingEntry: { id: trainerEntryId },
       });
     } catch (err) {
       console.error("trainer-ai error:", err);
@@ -905,7 +792,7 @@ router.post("/trainer-chat", express.json(), async (req, res) => {
     const reply = chat?.choices?.[0]?.message?.content || "No response.";
     convo.messages.push({ role: "user", content: message });
     convo.messages.push({ role: "assistant", content: reply });
-    chatStore.set(conversationId, convo);
+    chatStore.set(conversationId, convo); // <-- fixed typo
 
     return res.json({ reply });
   } catch (err) {
@@ -917,10 +804,14 @@ router.post("/trainer-chat", express.json(), async (req, res) => {
 // ---------- Memory management ----------
 router.post("/trainer-remember", express.json(), async (req, res) => {
   try {
-    if (!supabase) return res.status(400).json({ error: "Supabase not configured." });
+    if (!supabase)
+      return res.status(400).json({ error: "Supabase not configured." });
     const { scope, note } = req.body || {};
-    if (!scope || !note) return res.status(400).json({ error: "scope and note are required." });
-    const { error } = await supabase.from("trainer_memory").insert([{ scope, note }]);
+    if (!scope || !note)
+      return res.status(400).json({ error: "scope and note are required." });
+    const { error } = await supabase
+      .from("trainer_memory")
+      .insert([{ scope, note }]);
     if (error) return res.status(500).json({ error: "Insert failed." });
     res.json({ success: true });
   } catch (e) {
@@ -931,18 +822,30 @@ router.post("/trainer-remember", express.json(), async (req, res) => {
 
 router.post("/trainer-forget", express.json(), async (req, res) => {
   try {
-    if (!supabase) return res.status(400).json({ error: "Supabase not configured." });
+    if (!supabase)
+      return res.status(400).json({ error: "Supabase not configured." });
     const { scope, contains } = req.body || {};
     if (!scope) return res.status(400).json({ error: "scope is required." });
     if (contains) {
-      const { data } = await supabase.from("trainer_memory").select("id,note").eq("scope", scope);
-      const ids = (data || []).filter((r) => r.note.includes(contains)).map((r) => r.id);
+      const { data } = await supabase
+        .from("trainer_memory")
+        .select("id,note")
+        .eq("scope", scope);
+      const ids = (data || [])
+        .filter((r) => r.note.includes(contains))
+        .map((r) => r.id);
       if (!ids.length) return res.json({ success: true, deleted: 0 });
-      const { error } = await supabase.from("trainer_memory").delete().in("id", ids);
+      const { error } = await supabase
+        .from("trainer_memory")
+        .delete()
+        .in("id", ids);
       if (error) return res.status(500).json({ error: "Delete failed." });
       return res.json({ success: true, deleted: ids.length });
     } else {
-      const { error } = await supabase.from("trainer_memory").delete().eq("scope", scope);
+      const { error } = await supabase
+        .from("trainer_memory")
+        .delete()
+        .eq("scope", scope);
       if (error) return res.status(500).json({ error: "Delete failed." });
       res.json({ success: true });
     }
@@ -952,16 +855,100 @@ router.post("/trainer-forget", express.json(), async (req, res) => {
   }
 });
 
-// ---------- Feedback + Fine-tune (unchanged) ----------
+// ---------- Trainer staging endpoints (NEW) ----------
+router.post("/trainer/save-chat", express.json(), async (req, res) => {
+  try {
+    const { trainer_entry_id, chatPairs = [], notes = "" } = req.body || {};
+    if (!trainer_entry_id)
+      return res.status(400).json({ ok: false, error: "Missing trainer_entry_id" });
+    if (!Array.isArray(chatPairs) || chatPairs.length === 0)
+      return res.status(400).json({ ok: false, error: "No chatPairs provided" });
+
+    const p = stagePathFor(trainer_entry_id);
+    let added = 0;
+
+    // Write/append each pair as a chat-format example (messages[])
+    const lines = chatPairs.map((cp) => {
+      const msgs = [];
+      if (cp.system) msgs.push({ role: "system", content: String(cp.system) });
+      msgs.push({ role: "user", content: String(cp.user || "") });
+      msgs.push({ role: "assistant", content: String(cp.assistant || "") });
+      return JSON.stringify({ messages: msgs });
+    });
+
+    fs.appendFileSync(p, lines.join("\n") + "\n", "utf8");
+    added = lines.length;
+
+    // Optional: store notes somewhere (skip persistence for now)
+
+    const total = countLines(p);
+    return res.json({
+      ok: true,
+      trainer_entry_id,
+      added,
+      total_examples_for_entry: total,
+      stagePath: p,
+    });
+  } catch (e) {
+    console.error("/trainer/save-chat error:", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post("/trainer/finalize", express.json(), async (req, res) => {
+  try {
+    const { trainer_entry_id, appendToJsonl = true } = req.body || {};
+    if (!trainer_entry_id)
+      return res.status(400).json({ ok: false, error: "Missing trainer_entry_id" });
+
+    const p = stagePathFor(trainer_entry_id);
+    if (!fs.existsSync(p)) {
+      return res.status(400).json({
+        ok: false,
+        error: "No staged examples found for this trainer_entry_id",
+      });
+    }
+
+    const staged = fs.readFileSync(p, "utf8").split(/\r?\n/).filter(Boolean);
+    const appended = staged.length;
+
+    if (appendToJsonl) {
+      fs.appendFileSync(MASTER_JSONL, staged.join("\n") + "\n", "utf8");
+    }
+
+    // Clear staging file after finalize
+    fs.unlinkSync(p);
+
+    const totalExamplesInFile = countLines(MASTER_JSONL);
+
+    return res.json({
+      ok: true,
+      trainer_entry_id,
+      appended,
+      jsonlPath: MASTER_JSONL,
+      totalExamplesInFile,
+    });
+  } catch (e) {
+    console.error("/trainer/finalize error:", e);
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ---------- Fine-tune (unchanged) ----------
 router.use(express.json());
 
 router.post("/update-feedback", async (req, res) => {
   try {
     const { id, feedback } = req.body || {};
-    if (!id || !feedback) return res.status(400).json({ error: "Missing id or feedback" });
+    if (!id || !feedback)
+      return res.status(400).json({ error: "Missing id or feedback" });
 
-    if (!supabase) return res.status(400).json({ error: "Supabase not configured." });
-    const { error } = await supabase.from("trainer_entries").update({ feedback }).eq("id", id);
+    if (!supabase)
+      return res.status(400).json({ error: "Supabase not configured." });
+    const { error } = await supabase
+      .from("trainer_entries")
+      .update({ feedback })
+      .eq("id", id);
     if (error) return res.status(500).json({ error: "Update failed" });
     res.json({ success: true });
   } catch (e) {
@@ -972,7 +959,8 @@ router.post("/update-feedback", async (req, res) => {
 
 router.post("/fine-tune-now", async (req, res) => {
   try {
-    if (!supabase) return res.status(400).json({ error: "Supabase not configured." });
+    if (!supabase)
+      return res.status(400).json({ error: "Supabase not configured." });
     const { data: entries, error: e1 } = await supabase
       .from("trainer_entries")
       .select("*")
@@ -984,17 +972,35 @@ router.post("/fine-tune-now", async (req, res) => {
       .map((entry) => {
         const context =
           `Vehicle Info:\n${JSON.stringify(entry.vehicle, null, 2)}\n\n` +
-          `Spark Table Changes:\n${JSON.stringify(entry.sparkChanges || [], null, 2)}`;
-        const feedbackNote = entry.feedback ? `\n\nTrainer Feedback:\n${entry.feedback}` : "";
-        return { prompt: context, completion: (entry.aiSummary || "") + feedbackNote };
+          `Spark Table Changes:\n${JSON.stringify(
+            entry.sparkChanges || [],
+            null,
+            2
+          )}`;
+        const feedbackNote = entry.feedback
+          ? `\n\nTrainer Feedback:\n${entry.feedback}`
+          : "";
+        return {
+          prompt: context,
+          completion: (entry.aiSummary || "") + feedbackNote,
+        };
       });
 
-    if (!fineTuneData.length) return res.status(400).json({ error: "No valid entries found to fine-tune on." });
+    if (!fineTuneData.length)
+      return res
+        .status(400)
+        .json({ error: "No valid entries found to fine-tune on." });
 
     const tempFilePath = path.join(__dirname, "fine-tune-upload.jsonl");
-    fs.writeFileSync(tempFilePath, fineTuneData.map((e) => JSON.stringify(e)).join("\n"));
+    fs.writeFileSync(
+      tempFilePath,
+      fineTuneData.map((e) => JSON.stringify(e)).join("\n")
+    );
 
-    const file = await openai.files.create({ file: fs.createReadStream(tempFilePath), purpose: "fine-tune" });
+    const file = await openai.files.create({
+      file: fs.createReadStream(tempFilePath),
+      purpose: "fine-tune",
+    });
     const job = await openai.fineTuning.jobs.create({
       training_file: file.id,
       model: process.env.OPENAI_FINETUNE_MODEL || "gpt-3.5-turbo-0125",
