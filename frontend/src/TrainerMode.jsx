@@ -1,8 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import axios from 'axios';
 
 // Use same-origin API by default; allow override via REACT_APP_API_BASE
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
+
+// Global system instruction for training examples (optional)
+const TRAINING_SYSTEM_MSG = 'Answer only with corrected spark table or concise tuning result. No explanations, no prose.';
 
 const TrainerMode = () => {
   const [form, setForm] = useState({
@@ -22,11 +25,18 @@ const TrainerMode = () => {
 
   const [customFields, setCustomFields] = useState({});
   const [notes, setNotes] = useState('');
-  const [trainingEntry, setTrainingEntry] = useState(null); // may remain null if backend doesn't return it
+  const [trainingEntry, setTrainingEntry] = useState(null); // backend may return { id, ... }
+  const [trainerEntryId, setTrainerEntryId] = useState(null); // robust id we use for save/finalize
+
   const [chat, setChat] = useState([
     { role: 'assistant', content: 'Upload BEFORE and AFTER logs (CSV), click Upload/Analyze, then chat about the results.' }
   ]);
   const [message, setMessage] = useState('');
+
+  // UI feedback for trainer buttons
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState('');
+  const [examplesTotal, setExamplesTotal] = useState(null);
 
   const dropdownOptions = {
     year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
@@ -92,12 +102,16 @@ const TrainerMode = () => {
       fd.append('feedback', notes || '');
 
       const res = await axios.post(`${API_BASE}/trainer-ai`, fd);
-      const data = res.data;
+      const data = res.data || {};
 
       setAiSummary(data.aiSummary || '');
       setComparison(data.comparison || null);
       setConversationId(data.conversationId || null);
-      setTrainingEntry(data.trainingEntry || null); // will be null unless backend returns it
+      setTrainingEntry(data.trainingEntry || null);
+
+      // prefer explicit id from backend; fallback to trainingEntry.id if present
+      const idFromResponse = data.trainer_entry_id || data?.trainingEntry?.id || null;
+      if (idFromResponse) setTrainerEntryId(idFromResponse);
 
       setChat([{ role: 'assistant', content: data.aiSummary || 'Analysis complete.' }]);
       setStatus('✅ Done.');
@@ -127,6 +141,93 @@ const TrainerMode = () => {
     } catch (err) {
       console.error('❌ Chat error:', err);
       setChat(prev => [...prev, { role: 'assistant', content: `Chat failed: ${err.message}` }]);
+    }
+  };
+
+  // === Trainer Flow Helpers ===
+
+  // Build {system?, user, assistant} pairs from the chat timeline.
+  // We pair each 'user' with the next 'assistant'. Earlier assistant-only messages (like the intro) are ignored.
+  const chatPairs = useMemo(() => {
+    const pairs = [];
+    for (let i = 0; i < chat.length; i++) {
+      if (chat[i].role === 'user') {
+        const user = chat[i].content || '';
+        // find next assistant after this user
+        let assistant = '';
+        for (let j = i + 1; j < chat.length; j++) {
+          if (chat[j].role === 'assistant') {
+            assistant = chat[j].content || '';
+            break;
+          }
+        }
+        if (user && assistant) {
+          pairs.push({
+            system: TRAINING_SYSTEM_MSG, // remove or change if you don’t want a system message
+            user,
+            assistant,
+            notes: ''
+          });
+        }
+      }
+    }
+    return pairs;
+  }, [chat]);
+
+  const saveChatAsTraining = async () => {
+    try {
+      setBusy(true);
+      setToast('');
+
+      const id = trainerEntryId || trainingEntry?.id || null;
+      if (!id) {
+        setToast('No trainer_entry_id. Upload logs first to create an entry.');
+        return;
+      }
+      if (!chatPairs.length) {
+        setToast('No (user→assistant) pairs found. Send a message and get a reply first.');
+        return;
+      }
+
+      const res = await axios.post(`${API_BASE}/trainer/save-chat`, {
+        trainer_entry_id: id,
+        chatPairs,              // array of {system?, user, assistant, notes?}
+        notes                   // optional notes for the entry
+      });
+
+      const j = res.data || {};
+      if (!j.ok) throw new Error(j.error || 'Save chat failed');
+      setToast(`Saved ${j.added} example(s) to entry ${j.trainer_entry_id}. Total in entry: ${j.total_examples_for_entry}`);
+    } catch (e) {
+      setToast(`❌ ${e.message || e}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const finalizeAppendJsonl = async () => {
+    try {
+      setBusy(true);
+      setToast('');
+
+      const id = trainerEntryId || trainingEntry?.id || null;
+      if (!id) {
+        setToast('No trainer_entry_id. Upload logs first to create an entry.');
+        return;
+      }
+
+      const res = await axios.post(`${API_BASE}/trainer/finalize`, {
+        trainer_entry_id: id,
+        appendToJsonl: true
+      });
+      const j = res.data || {};
+      if (!j.ok) throw new Error(j.error || 'Finalize failed');
+      setExamplesTotal(j.totalExamplesInFile ?? null);
+      setToast(`Appended ${j.appended} example(s) → ${j.jsonlPath}. Total in file: ${j.totalExamplesInFile}${(j.totalExamplesInFile ?? 0) < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}`);
+    } catch (e) {
+      setToast(`❌ ${e.message || e}`);
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -346,6 +447,42 @@ const TrainerMode = () => {
             Send
           </button>
         </div>
+
+        {/* Trainer save/finalize controls */}
+        <div style={{ display:'flex', gap:10, marginTop:14, flexWrap:'wrap' }}>
+          <button
+            disabled={busy}
+            onClick={saveChatAsTraining}
+            style={{ background:'#66ffcc', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}
+          >
+            Save Chat as Training
+          </button>
+          <button
+            disabled={busy}
+            onClick={finalizeAppendJsonl}
+            style={{ background:'#a78bfa', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}
+          >
+            Finalize & Append JSONL
+          </button>
+        </div>
+
+        {(trainerEntryId || trainingEntry?.id) && (
+          <div style={{ marginTop:8, fontSize:12, opacity:.8 }}>
+            trainer_entry_id: <code>{trainerEntryId || trainingEntry?.id}</code>
+          </div>
+        )}
+
+        {examplesTotal !== null && (
+          <div style={{ marginTop:6, fontSize:12, opacity:.85 }}>
+            Examples in JSONL: <b>{examplesTotal}</b> {examplesTotal < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}
+          </div>
+        )}
+
+        {toast && (
+          <div style={{ marginTop:10, background:'#111', border:'1px solid #2a2a2a', borderRadius:8, padding:'8px 10px', color:'#e0ffe8' }}>
+            {toast}
+          </div>
+        )}
       </div>
 
       {/* Optional: Feedback + Fine-tune (feedback hidden unless we have an ID) */}
