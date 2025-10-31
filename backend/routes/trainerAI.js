@@ -186,8 +186,26 @@ function buildAliasIndex(headers) {
     injDuty:find(['injector duty','injector duty cycle','duty cycle']),
     frp:    find(['fuel rail pressure (sae)','fuel rail pressure','fuel pressure']),
     cmdEq:  find(['commanded equivalence ratio','equivalence ratio commanded','cmd eq','commanded lambda','lambda commanded']),
-    wbEq:   find(['wideband lambda','lambda','wb lambda','measured equivalence ratio']),
-    afr:    find(['wideband afr','afr','air fuel ratio']),
+    wbEq: find([
+  'wideband lambda',
+  'lambda',
+  'wb lambda',
+  'measured equivalence ratio',
+  'wb eq ratio 1 (sae)',
+  'wb eq ratio 1 (sae) (2)',
+  'wb eq ratio 5 (sae) (2)',
+  'wideband eq ratio',
+  'equivalence ratio (wb)',
+]),
+afr: find([
+  'wideband afr',
+  'afr',
+  'air fuel ratio',
+  'wideband afr 1 (sae)',
+  'wideband afr 1 (sae) (2)',
+  'wideband afr 5 (sae) (2)'
+]),
+
     stft1:  find(['short term fuel trim bank 1','stft bank 1','stft1']),
     stft2:  find(['short term fuel trim bank 2','stft bank 2','stft2']),
     ltft1:  find(['long term fuel trim bank 1','ltft bank 1','ltft1']),
