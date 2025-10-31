@@ -7,6 +7,8 @@ const express = require('express');
 const cors = require('cors'); // kept import, not using the default middleware
 const multer = require('multer');
 const { OpenAI } = require('openai');
+// backend/index.js  (only the new lines shown)
+const trainerChat = require("./routes/trainerChat");
 
 // Debug
 const dumpRole = (k) => {
@@ -44,6 +46,9 @@ const ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
 ];
+
+app.use(trainerChat);
+// app.use(trainerUploadDraft); // if used
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
