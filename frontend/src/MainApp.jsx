@@ -81,23 +81,45 @@ const movAvg = (arr, win=5) => {
   });
 };
 
+// ---------- flexible column finder ----------
+const findCol = (headers, candidates) => {
+  for (const c of candidates) {
+    const idx = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
+    if (idx !== -1) return idx;
+  }
+  // loose contains match as a fallback
+  for (const c of candidates) {
+    const idx = headers.findIndex(h => h.toLowerCase().includes(c.toLowerCase()));
+    if (idx !== -1) return idx;
+  }
+  return -1;
+};
+
 // --- CSV parser with WOT trimming (captures optional Engine RPM & Pedal) ---
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
 
-  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
+  // Locate header row that contains "Offset" somewhere (not just startsWith)
+  const headerRowIndex = rows.findIndex(r => /(^|,)\s*offset\s*(,|$)/i.test(r));
   if (headerRowIndex === -1) return null;
 
   const headers = rows[headerRowIndex].split(',').map(h => h.trim());
   const dataStart = headerRowIndex + 4;
   const dataRows = rows.slice(dataStart);
 
-  const col = (name) => headers.findIndex(h => h === name);
-  const speedIndex = col('Vehicle Speed (SAE)');
-  const timeIndex = col('Offset');
-  const pedalIndex = col('Accelerator Position D (SAE)');
-  const rpmIndex = col('Engine RPM'); // optional
+  // Try multiple common names
+  const speedIndex = findCol(headers, [
+    'Vehicle Speed (SAE)', 'Vehicle Speed', 'Speed (SAE)', 'Speed'
+  ]);
+  const timeIndex = findCol(headers, ['Offset', 'Time', 'Time (s)']);
+  const pedalIndex = findCol(headers, [
+    'Accelerator Position D (SAE)', 'Accelerator Position (SAE)',
+    'Throttle Position (SAE)', 'Throttle Position (%)', 'TPS', 'Relative Accelerator Position'
+  ]);
+  const rpmIndex = findCol(headers, [
+    'Engine RPM', 'RPM', 'RPM (SAE)', 'Engine Speed (RPM)', 'Engine Speed', 'Engine Speed (SAE)'
+  ]);
 
   if (speedIndex === -1 || timeIndex === -1 || pedalIndex === -1) return null;
 
@@ -149,31 +171,62 @@ function parseCSV(raw) {
   return pack(norm);
 }
 
-// --- Single-gear sweep finder: longest monotonic RPM region under WOT if available ---
-function selectRpmSweep(time, rpm, pedal = null) {
-  if (!rpm || rpm.length < 5) return null;
+// --- Single-gear sweep finder: WOT + monotonic RPM + constant gear ratio ---
+function selectRpmSweep(time, rpm, mph, pedal = null) {
+  if (!rpm || !mph || rpm.length < 20 || mph.length !== rpm.length) return null;
 
   const isWOT = (i) => {
     if (!pedal || pedal.length !== rpm.length) return true;
     const v = pedal[i];
-    return isNum(v) ? v >= 86 : true;
+    return Number.isFinite(v) ? v >= 86 : true;
   };
 
-  let segments = [];
+  // instantaneous gear proxy rpm/mph, ignore very low speeds
+  const minMPH = 25;
+  const ratio = rpm.map((r, i) => {
+    const v = mph[i];
+    if (!Number.isFinite(r) || !Number.isFinite(v) || v < minMPH) return null;
+    return r / v;
+  });
+
+  const tol = 0.06; // ±6%
+  const okRise = (i) => Number.isFinite(rpm[i]) && Number.isFinite(rpm[i-1]) && rpm[i] > rpm[i-1];
+  const good = (i) => okRise(i) && isWOT(i) && ratio[i] !== null;
+
+  const rough = [];
   let start = 0;
   for (let i = 1; i < rpm.length; i++) {
-    const rising = isNum(rpm[i]) && isNum(rpm[i-1]) && rpm[i] > rpm[i-1] && isWOT(i);
-    if (!rising) {
-      if (i - 1 - start >= 10) segments.push([start, i - 1]);
+    if (!good(i)) {
+      if (i - 1 - start >= 10) rough.push([start, i - 1]);
       start = i;
     }
   }
-  if (rpm.length - 1 - start >= 10) segments.push([start, rpm.length - 1]);
-  if (!segments.length) return null;
+  if (rpm.length - 1 - start >= 10) rough.push([start, rpm.length - 1]);
+  if (!rough.length) return null;
 
-  // choose the longest segment
-  segments.sort((a, b) => (b[1]-b[0]) - (a[1]-a[0]));
-  return segments[0]; // [i0, i1]
+  const refined = [];
+  for (const [s, e] of rough) {
+    let j = s;
+    while (j < e) {
+      let k = j;
+      const window = [];
+      while (k <= e) {
+        if (ratio[k] === null) break;
+        window.push(ratio[k]);
+        const sorted = [...window].sort((a, b) => a - b);
+        const m = sorted[Math.floor(sorted.length / 2)];
+        const dev = Math.abs(ratio[k] - m) / m;
+        if (dev > tol) break;
+        k++;
+      }
+      if (k - 1 - j >= 15) refined.push([j, k - 1]);
+      j = Math.max(j + 1, k);
+    }
+  }
+  if (!refined.length) return null;
+
+  refined.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+  return refined[0];
 }
 
 export default function MainApp() {
@@ -187,7 +240,7 @@ export default function MainApp() {
   const [formData, setFormData] = useState({
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
-    weight: '',      // used for HP calc
+    weight: '',      // used for HP calc (fallback)
     logFile: null,
   });
 
@@ -199,8 +252,7 @@ export default function MainApp() {
   const [aiResult, setAiResult] = useState('');
   const [status, setStatus] = useState('');
 
-  // Prefer backend dyno
-  const [dynoRemote, setDynoRemote] = useState(null);
+  const [dynoRemote, setDynoRemote] = useState(null); // backend dyno (preferred)
 
   const suggestions = useMemo(() => deriveAdvice(aiText), [aiText]);
 
@@ -256,7 +308,7 @@ export default function MainApp() {
         trans: formData.trans, fuel: formData.fuel, nn: 'Enabled'
       }));
       form.append('metrics', JSON.stringify(metrics || {}));
-      form.append('weight', String(formData.weight || '')); // harmless if backend ignores
+      form.append('weight', String(formData.weight || ''));
 
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
@@ -265,8 +317,6 @@ export default function MainApp() {
       if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
       const text = await reviewRes.text();
-
-      // Split out DYNO section if present
       const [mainPart, dynoPart] = text.split('===DYNO===');
       const [quickChecks, aiPart] = (mainPart || '').split('===SPLIT===');
 
@@ -309,23 +359,23 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- Dyno (prefer backend; fallback with correct physics) --------
+  // -------- Dyno (prefer backend; fallback with correct physics and single-gear WOT) --------
   const dyno = useMemo(() => {
-    // If backend sent a dyno payload and it's not an error, use it.
+    // 1) Use backend dyno if provided and valid
     if (dynoRemote && !dynoRemote.error) return dynoRemote;
 
-    // If backend reported error or we have no local RPM, don't show dyno.
+    // 2) If backend errored or no local RPM, hide dyno
     if ((dynoRemote && dynoRemote.error) || !graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) {
       return null;
     }
 
-    // Build a single-gear sweep from local arrays
+    // 3) Build a single-gear sweep from local arrays
     const time = graphs.time;
     const rpm = graphs.rpm;
     const mph = graphs.speed;
     const pedal = graphs.pedal || null;
 
-    const sweep = selectRpmSweep(time, rpm, pedal);
+    const sweep = selectRpmSweep(time, rpm, mph, pedal);
     if (!sweep) return null;
     const [i0, i1] = sweep;
 
@@ -334,10 +384,9 @@ export default function MainApp() {
     const MPH = mph.slice(i0, i1 + 1);
 
     // Physics-correct power:
-    // Convert mph -> ft/s and compute accel in ft/s^2
     const MPH_TO_FTPS = 1.4666667;
-    const G = 32.174; // ft/s^2
-    const HP_DEN = 550; // ft·lbf/s per HP
+    const G = 32.174;  // ft/s^2
+    const HP_DEN = 550;
 
     const V = MPH.map(v => v * MPH_TO_FTPS);
     const A = V.map((_, i) => {
@@ -362,13 +411,12 @@ export default function MainApp() {
     });
     let HP = P.map(p => mass ? (p / HP_DEN) : p);
 
-    // If weight missing, normalize to relative scale (peak = 100)
     if (!mass) {
       const peak = Math.max(...HP, 1e-6);
-      HP = HP.map(v => 100 * v / peak);
+      HP = HP.map(v => 100 * v / peak); // normalized
     }
 
-    // Bin by ~50 rpm for a clean curve and compute torque: TQ = HP * 5252 / RPM
+    // Bin by ~50 rpm and compute torque
     const pts = [];
     for (let i = 0; i < RPM.length; i++) if (isNum(RPM[i]) && RPM[i] > 0 && isNum(HP[i])) pts.push({ x: RPM[i], hp: HP[i] });
     if (!pts.length) return null;
@@ -609,7 +657,7 @@ export default function MainApp() {
                   <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
-                  HP (left) / TQ (right) vs RPM — single-gear sweep (smoothed)
+                  HP (left) / TQ (right) vs RPM — single-gear WOT sweep (smoothed)
                 </div>
                 <Line data={dynoChartData} options={dynoChartOptions} />
 
@@ -637,7 +685,7 @@ export default function MainApp() {
 
                 {dyno.hasWeight === false && (
                   <div style={{ marginTop:8, fontSize:12, opacity:.8 }}>
-                    Tip: enter vehicle weight (lbs) for **absolute** HP. Without weight, the curve is normalized (peak=100).
+                    Tip: enter vehicle weight (lbs) for absolute HP. Without weight, the curve is normalized (peak=100).
                   </div>
                 )}
               </div>
