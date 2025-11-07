@@ -156,7 +156,7 @@ export default function MainApp() {
   const [formData, setFormData] = useState({
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
-    weight: '',      // ✅ used for HP calc
+    weight: '',      // used for HP calc (client-side fallback)
     logFile: null,
   });
 
@@ -164,9 +164,12 @@ export default function MainApp() {
   const [aiText, setAiText] = useState('');
 
   const [metrics, setMetrics] = useState(null);
-  const [graphs, setGraphs] = useState(null);
+  const [graphs, setGraphs] = useState(null);       // client-side parsed speed/time (for speed chart & fallback dyno)
   const [aiResult, setAiResult] = useState('');
   const [status, setStatus] = useState('');
+
+  // ✅ NEW: holds backend dyno arrays (preferred)
+  const [dynoRemote, setDynoRemote] = useState(null);
 
   const suggestions = useMemo(() => deriveAdvice(aiText), [aiText]);
 
@@ -174,6 +177,7 @@ export default function MainApp() {
     const { name, value } = e.target;
     setFormData((p) => ({ ...p, [name]: value }));
   };
+
   const handleFileChange = (e) => {
     const file = e.target.files?.[0] || null;
     if (!file) return;
@@ -186,7 +190,7 @@ export default function MainApp() {
         setStatus('❌ Failed to parse CSV (check format).');
       } else {
         setStatus('CSV parsed.');
-        setGraphs(parsed); // now may include rpm
+        setGraphs(parsed); // may include rpm
         setMetrics({ zeroTo60: null, fortyTo100: null, sixtyTo130: null });
       }
     };
@@ -209,6 +213,7 @@ export default function MainApp() {
     setAiResult('');
     setLeftText('');
     setAiText('');
+    setDynoRemote(null); // reset before new run
 
     try {
       const form = new FormData();
@@ -228,7 +233,13 @@ export default function MainApp() {
       if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
       const text = await reviewRes.text();
-      const [quickChecks, aiPart] = text.split('===SPLIT===');
+
+      // ✅ Split out DYNO section if present
+      const [mainPart, dynoPart] = text.split('===DYNO===');
+      const [quickChecks, aiPart] = (mainPart || '').split('===SPLIT===');
+
+      let dynoJSON = null;
+      try { if (dynoPart) dynoJSON = JSON.parse(dynoPart); } catch {}
 
       const combined =
         (quickChecks || '').trim() +
@@ -236,6 +247,10 @@ export default function MainApp() {
       setAiResult(combined || 'No AI assessment returned.');
       setLeftText((quickChecks || '').trim());
       setAiText((aiPart || '').trim());
+
+      // ⬇️ store backend dyno arrays (hp/tq/x/flags)
+      setDynoRemote(dynoJSON || null);
+
       setStatus('');
     } catch (err) {
       console.error(err);
@@ -244,7 +259,7 @@ export default function MainApp() {
     }
   };
 
-  // -------- Base speed chart (already existed) --------
+  // -------- Base speed chart (client-side parsed) --------
   const chartData = graphs ? {
     datasets: [{
       label: 'Vehicle Speed (mph)',
@@ -264,8 +279,12 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- NEW: Simulated Dyno Computation --------
+  // -------- Simulated Dyno Computation (prefers backend) --------
   const dyno = useMemo(() => {
+    // Prefer backend-provided dyno arrays
+    if (dynoRemote) return dynoRemote;
+
+    // Fallback: compute on client from graphs (weight optional)
     if (!graphs || !graphs.time || !graphs.speed) return null;
 
     const weight = parseFloat(formData.weight || '0'); // lbs
@@ -273,7 +292,6 @@ export default function MainApp() {
     const t = graphs.time;
     const mph = graphs.speed;
 
-    // need time spacing > 0
     if (t.length < 3) return null;
 
     // derivative (centered)
@@ -290,36 +308,27 @@ export default function MainApp() {
       }
     }
 
-    // smooth mph and accel to reduce noise
     const mph_s = movAvg(mph, 5);
     const acc_s = movAvg(accel_mphps, 5);
 
-    // Road-load based wheel HP estimate (ignores aero/rolling; decent WOT proxy):
     // HP ≈ (Weight * Speed_mph * Accel_mph_per_s) / 375
     const hpRaw = mph_s.map((v, i) => {
       if (!hasWeight) return Math.max(0, v * acc_s[i]); // relative if weight missing
       return Math.max(0, (weight * v * acc_s[i]) / 375);
     });
 
-    // Optional torque if RPM present
     const rpm = graphs.rpm && graphs.rpm.some(v => v !== null) ? graphs.rpm : null;
 
-    // Build X axis and collapse to monotonic series:
     if (rpm) {
       const pts = [];
       for (let i = 0; i < rpm.length; i++) {
         const r = rpm[i];
         const hp = hpRaw[i];
-        if (isNum(r) && r > 0 && isNum(hp)) {
-          pts.push({ x: r, hp });
-        }
+        if (isNum(r) && r > 0 && isNum(hp)) pts.push({ x: r, hp });
       }
       if (!pts.length) return { hasWeight, xLabel: 'Speed (mph)', x: mph_s, hp: hpRaw, tq: null, peakHP: null, peakTQ: null, usedRPM: false };
 
-      // sort by rpm and downsample by small step to avoid wiggles
       pts.sort((a, b) => a.x - b.x);
-
-      // Reduce duplicates/zigzags by binning every ~50 rpm
       const bin = 50;
       const bins = new Map();
       for (const p of pts) {
@@ -334,41 +343,27 @@ export default function MainApp() {
 
       const x = rpmSeries.map(p => p.x);
       const hp = movAvg(rpmSeries.map(p => p.hp), 5);
-
-      // TQ = HP * 5252 / RPM
       const tq = x.map((r, i) => (r > 0 ? (hp[i] * 5252) / r : null));
 
-      // Peaks
       let peakHP = null, peakTQ = null;
-      if (hp.length) {
-        let idx = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[idx]) idx = i;
-        peakHP = { rpm: x[idx], value: +hp[idx].toFixed(1) };
-      }
-      if (tq.length) {
-        let idx = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[idx]) idx = i;
-        peakTQ = { rpm: x[idx], value: +tq[idx].toFixed(1) };
-      }
+      if (hp.length) { let idx = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[idx]) idx = i; peakHP = { rpm: x[idx], value: +hp[idx].toFixed(1) }; }
+      if (tq.length) { let idx = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[idx]) idx = i; peakTQ = { rpm: x[idx], value: +tq[idx].toFixed(1) }; }
 
       return { hasWeight, xLabel: 'RPM', x, hp, tq, peakHP, peakTQ, usedRPM: true };
     } else {
-      // No RPM → show HP vs Speed only
       const x = mph_s;
       const hp = movAvg(hpRaw, 5);
       let peakHP = null;
-      if (hp.length) {
-        let idx = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[idx]) idx = i;
-        peakHP = { rpm: null, speed: +x[idx].toFixed(1), value: +hp[idx].toFixed(1) };
-      }
+      if (hp.length) { let idx = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[idx]) idx = i; peakHP = { rpm: null, speed: +x[idx].toFixed(1), value: +hp[idx].toFixed(1) }; }
       return { hasWeight, xLabel: 'Speed (mph)', x, hp, tq: null, peakHP, peakTQ: null, usedRPM: false };
     }
-  }, [graphs, formData.weight]);
+  }, [dynoRemote, graphs, formData.weight]);
 
-  // -------- NEW: Dyno chart config --------
+  // -------- Dyno chart config --------
   const dynoChartData = useMemo(() => {
     if (!dyno) return null;
 
     const datasets = [];
-    // HP dataset
     datasets.push({
       label: 'Horsepower',
       data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
@@ -378,7 +373,6 @@ export default function MainApp() {
       borderWidth: 2, pointRadius: 0, tension: 0.25,
     });
 
-    // TQ dataset if present
     if (dyno.tq) {
       datasets.push({
         label: 'Torque (lb-ft)',
@@ -390,11 +384,9 @@ export default function MainApp() {
       });
     }
 
-    // Peak markers as tiny point datasets (keeps config simple)
-    const peakSets = [];
     if (dyno.peakHP) {
       const px = dyno.usedRPM ? dyno.peakHP.rpm : dyno.peakHP.speed;
-      peakSets.push({
+      datasets.push({
         label: 'Peak HP',
         data: [{ x: px, y: dyno.peakHP.value }],
         yAxisID: 'yHP',
@@ -404,7 +396,7 @@ export default function MainApp() {
       });
     }
     if (dyno.peakTQ) {
-      peakSets.push({
+      datasets.push({
         label: 'Peak TQ',
         data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
         yAxisID: 'yTQ',
@@ -414,7 +406,7 @@ export default function MainApp() {
       });
     }
 
-    return { datasets: [...datasets, ...peakSets] };
+    return { datasets };
   }, [dyno]);
 
   const dynoChartOptions = useMemo(() => {
@@ -454,7 +446,10 @@ export default function MainApp() {
   // --- Dyno setup status card ---
   const dynoSetup = (() => {
     const hasWeight = !!formData.weight && !isNaN(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0;
-    const hasRPM = !!(graphs && graphs.rpm && graphs.rpm.some(v => v !== null));
+    const hasRPM = !!(
+      (dyno && dyno.usedRPM) ||
+      (graphs && graphs.rpm && graphs.rpm.some(v => v !== null))
+    );
     return { hasWeight, hasRPM };
   })();
 
@@ -554,7 +549,7 @@ export default function MainApp() {
                   </strong>
                 </div>
                 <div>
-                  Engine RPM in CSV:{' '}
+                  Engine RPM in CSV / result:{' '}
                   <strong style={{ color: dynoSetup.hasRPM ? '#74ffb0' : '#ffc96b' }}>
                     {dynoSetup.hasRPM ? 'Detected' : 'Not found (HP-only shown)'}
                   </strong>
@@ -562,7 +557,7 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* NEW: Simulated Dyno chart */}
+            {/* Dyno chart */}
             {dyno && dynoChartData && dynoChartOptions && (
               <div style={{ ...styles.card, height: 340 }}>
                 <div style={styles.titleWrap}>
@@ -570,7 +565,7 @@ export default function MainApp() {
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   {dyno.usedRPM
-                    ? 'Estimated wheel HP/TQ vs RPM (WOT segment, smoothed)'
+                    ? 'Estimated wheel HP/TQ vs RPM (smoothed)'
                     : 'Estimated wheel HP vs Speed (RPM not in log)'}
                 </div>
                 <Line data={dynoChartData} options={dynoChartOptions} />
@@ -600,7 +595,7 @@ export default function MainApp() {
                   )}
                 </div>
 
-                {!dyno.hasWeight && (
+                {dyno.hasWeight === false && (
                   <div style={{ marginTop:8, fontSize:12, opacity:.8 }}>
                     Tip: enter vehicle weight (lbs) for absolute HP. Without weight, the curve is scaled relatively.
                   </div>
