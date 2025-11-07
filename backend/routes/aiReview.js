@@ -4,7 +4,7 @@ const router = express.Router();
 const { OpenAI } = require('openai');
 const multer = require('multer');
 
-// ✅ adjust this path if your parseCSV.js is in a different folder
+// ✅ adjust this path if your parseCSV.js lives elsewhere
 const parseCSV = require('../parseCSV');
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -74,7 +74,11 @@ function buildUserPrompt({ vehicle, mods, metrics }) {
   ].join('\n');
 }
 
-// ---------- Simulated Dyno from parsed arrays ----------
+// ---------- Dyno helpers (correct physics) ----------
+const g = 32.174;           // ft/s^2
+const MPH_TO_FTPS = 1.4666667;
+const HP_PER_FTLBPS = 550;
+
 const isNum = (v) => Number.isFinite(v);
 const movAvg = (arr, win=5) => {
   if (!arr || !arr.length) return [];
@@ -89,119 +93,167 @@ const movAvg = (arr, win=5) => {
   });
 };
 
-function buildDyno(data, weightLbs = 0) {
-  if (!data) return null;
-  const { time, speed, rpm } = data;
-  if (!time || !speed || time.length < 2 || speed.length !== time.length) return null;
+// Pick a single-gear RPM sweep: longest contiguous region of *increasing* RPM
+function selectRpmSweep(time, rpm, throttleOrPedal = null) {
+  if (!rpm || rpm.length < 5) return null;
 
-  // accel in mph/s (central difference)
-  const accel = [];
-  for (let i = 0; i < speed.length; i++) {
-    const i0 = Math.max(0, i - 1);
-    const i1 = Math.min(speed.length - 1, i + 1);
-    const dv = speed[i1] - speed[i0];
-    const dt = time[i1] - time[i0];
-    accel.push(dt > 0 ? dv / dt : 0);
+  // Optional: require WOT-ish if we have it
+  const isWOT = (i) => {
+    if (!throttleOrPedal) return true;
+    const v = throttleOrPedal[i];
+    return isNum(v) ? v >= 86 : true;
+  };
+
+  let segments = [];
+  let start = 0;
+  for (let i = 1; i < rpm.length; i++) {
+    const rising = isNum(rpm[i]) && isNum(rpm[i-1]) && rpm[i] > rpm[i-1] && isWOT(i);
+    if (!rising) {
+      if (i - 1 - start >= 10) segments.push([start, i - 1]);
+      start = i;
+    }
   }
+  if (rpm.length - 1 - start >= 10) segments.push([start, rpm.length - 1]);
+  if (!segments.length) return null;
 
-  const mph_s = movAvg(speed, 5);
-  const acc_s = movAvg(accel, 5);
+  // choose longest segment
+  segments.sort((a, b) => (b[1]-b[0]) - (a[1]-a[0]));
+  return segments[0]; // [i0, i1]
+}
 
-  // HP ≈ (Weight * mph * d(mph)/dt) / 375 ; if no weight, return relative curve
-  const hpRaw = mph_s.map((v, i) => {
-    const base = Math.max(0, v * acc_s[i]);
-    return weightLbs > 0 ? (weightLbs * base) / 375 : base;
+function buildDynoFromParsed(parsed, weightLbs = 0) {
+  if (!parsed) return { error: 'No parsed data' };
+  const { time, speed, rpm, throttle, pedal } = parsed;
+
+  if (!time || !speed || time.length < 3) return { error: 'Need time & speed' };
+  const hasRPM = Array.isArray(rpm) && rpm.some(r => isNum(r) && r > 0);
+  if (!hasRPM) return { error: 'RPM column required for dyno' };
+
+  // Prefer throttle/pedal if available to help sweep selection
+  const control = (throttle && throttle.length === time.length) ? throttle
+                 : (pedal && pedal.length === time.length) ? pedal
+                 : null;
+
+  // Find single-gear sweep using RPM monotonic increase (and WOT if present)
+  const sweep = selectRpmSweep(time, rpm, control);
+  if (!sweep) return { error: 'Could not find a clean RPM sweep' };
+  const [i0, i1] = sweep;
+
+  // Slice arrays to sweep window
+  const T = time.slice(i0, i1 + 1);
+  const RPM = rpm.slice(i0, i1 + 1);
+  const MPH = speed.slice(i0, i1 + 1); // mph
+
+  // Convert to ft/s and compute acceleration in ft/s^2
+  const V = MPH.map(v => v * MPH_TO_FTPS);
+  const A = V.map((_, i) => {
+    const i0c = Math.max(0, i-1);
+    const i1c = Math.min(V.length-1, i+1);
+    const dv = V[i1c] - V[i0c];
+    const dt = T[i1c] - T[i0c];
+    return dt > 0 ? dv / dt : 0;
   });
 
-  // If RPM present → build HP/TQ vs RPM (binned at ~50 rpm)
-  const hasRPM = Array.isArray(rpm) && rpm.some(r => isNum(r) && r > 0);
-  if (hasRPM) {
-    const pts = [];
-    for (let i = 0; i < rpm.length; i++) {
-      const r = rpm[i];
-      const hp = hpRaw[i];
-      if (isNum(r) && r > 0 && isNum(hp)) pts.push({ x: r, hp });
-    }
-    if (!pts.length) {
-      const hp = movAvg(hpRaw, 5);
-      return { usedRPM: false, xLabel: 'Speed (mph)', x: mph_s, hp, tq: null };
-    }
+  // Smooth v and a
+  const Vsm = movAvg(V, 5);
+  const Asm = movAvg(A, 5);
 
-    pts.sort((a, b) => a.x - b.x);
-    const bin = 50;
-    const bins = new Map();
-    for (const p of pts) {
-      const key = Math.round(p.x / bin) * bin;
-      const cur = bins.get(key);
-      if (!cur) bins.set(key, { x: key, hp: [p.hp] });
-      else cur.hp.push(p.hp);
-    }
-    const series = Array.from(bins.values())
-      .map(b => ({ x: b.x, hp: b.hp.reduce((a, c) => a + c, 0) / b.hp.length }))
-      .sort((a, b) => a.x - b.x);
+  // Mass (slugs) = weight (lbf) / g
+  const mass = weightLbs > 0 ? (weightLbs / g) : null;
 
-    const x = series.map(p => p.x);
-    const hp = movAvg(series.map(p => p.hp), 5);
-    const tq = x.map((r, i) => (r > 0 ? (hp[i] * 5252) / r : null));
+  // Instantaneous power (ft·lbf/s) = m * a * v   (ignores aero/rolling; WOT pull proxy)
+  const P = Vsm.map((v, i) => {
+    const base = Asm[i] * v;
+    if (mass) return Math.max(0, mass * base);
+    // If weight unknown: return relative power scaled to 1 at peak later
+    return Math.max(0, base);
+  });
 
-    // peaks
-    let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
-    let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
-
-    return {
-      usedRPM: true, xLabel: 'RPM',
-      x, hp, tq,
-      peakHP: hp.length ? { rpm: x[iHP], value: +hp[iHP].toFixed(1) } : null,
-      peakTQ: tq.length ? { rpm: x[iTQ], value: +tq[iTQ].toFixed(1) } : null,
-      hasWeight: weightLbs > 0
-    };
+  // HP
+  let HP = P.map(p => mass ? (p / HP_PER_FTLBPS) : p);
+  if (!mass) {
+    // scale relative so peak ~ 100 for readability when weight missing
+    const peak = Math.max(...HP, 1e-6);
+    HP = HP.map(v => 100 * v / peak);
   }
 
-  const hp = movAvg(hpRaw, 5);
-  let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+  // Bin by 50 RPM for a clean curve
+  const pts = [];
+  for (let i = 0; i < RPM.length; i++) if (isNum(RPM[i]) && RPM[i] > 0 && isNum(HP[i])) pts.push({ x: RPM[i], hp: HP[i] });
+  pts.sort((a, b) => a.x - b.x);
+
+  const bin = 50;
+  const bins = new Map();
+  for (const p of pts) {
+    const key = Math.round(p.x / bin) * bin;
+    const cur = bins.get(key);
+    if (!cur) bins.set(key, { x: key, hp: [p.hp] });
+    else cur.hp.push(p.hp);
+  }
+  const series = Array.from(bins.values())
+    .map(b => ({ x: b.x, hp: b.hp.reduce((a, c) => a + c, 0) / b.hp.length }))
+    .sort((a, b) => a.x - b.x);
+
+  const X = series.map(p => p.x);
+  const HPs = movAvg(series.map(p => p.hp), 5);
+  const TQ = X.map((r, i) => (r > 0 ? (HPs[i] * 5252) / r : null));
+
+  let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
+  let iTQ = 0; for (let i=1;i<TQ.length;i++) if (TQ[i] > TQ[iTQ]) iTQ = i;
 
   return {
-    usedRPM: false, xLabel: 'Speed (mph)',
-    x: mph_s, hp, tq: null,
-    peakHP: hp.length ? { speed: +mph_s[iHP].toFixed(1), value: +hp[iHP].toFixed(1) } : null,
-    peakTQ: null,
-    hasWeight: weightLbs > 0
+    usedRPM: true,
+    xLabel: 'RPM',
+    x: X,
+    hp: HPs,
+    tq: TQ,
+    peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
+    peakTQ: TQ.length ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1) } : null,
+    hasWeight: !!mass,
   };
 }
 
-// NOTE: This route accepts multipart FormData: fields { vehicle, mods, metrics } and file { log }
+// NOTE: This route accepts multipart FormData: fields { vehicle, mods, metrics, weight } and file { log }
 router.post('/ai-review', upload.single('log'), async (req, res) => {
   try {
-    // Parse JSON fields that arrived as strings in multipart
+    // Parse JSON-ish fields (stringified in multipart)
     let vehicle = req.body?.vehicle;
     let mods = req.body?.mods;
     let metrics = req.body?.metrics;
-
     try { if (typeof vehicle === 'string') vehicle = JSON.parse(vehicle); } catch {}
     try { if (typeof mods === 'string') mods = JSON.parse(mods); } catch {}
     try { if (typeof metrics === 'string') metrics = JSON.parse(metrics); } catch {}
+
+    const weightLbs = Number(req.body?.weight ?? 0); // may be NaN/0
 
     const missing = validateMods(mods);
     if (missing.length) {
       return res.status(400).send(`❌ Missing or invalid fields: ${missing.join(', ') }===SPLIT===`);
     }
 
-    // --- Parse CSV if present using your shared backend parser ---
+    // Parse CSV using shared parser
     let parsed = null;
     if (req.file && req.file.buffer) {
       const rawCSV = req.file.buffer.toString('utf8');
       try {
-        parsed = parseCSV(rawCSV); // expects { time, speed, rpm, ... }
+        // Expect parsed to include at least { time, speed, rpm }, optionally { throttle, pedal }
+        parsed = parseCSV(rawCSV);
       } catch (e) {
         console.error('parseCSV error:', e);
       }
     }
 
-    // Build dyno data (default weight can be overridden later via a dedicated route if you want)
-    const defaultWeightLbs = 0; // keep 0 to show "relative" HP unless you later pass weight from frontend
-    const dynoData = parsed ? buildDyno(parsed, defaultWeightLbs) : null;
+    // Build dyno (proper physics)
+    let dynoData = null;
+    if (parsed) {
+      dynoData = buildDynoFromParsed(parsed, isNum(weightLbs) && weightLbs > 0 ? weightLbs : 0);
+      if (dynoData?.error) {
+        // Keep error text for frontend diagnostics
+        dynoData = { error: dynoData.error };
+      }
+    }
 
-    // --- AI Assessment (unchanged) ---
+    // ---- AI Assessment (unchanged policy) ----
     const system = buildSystemPrompt({ mods });
     const user = buildUserPrompt({ vehicle, mods, metrics });
 
@@ -225,17 +277,14 @@ router.post('/ai-review', upload.single('log'), async (req, res) => {
         .join('\n');
     }
 
-    // quickChecks left blank here; your other non-AI logic can populate later if desired
-    const quickChecks = '';
+    const quickChecks = ''; // your non-AI quick checks can populate this later
 
-    // 👉 Return TEXT the way your MainApp expects, with a DYNO segment appended
-    const dynoJSON = JSON.stringify(dynoData || null);
-    const payload = `${quickChecks}===SPLIT===${assessment}===DYNO===${dynoJSON}`;
+    // TEXT payload + DYNO JSON appended
+    const payload = `${quickChecks}===SPLIT===${assessment}===DYNO===${JSON.stringify(dynoData || null)}`;
     return res.status(200).send(payload);
   } catch (e) {
     console.error('ai-review error', e);
-    // Still return in the split format so frontend doesn't break
-    return res.status(500).send(`❌ AI review failed===SPLIT===${'An error occurred.'}===DYNO===null`);
+    return res.status(500).send(`❌ AI review failed===SPLIT===An error occurred.===DYNO===${JSON.stringify({ error: 'server error' })}`);
   }
 });
 
