@@ -880,7 +880,7 @@ export default function MainApp() {
 
             {/* Setup status */}
             <div style={styles.card}>
-              <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
+              <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (Results may NOT be accurate)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
                 <div>
