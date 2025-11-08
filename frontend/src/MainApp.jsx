@@ -19,7 +19,8 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-// Fixed dyno proportionality (no user calibration). Good baseline for your 536 whp log.
+// Fixed dyno proportionality (no user calibration). Baseline for your 536 whp log.
+// With the better derivative pipeline below, this constant should also scale correctly on high-power pulls.
 const K_DYNO = 0.0001311; // HP = K_DYNO * RPM * dRPM/dt
 
 const styles = {
@@ -86,6 +87,37 @@ const movAvg = (arr, win=5) => {
   });
 };
 const comma = (n, d=1) => n.toLocaleString(undefined, { maximumFractionDigits: d });
+
+// Zero-phase-ish moving average: forward then backward pass
+const zeroPhaseMovAvg = (arr, win=5) => {
+  if (!arr || arr.length === 0) return [];
+  const fwd = movAvg(arr, win);
+  const rev = movAvg([...fwd].reverse(), win).reverse();
+  return rev;
+};
+
+// Uniform resample time series with linear interpolation
+const resampleUniform = (T, Y, targetHz = 50) => {
+  if (!T || !Y || T.length !== Y.length || T.length < 3) return { t: [], y: [] };
+  const t0 = T[0], tN = T[T.length - 1];
+  const dt = 1 / targetHz;
+  const N = Math.max(3, Math.floor((tN - t0) / dt));
+  const tU = new Array(N);
+  const yU = new Array(N);
+  let j = 1;
+  for (let i = 0; i < N; i++) {
+    const t = t0 + i * dt;
+    tU[i] = t;
+    while (j < T.length && T[j] < t) j++;
+    const aIdx = Math.max(0, j - 1);
+    const bIdx = Math.min(T.length - 1, j);
+    const Ta = T[aIdx], Tb = T[bIdx];
+    const Ya = Y[aIdx], Yb = Y[bIdx];
+    const f = (Tb - Ta) !== 0 ? Math.min(1, Math.max(0, (t - Ta) / (Tb - Ta))) : 0;
+    yU[i] = Ya + (Yb - Ya) * f;
+  }
+  return { t: tU, y: yU };
+};
 
 // ---------- flexible col finder ----------
 const findCol = (headers, candidates) => {
@@ -427,40 +459,41 @@ export default function MainApp() {
 
     const T = time.slice(i0, i1 + 1);
     const RPM = rpm.slice(i0, i1 + 1);
-    const MPH = mph.slice(i0, i1 + 1);
 
-    // Smooth RPM a touch to reduce noise in derivative
-    const RPMs = movAvg(RPM, 10);
+    // === New derivative pipeline ===
+    // 1) Uniform resample to stable dt
+    const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60); // 60 Hz for better peak fidelity
 
-    // Centered derivative of RPM (rev/min per second)
-    const dRPMdt = RPMs.map((_, i) => {
-      const a = Math.max(0, i - 1);
-      const b = Math.min(RPMs.length - 1, i + 1);
-      const dv = RPMs[b] - RPMs[a];
-      const dt = T[b] - T[a];
-      return dt > 0 ? dv / dt : 0;
+    // 2) Zero-phase smoothing (forward + backward) to reduce noise without lag
+    const RPMs = zeroPhaseMovAvg(RPMu, 7); // 7-point window works well on 60 Hz
+
+    // 3) Central difference on smoothed, uniform RPM
+    const dRPMdt = RPMs.map((_, i, arr) => {
+      if (i === 0 || i === arr.length - 1) return 0;
+      // Tu is uniform, so dt = 1/60
+      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // rev/min per second (since RPM units)
     });
-    const dRPMdtS = movAvg(dRPMdt, 10);
+    const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
     let HP;
     if (dynoMode === 'dyno') {
-      // === New dyno model: HP = K_DYNO * RPM * dRPM/dt (no weight) ===
+      // === Dyno mode: pure inertia estimate with fixed proportionality ===
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i]));
     } else {
       // Track model: road-load (weight + rolling + aero)
       const MPH_TO_FTPS = 1.4666667;
       const HP_DEN = 550;
       const G = 32.174;
-      const V = MPH.map(v => v * MPH_TO_FTPS);
-      const Vs = movAvg(V, 5);
-      const A = Vs.map((_, i) => {
-        const a = Math.max(0, i - 1);
-        const b = Math.min(Vs.length - 1, i + 1);
-        const dv = Vs[b] - Vs[a];
-        const dt = T[b] - T[a];
-        return dt > 0 ? dv / dt : 0;
+
+      // Recreate the speed window consistent with the RPM window
+      const MPHraw = mph.slice(i0, i1 + 1);
+      const { y: MPHu } = resampleUniform(T, MPHraw, 60);
+      const Vs = zeroPhaseMovAvg(MPHu.map(v => v * MPH_TO_FTPS), 5);
+
+      const As = Vs.map((_, i, arr) => {
+        if (i === 0 || i === arr.length - 1) return 0;
+        return (arr[i + 1] - arr[i - 1]) * (60 / 2); // ft/s^2 at 60 Hz
       });
-      const As = movAvg(A, 5);
 
       const weight = parseFloat(formData.weight || '0');
       const mass = isNum(weight) && weight > 0 ? (weight / G) : 0;
@@ -490,7 +523,7 @@ export default function MainApp() {
       .sort((a, b) => a.x - b.x);
 
     const X  = series.map(p => p.x);
-    const HPs = movAvg(series.map(p => p.hp), 5);
+    const HPs = zeroPhaseMovAvg(series.map(p => p.hp), 5); // final visual smoothing without peak loss
     const TQ  = X.map((r, i) => (r > 0 ? (HPs[i] * 5252) / r : null));
 
     let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
@@ -859,7 +892,12 @@ export default function MainApp() {
                         background: s.severity === 'high' ? '#ff9a9a' : s.severity === 'med' ? '#ffc96b' : '#74ffb0',
                         color: '#111'
                       }}>
-                        {s.severity === 'high' ? 'High Priority' : s.severity === 'med' ? 'Medium' : 'Info'}
+                        {s.severity === 'high'
+  ? 'High Priority'
+  : s.severity === 'med'
+  ? 'Medium'
+  : 'Info'}
+
                       </span>
                     )}
                     <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.label}</strong>
