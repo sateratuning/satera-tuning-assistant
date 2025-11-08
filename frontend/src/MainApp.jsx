@@ -20,7 +20,7 @@ const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
 // Fixed dyno proportionality (no user calibration). Good baseline for your 536 whp log.
-const K_DYNO = 0.0001315; // HP = K_DYNO * RPM * dRPM/dt
+const K_DYNO = 0.0001311; // HP = K_DYNO * RPM * dRPM/dt
 
 const styles = {
   page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
@@ -430,7 +430,7 @@ export default function MainApp() {
     const MPH = mph.slice(i0, i1 + 1);
 
     // Smooth RPM a touch to reduce noise in derivative
-    const RPMs = movAvg(RPM, 7);
+    const RPMs = movAvg(RPM, 10);
 
     // Centered derivative of RPM (rev/min per second)
     const dRPMdt = RPMs.map((_, i) => {
@@ -440,7 +440,7 @@ export default function MainApp() {
       const dt = T[b] - T[a];
       return dt > 0 ? dv / dt : 0;
     });
-    const dRPMdtS = movAvg(dRPMdt, 7);
+    const dRPMdtS = movAvg(dRPMdt, 10);
 
     let HP;
     if (dynoMode === 'dyno') {
