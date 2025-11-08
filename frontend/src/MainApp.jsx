@@ -19,8 +19,11 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-// Baseline constant; HP ≈ K_DYNO * RPM * dRPM/dt * (pullGear^2)
+// Baseline constant (fit around your 536whp reference when using REF_* below)
 const K_DYNO = 0.0001311;
+// Reference conditions for scale normalization
+const REF_OVERALL = 3.00;   // reference overall ratio (trans × rear)
+const REF_TIRE_IN = 27.0;   // reference tire diameter (inches)
 
 // ---------- helpers ----------
 const isNum = (v) => Number.isFinite(v);
@@ -298,8 +301,8 @@ export default function MainApp() {
     weight: '', // lbs (Track mode only)
     logFile: null,
 
-    // NEW: customer chooses only the pull gear (trans ratio) used on the dyno
-    pullGear: '1.00', // e.g., 5th ≈ 1.27 on many 8-speed autos
+    // NEW: customer selects only trans gear used for the dyno pull (e.g., 5th ≈ 1.27)
+    pullGear: '1.00',
   });
 
   // Mode toggle
@@ -405,7 +408,7 @@ export default function MainApp() {
     }
   };
 
-  // -------- Speed chart (for context) --------
+  // -------- Speed chart (context) --------
   const chartData = graphs ? {
     datasets: [{
       label: 'Vehicle Speed (mph)',
@@ -458,22 +461,30 @@ export default function MainApp() {
     const T = time.slice(i0, i1 + 1);
     const RPM = rpm.slice(i0, i1 + 1);
 
-    // === Derivative pipeline: resample → zero-phase smooth → central difference ===
+    // Derivative pipeline: resample → zero-phase smooth → central difference
     const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60);
     const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
-      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM per second (since 60 Hz)
+      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM per second @60Hz
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
     let HP;
     if (dynoMode === 'dyno') {
-      // === Dyno mode: gear-aware scaling. Customer supplies only the pull gear (trans ratio).
-      const tg = parseFloat(formData.pullGear || '1'); // transmission gear used for pull
-      const gearScale = isFinite(tg) && tg > 0 ? (tg * tg) : 1; // reflect inertia ~ overall^2; final drive cancels by referencing 1.00
+      // === Dyno mode: scale by (overall/REF_OVERALL)^2 * (tire/REF_TIRE_IN)^2 ===
+      // Pull gear (trans gear used for the dyno pull; you said both were 5th, not 1:1)
+      const tg = parseFloat(formData.pullGear || '1');
+      // Rear gear (final drive) from your existing dropdown (string like "3.09")
+      const fd = parseFloat(formData.gear || '0');
+      // Tire diameter in inches — parse any "28" / "28.0" etc from dropdown
+      const tireIn = parseFloat(String(formData.tire || '').replace(/[^0-9.]/g, '') || '0');
 
-      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * gearScale));
+      const overall = (isFinite(tg) && tg > 0 ? tg : 1) * (isFinite(fd) && fd > 0 ? fd : REF_OVERALL);
+      const tireScale = (isFinite(tireIn) && tireIn > 0 ? (tireIn / REF_TIRE_IN) : 1);
+      const scale = Math.pow(overall / REF_OVERALL, 2) * Math.pow(tireScale, 2);
+
+      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
     } else {
       // Track model: road-load (weight + rolling + aero)
       const MPH_TO_FTPS = 1.4666667;
@@ -504,7 +515,7 @@ export default function MainApp() {
     if (!pts.length) return null;
     pts.sort((a, b) => a.x - b.x);
 
-    const bin = 100; // calmer visual
+    const bin = 100; // calm visuals
     const bins = new Map();
     for (const p of pts) {
       const key = Math.round(p.x / bin) * bin;
@@ -534,7 +545,7 @@ export default function MainApp() {
       hasWeight: dynoMode === 'track' ? (isNum(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0) : false,
       mode: dynoMode
     };
-  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, formData.pullGear]);
+  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, formData.pullGear, formData.gear, formData.tire]);
 
   // -------- Dyno chart (equal Y scales for HP & TQ) --------
   const dynoChartData = useMemo(() => {
@@ -711,7 +722,7 @@ export default function MainApp() {
                   </span>
                 </div>
 
-                {/* NEW: Pull gear (transmission ratio) */}
+                {/* NEW: Pull gear (transmission ratio used for the dyno pull) */}
                 <input
                   name="pullGear"
                   type="number"
@@ -788,7 +799,9 @@ export default function MainApp() {
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
-                <div>Pull Gear (Trans Ratio): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.00'}</strong></div>
+                <div>Pull Gear (Trans): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.00'}</strong></div>
+                <div>Rear Gear: <strong style={{ color:'#eaff9c' }}>{formData.gear || '—'}</strong></div>
+                <div>Tire Diameter: <strong style={{ color:'#eaff9c' }}>{formData.tire || '—'}</strong></div>
                 <div>
                   Weight considered:{' '}
                   <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
@@ -886,4 +899,3 @@ export default function MainApp() {
     </div>
   );
 }
-  
