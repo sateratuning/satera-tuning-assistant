@@ -19,7 +19,22 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-const K_DYNO = 0.0001311; // Dyno-mode proportionality (RPM * dRPM/dt)
+// Dyno-mode (RPM * dRPM/dt) proportionality
+const K_DYNO = 0.0001311;
+
+// Track-mode tuning (simple, global knobs)
+// Blend of dyno-like (RPM-derivative) and road-load physics
+const TRACK_BLEND_DYNO = 0.65;   // portion of dyno-like contribution
+const TRACK_BLEND_ROAD = 0.35;   // portion of road-load contribution
+const TRACK_GAIN       = 1.12;   // global multiplier for Track after blend
+
+// Road-load physics parameters (reasonable defaults for modern Dodge/Chrysler RWD)
+// Adjust cda slightly down from 8.5 to avoid under-reporting
+const C_RR = 0.015;       // rolling resistance coeff
+const C_DA = 8.2;         // drag area (ft^2)
+const RHO  = 0.00238;     // air density (slug/ft^3)
+const G    = 32.174;      // gravity (ft/s^2)
+const HP_DEN = 550;       // ft*lbf/s per hp
 
 // ---------- styles ----------
 const styles = {
@@ -69,6 +84,16 @@ const styles = {
     textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 4px 0 #0c150c,0 0 12px rgba(52,255,120,.35),0 0 28px rgba(52,255,120,.18)',
     animation: 'st-pulseGlow 2.2s ease-in-out infinite'
   },
+  statGrid: {
+    display:'grid',
+    gridTemplateColumns:'repeat(auto-fit,minmax(220px,1fr))',
+    gap:12, marginTop:10
+  },
+  statCard: {
+    background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:10, padding:'10px 12px'
+  },
+  statHead: { fontSize:12, opacity:.85 },
+  statValue: { fontWeight:800, color:'#eaff9c', fontSize:18, marginTop:2 }
 };
 
 // ---------- helpers ----------
@@ -355,9 +380,6 @@ export default function MainApp() {
   // Mode toggle
   const [dynoMode, setDynoMode] = useState('dyno'); // default dyno for calibration
 
-  // Advanced (track)
-  const [showAdv, setShowAdv] = useState(false);
-
   const [leftText, setLeftText] = useState('');
   const [aiText, setAiText] = useState('');
   const [metrics, setMetrics] = useState(null);
@@ -422,15 +444,12 @@ export default function MainApp() {
       form.append('metrics', JSON.stringify(metrics || {}));
       form.append('weight', String(formData.weight || ''));
       form.append('mode', dynoMode);
-      // send optional dyno params (backend uses them only for dyno path)
+      // optional dyno params
       form.append('trans', formData.trans || '');
       form.append('rear', formData.gear || '');
       form.append('tire', formData.tire || '');
 
-      const reviewRes = await fetch(`${API_BASE}/ai-review`, {
-        method: 'POST',
-        body: form,
-      });
+      const reviewRes = await fetch(`${API_BASE}/ai-review`, { method: 'POST', body: form });
       if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
       const text = await reviewRes.text();
@@ -530,10 +549,7 @@ export default function MainApp() {
       const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60);
       if (!RPMu.length) return null;
       const RPMs = zeroPhaseMovAvg(RPMu, 9);
-      const dRPMdt = RPMs.map((_, i, arr) => {
-        if (i === 0 || i === arr.length - 1) return 0;
-        return (arr[i + 1] - arr[i - 1]) * (60 / 2);
-      });
+      const dRPMdt = RPMs.map((_, i, arr) => (i === 0 || i === arr.length - 1) ? 0 : (arr[i + 1] - arr[i - 1]) * (60 / 2));
       const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 9);
 
       // Optional gear/tire scaling if the pull wasn't your reference 5th/28"
@@ -572,35 +588,26 @@ export default function MainApp() {
       let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
       let iTQ = 0; for (let i=1;i<TQ.length;i++) if (TQ[i] > TQ[iTQ]) iTQ = i;
 
-      return {
-        usedRPM: true,
-        xLabel: 'RPM',
-        x: X,
-        hp: HPs,
-        tq: TQ,
+      return { usedRPM: true, xLabel: 'RPM', x: X, hp: HPs, tq: TQ,
         peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
         peakTQ: TQ.length ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1) } : null,
         mode: 'dyno'
       };
     }
 
-    // Track mode: physics model (on-road)
+    // Track mode: HYBRID (road-load + dyno-like)
     const { t: Tu, y: MPHu } = resampleUniform(T, MPH, 60);
     if (!MPHu.length) return null;
 
     const MPH_s = zeroPhaseMovAvg(MPHu, 5);
     const V = MPH_s.map(v => v * 1.4666667); // ft/s
 
-    const Araw = V.map((_, i, arr) => {
-      if (i === 0 || i === arr.length - 1) return 0;
-      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // ft/s^2 @ 60 Hz
-    });
+    const Araw = V.map((_, i, arr) => (i === 0 || i === arr.length - 1) ? 0 : (arr[i + 1] - arr[i - 1]) * (60 / 2));
     const A = zeroPhaseMovAvg(Araw, 7);
 
     const weight = parseFloat(formData.weight || '0'); // lbf
-    const mass = (Number.isFinite(weight) && weight > 0) ? (weight / 32.174) : 0; // slugs
+    const mass = (Number.isFinite(weight) && weight > 0) ? (weight / G) : 0; // slugs
 
-    // Effective rotating inertia (slight dependence on overall ratio vs ref)
     const rear = parseFloat(formData.gear || '3.09');
     const tireIn = parseFloat(formData.tire || '28');
     let pullRatio = 1.29;
@@ -610,32 +617,49 @@ export default function MainApp() {
     }
     const overall = pullRatio * (isNum(rear) ? rear : 3.09);
     const refOverall = 1.29 * 3.09;
-    const rotFactor = 1.08 + 0.02 * (Math.min(Math.max(overall / refOverall, 0.7), 1.3) - 1); // ~±0.6% swing
+    const rotFactor = 1.08 + 0.02 * (Math.min(Math.max(overall / refOverall, 0.7), 1.3) - 1); // mild effect
     const mEff = mass * rotFactor;
 
-    // Road-load parameters
-    const crr = 0.015;
-    const cda = 8.2;     // slightly optimistic vs 8.5 to match real-world pulls
-    const rho = 0.00238;
-
+    // Road-load power @ wheels
     const P_inert = V.map((v, i) => mEff * A[i] * v);
-    const P_roll  = V.map(v => crr * weight * v);
-    const P_aero  = V.map(v => 0.5 * rho * cda * v * v * v);
+    const P_roll  = V.map(v => C_RR * weight * v);
+    const P_aero  = V.map(v => 0.5 * RHO * C_DA * v * v * v);
     const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);
+    const HP_road = zeroPhaseMovAvg(P_tot.map(p => p / HP_DEN), 9);
 
-    // Convert to hp + recovery bias to align with dyno
-    const HP_raw = P_tot.map(p => p / 550);
-    const RECOVERY = 1.12; // brings track within a few % of your dyno baselines
-    const HPs_time = zeroPhaseMovAvg(HP_raw.map(h => h * RECOVERY), 9);
-
-    // Build RPM-like X axis if RPM exists; else use time seconds
-    if (rpm && rpm.some(isNum)) {
-      const sweepRPM = rpm.slice(i0, i1 + 1);
-      const { y: RPMu } = resampleUniform(T, sweepRPM, 60);
+    // Dyno-like track power from RPM derivative (if RPM available)
+    let HP_dynoLike = null;
+    if (RPM && RPM.some(isNum)) {
+      const { y: RPMu } = resampleUniform(T, RPM, 60);
       const RPMs = zeroPhaseMovAvg(RPMu, 9);
+      const dRPMdt = RPMs.map((_, i, arr) => (i === 0 || i === arr.length - 1) ? 0 : (arr[i + 1] - arr[i - 1]) * (60 / 2));
+      const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 9);
+
+      const est = detectPullGear({ rpm: RPMs, mph: MPH, tireIn, rear }).gear || pullRatio;
+      const REF_OVERALL = 1.29 * 3.09;
+      const overallNow = est * (isNum(rear) ? rear : 3.09);
+      const s_overall = Math.pow(REF_OVERALL / overallNow, 2);
+      const s_tire    = Math.pow(28 / (isNum(tireIn) ? tireIn : 28), 2);
+      const scale = s_overall * s_tire;
+
+      HP_dynoLike = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
+    }
+
+    // Blend (favor dyno-like; still sensitive to weight/drag)
+    const HP_time = Tu.map((_, i) => {
+      const a = (HP_dynoLike && isNum(HP_dynoLike[i])) ? HP_dynoLike[i] : 0;
+      const b = isNum(HP_road[i]) ? HP_road[i] : 0;
+      return TRACK_GAIN * (a * TRACK_BLEND_DYNO + b * TRACK_BLEND_ROAD);
+    });
+
+    // Use RPM axis if available; else time axis
+    if (RPM && RPM.some(isNum)) {
+      const { y: RPMu } = resampleUniform(T, RPM, 60);
+      const RPMs = zeroPhaseMovAvg(RPMu, 9);
+
       // Bin to RPM
       const pts = [];
-      for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HPs_time[i])) pts.push({ x: RPMs[i], hp: HPs_time[i] });
+      for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HP_time[i])) pts.push({ x: RPMs[i], hp: HP_time[i] });
       if (!pts.length) return null;
       pts.sort((a, b) => a.x - b.x);
 
@@ -671,7 +695,7 @@ export default function MainApp() {
     } else {
       // Fallback: time axis
       const X = Tu.map(tt => +(tt - Tu[0]).toFixed(2));
-      const HPs = HPs_time;
+      const HPs = zeroPhaseMovAvg(HP_time, 9);
       let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
       return {
         usedRPM: false,
@@ -851,7 +875,7 @@ export default function MainApp() {
                   <span style={{ fontSize:12, opacity:.8 }}>
                     {dynoMode==='dyno'
                       ? 'Chassis dyno model (no weight).'
-                      : 'Road-load model (uses weight + drag).'}
+                      : 'Road-load + RPM blend (uses weight).'}
                   </span>
                 </div>
 
@@ -891,7 +915,7 @@ export default function MainApp() {
 
             {/* Setup status */}
             <div style={styles.card}>
-              <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
+              <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (SETUP)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
                 <div>
@@ -921,19 +945,19 @@ export default function MainApp() {
                 <Line data={dynoChartData} options={dynoChartOptions} />
 
                 {/* Stats */}
-                <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
+                <div style={styles.statGrid}>
                   {dyno.peakHP && (
-                    <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
-                      <div style={{ fontSize:12, opacity:.85 }}>Peak HP</div>
-                      <div style={{ fontWeight:700, color:'#eaff9c' }}>
+                    <div style={styles.statCard}>
+                      <div style={styles.statHead}>Peak HP</div>
+                      <div style={styles.statValue}>
                         {comma(dyno.peakHP.value)} hp @ {comma(dyno.peakHP.rpm,0)} {dyno.xLabel.toLowerCase()}
                       </div>
                     </div>
                   )}
                   {dyno.peakTQ && (
-                    <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
-                      <div style={{ fontSize:12, opacity:.85 }}>Peak TQ</div>
-                      <div style={{ fontWeight:700, color:'#eaff9c' }}>
+                    <div style={styles.statCard}>
+                      <div style={styles.statHead}>Peak TQ</div>
+                      <div style={styles.statValue}>
                         {comma(dyno.peakTQ.value)} lb-ft @ {comma(dyno.peakTQ.rpm,0)} {dyno.xLabel.toLowerCase()}
                       </div>
                     </div>
@@ -981,28 +1005,4 @@ export default function MainApp() {
       </div>
     </div>
   );
-}
-
-
-// --- small utility: uniform resample (used in dyno compute) ---
-function resampleUniform(T, Y, targetHz = 60) {
-  if (!T || !Y || T.length !== Y.length || T.length < 3) return { t: [], y: [] };
-  const t0 = T[0], tN = T[T.length - 1];
-  const dt = 1 / targetHz;
-  const N = Math.max(3, Math.floor((tN - t0) / dt));
-  const tU = new Array(N);
-  const yU = new Array(N);
-  let j = 1;
-  for (let i = 0; i < N; i++) {
-    const t = t0 + i * dt;
-    tU[i] = t;
-    while (j < T.length && T[j] < t) j++;
-    const aIdx = Math.max(0, j - 1);
-    const bIdx = Math.min(T.length - 1, j);
-    const Ta = T[aIdx], Tb = T[bIdx];
-    const Ya = Y[aIdx], Yb = Y[bIdx];
-    const f = (Tb - Ta) !== 0 ? Math.min(1, Math.max(0, (t - Ta) / (Tb - Ta))) : 0;
-    yU[i] = (isNum(Ya) && isNum(Yb)) ? (Ya + (Yb - Ya) * f) : NaN;
-  }
-  return { t: tU, y: yU };
 }
