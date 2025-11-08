@@ -260,7 +260,7 @@ const styles = {
   },
   select: {
     width: '100%', maxWidth: 360,
-    background: '#0f130f', border: '1px solid '#1e2b1e',
+    background: '#0f130f', border: '1px solid #1e2b1e',
     borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none',
     appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
     backgroundImage:
