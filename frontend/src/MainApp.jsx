@@ -32,6 +32,7 @@ const styles = {
   gridNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 16 },
   card: { backgroundColor: '#1a1a1a', padding: 12, borderRadius: 8, border: '1px solid #2a2a2a' },
   button: { backgroundColor: '#00ff88', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
+  ghostBtn: { background:'transparent', border:'1px solid #1e2b1e', color:'#d9ffe0', padding:'8px 12px', borderRadius:8, cursor:'pointer' },
   input: {
     width: '100%', maxWidth: 360,
     background: '#0f130f', border: '1px solid #1e2b1e',
@@ -84,7 +85,7 @@ const movAvg = (arr, win=5) => {
     return sum / n;
   });
 };
-const comma = (n) => n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+const comma = (n, d=1) => n.toLocaleString(undefined, { maximumFractionDigits: d });
 
 // ---------- flexible column finder ----------
 const findCol = (headers, candidates) => {
@@ -169,61 +170,94 @@ function parseCSV(raw) {
   return pack(norm);
 }
 
-// --- Single-gear sweep finder: WOT + monotonic RPM + constant gear ratio ---
+// --- Single-gear sweep finder (tolerant): WOT + near-monotonic RPM + constant ratio ---
 function selectRpmSweep(time, rpm, mph, pedal = null) {
   if (!rpm || !mph || rpm.length < 20 || mph.length !== rpm.length) return null;
+
+  // Tunables
+  const PEDAL_MIN = 80;
+  const MIN_MPH   = 5;
+  const RATIO_TOL = 0.12;  // ±12% slip allowed
+  const RPM_DIP   = 75;    // small dips allowed
+  const MIN_LEN   = 20;
 
   const isWOT = (i) => {
     if (!pedal || pedal.length !== rpm.length) return true;
     const v = pedal[i];
-    return Number.isFinite(v) ? v >= 86 : true;
+    return Number.isFinite(v) ? v >= PEDAL_MIN : true;
   };
 
-  const minMPH = 25;
+  // Precompute rpm/mph ratio (skip very low mph)
   const ratio = rpm.map((r, i) => {
     const v = mph[i];
-    if (!Number.isFinite(r) || !Number.isFinite(v) || v < minMPH) return null;
-    return r / v;
+    if (!Number.isFinite(r) || !Number.isFinite(v) || v < MIN_MPH) return null;
+    return r / Math.max(v, 1e-6);
   });
 
-  const tol = 0.06;
-  const okRise = (i) => Number.isFinite(rpm[i]) && Number.isFinite(rpm[i-1]) && rpm[i] > rpm[i-1];
+  const okRise = (i) =>
+    Number.isFinite(rpm[i]) &&
+    Number.isFinite(rpm[i - 1]) &&
+    rpm[i] >= rpm[i - 1] - RPM_DIP;
+
   const good = (i) => okRise(i) && isWOT(i) && ratio[i] !== null;
 
-  const rough = [];
-  let start = 0;
+  // Coarse windows of good points
+  const coarse = [];
+  let s = 0;
   for (let i = 1; i < rpm.length; i++) {
     if (!good(i)) {
-      if (i - 1 - start >= 10) rough.push([start, i - 1]);
-      start = i;
+      if (i - 1 - s >= MIN_LEN) coarse.push([s, i - 1]);
+      s = i;
     }
   }
-  if (rpm.length - 1 - start >= 10) rough.push([start, rpm.length - 1]);
-  if (!rough.length) return null;
+  if (rpm.length - 1 - s >= MIN_LEN) coarse.push([s, rpm.length - 1]);
+  if (!coarse.length) return null;
 
-  const refined = [];
-  for (const [s, e] of rough) {
-    let j = s;
-    while (j < e) {
-      let k = j;
-      const window = [];
-      while (k <= e) {
-        if (ratio[k] === null) break;
-        window.push(ratio[k]);
-        const sorted = [...window].sort((a, b) => a - b);
-        const m = sorted[Math.floor(sorted.length / 2)];
-        const dev = Math.abs(ratio[k] - m) / m;
-        if (dev > tol) break;
-        k++;
+  // Refine with rolling median ratio tolerance
+  const keepWindows = [];
+  for (const [a, b] of coarse) {
+    let i = a;
+    while (i <= b) {
+      const start = i;
+      let j = i;
+      const medBuf = [];
+      while (j <= b && ratio[j] !== null) {
+        medBuf.push(ratio[j]);
+        const sorted = [...medBuf].sort((x, y) => x - y);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        const dev = Math.abs(ratio[j] - med) / Math.max(med, 1e-6);
+        if (dev > RATIO_TOL) break;
+        j++;
       }
-      if (k - 1 - j >= 15) refined.push([j, k - 1]);
-      j = Math.max(j + 1, k);
+      const end = j - 1;
+      if (end - start + 1 >= MIN_LEN) keepWindows.push([start, end]);
+      i = Math.max(start + 1, j);
     }
   }
-  if (!refined.length) return null;
+  if (!keepWindows.length) return null;
 
-  refined.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
-  return refined[0];
+  // Pick longest window, then gently expand
+  keepWindows.sort((u, v) => (v[1] - v[0]) - (u[1] - u[0]));
+  let [i0, i1] = keepWindows[0];
+
+  const LOOSE = RATIO_TOL * 1.5;
+  // expand left
+  let k = i0 - 1;
+  while (k > 0 && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k + 1] - RPM_DIP) {
+    const med = (ratio[i0] + ratio[i1]) / 2;
+    const dev = Math.abs(ratio[k] - med) / Math.max(med, 1e-6);
+    if (dev > LOOSE) break;
+    i0 = k; k--;
+  }
+  // expand right
+  k = i1 + 1;
+  while (k < rpm.length && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k - 1] - RPM_DIP) {
+    const med = (ratio[i0] + ratio[i1]) / 2;
+    const dev = Math.abs(ratio[k] - med) / Math.max(med, 1e-6);
+    if (dev > LOOSE) break;
+    i1 = k; k++;
+  }
+  return [i0, i1];
 }
 
 export default function MainApp() {
@@ -237,9 +271,12 @@ export default function MainApp() {
   const [formData, setFormData] = useState({
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
-    weight: '', // lbs
+    weight: '', // lbs (used in Track mode)
     logFile: null,
   });
+
+  // Mode: 'dyno' (ignore weight, relative HP) or 'track' (use weight, absolute HP)
+  const [dynoMode, setDynoMode] = useState('dyno');
 
   // Dyno calibration (multiplier). 1.35 = +35%
   const [calFactor, setCalFactor] = useState(1.35);
@@ -307,7 +344,8 @@ export default function MainApp() {
       }));
       form.append('metrics', JSON.stringify(metrics || {}));
       form.append('weight', String(formData.weight || ''));
-      form.append('cal', String(calFactor)); // optional: if backend wants it later
+      form.append('cal', String(calFactor));
+      form.append('mode', dynoMode); // FYI for future backend use
 
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
@@ -360,16 +398,25 @@ export default function MainApp() {
 
   // -------- Dyno (prefer backend; else local) --------
   const dyno = useMemo(() => {
-    if (dynoRemote && !dynoRemote.error) {
-      // apply calibration to backend values if present
-      const hp = dynoRemote.hp?.map(v => v * calFactor) || null;
-      const tq = dynoRemote.tq?.map(v => v * calFactor) || null;
-      return { ...dynoRemote, hp, tq, peakHP: null, peakTQ: null, calFactor };
+    // If backend sends precomputed arrays, apply cal and use them
+    if (dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
+      const hp = dynoRemote.hp.map(v => v * calFactor);
+      const tq = dynoRemote.tq?.map(v => v * calFactor) ?? null;
+
+      let peakHP = null, peakTQ = null;
+      if (hp.length) {
+        let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+        peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
+      }
+      if (tq && tq.length) {
+        let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
+        peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
+      }
+      return { ...dynoRemote, hp, tq, peakHP, peakTQ, usedRPM: true, mode: dynoMode };
     }
 
-    if ((dynoRemote && dynoRemote.error) || !graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) {
-      return null;
-    }
+    // Local compute
+    if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
 
     const time = graphs.time;
     const rpm  = graphs.rpm;
@@ -384,10 +431,12 @@ export default function MainApp() {
     const RPM = rpm.slice(i0, i1 + 1);
     const MPH = mph.slice(i0, i1 + 1);
 
+    // Physics constants
     const MPH_TO_FTPS = 1.4666667;
     const G = 32.174;  // ft/s^2
     const HP_DEN = 550;
 
+    // Velocity and acceleration (ft/s and ft/s^2) with smoothing
     const V = MPH.map(v => v * MPH_TO_FTPS);
     const A = V.map((_, i) => {
       const a = Math.max(0, i - 1);
@@ -396,28 +445,34 @@ export default function MainApp() {
       const dt = T[b] - T[a];
       return dt > 0 ? dv / dt : 0;
     });
-
     const Vsm = movAvg(V, 5);
     const Asm = movAvg(A, 5);
 
+    // Mode behavior
     const weight = parseFloat(formData.weight || '0'); // lbs
     const hasWeight = isNum(weight) && weight > 0;
-    const mass = hasWeight ? (weight / G) : null; // slugs
 
-    let P = Vsm.map((v, i) => {
-      const base = Asm[i] * v;
-      return mass ? Math.max(0, mass * base) : Math.max(0, base);
-    });
-    let HP = P.map(p => mass ? (p / HP_DEN) : p);
-
-    // Apply calibration factor (+/- to align with real chassis dyno)
-    HP = HP.map(v => v * calFactor);
-
-    if (!mass) {
+    let HP;
+    if (dynoMode === 'track') {
+      // Absolute WHP estimate using mass * a * v / 550
+      const mass = hasWeight ? (weight / G) : null; // slugs
+      let P = Vsm.map((v, i) => {
+        const base = Asm[i] * v;
+        return mass ? Math.max(0, mass * base) : Math.max(0, base);
+      });
+      HP = P.map(p => mass ? (p / HP_DEN) : p);
+    } else {
+      // Dyno mode: ignore weight, treat a*v as relative power
+      HP = Vsm.map((v, i) => Math.max(0, Asm[i] * v));
+      // Normalize to % so calFactor can scale into a plausible HP range
       const peak = Math.max(...HP, 1e-6);
       HP = HP.map(v => 100 * v / peak);
     }
 
+    // Apply calibration factor
+    HP = HP.map(v => v * calFactor);
+
+    // Assemble RPM vs HP, bin & smooth
     const pts = [];
     for (let i = 0; i < RPM.length; i++) if (isNum(RPM[i]) && RPM[i] > 0 && isNum(HP[i])) pts.push({ x: RPM[i], hp: HP[i] });
     if (!pts.length) return null;
@@ -437,9 +492,11 @@ export default function MainApp() {
 
     const X  = series.map(p => p.x);
     const HPs = movAvg(series.map(p => p.hp), 5);
+
+    // Torque curve (if values are in HP units; in dyno relative mode this still trends well)
     const TQ  = X.map((r, i) => (r > 0 ? (HPs[i] * 5252) / r : null));
 
-    // Peaks (recomputed after smoothing)
+    // Peaks after smoothing/scaling
     let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
     let iTQ = 0; for (let i=1;i<TQ.length;i++) if (TQ[i] > TQ[iTQ]) iTQ = i;
 
@@ -452,9 +509,9 @@ export default function MainApp() {
       peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
       peakTQ: TQ.length ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1) } : null,
       hasWeight,
-      calFactor
+      mode: dynoMode
     };
-  }, [dynoRemote, graphs, formData.weight, calFactor]);
+  }, [dynoRemote, graphs, formData.weight, calFactor, dynoMode]);
 
   // -------- Dyno chart config (force equal Y scales) --------
   const dynoChartData = useMemo(() => {
@@ -508,7 +565,6 @@ export default function MainApp() {
   const dynoChartOptions = useMemo(() => {
     if (!dyno) return null;
 
-    // Force equal Y ranges on both axes
     const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
     const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
     const maxY  = Math.max(maxHP, maxTQ);
@@ -612,7 +668,24 @@ export default function MainApp() {
                   <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
 
-                {/* Vehicle Weight (lbs) */}
+                {/* Mode toggle */}
+                <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
+                  <button
+                    onClick={()=> setDynoMode('dyno')}
+                    style={{ ...styles.ghostBtn, borderColor: dynoMode==='dyno' ? '#00ff88' : '#1e2b1e', color: dynoMode==='dyno' ? '#00ff88' : '#d9ffe0' }}
+                  >Dyno</button>
+                  <button
+                    onClick={()=> setDynoMode('track')}
+                    style={{ ...styles.ghostBtn, borderColor: dynoMode==='track' ? '#00ff88' : '#1e2b1e', color: dynoMode==='track' ? '#00ff88' : '#d9ffe0' }}
+                  >Track</button>
+                  <span style={{ fontSize:12, opacity:.8 }}>
+                    {dynoMode==='dyno'
+                      ? 'Ignores weight; relative HP scaled by Cal.'
+                      : 'Uses weight for absolute WHP estimate.'}
+                  </span>
+                </div>
+
+                {/* Vehicle Weight (lbs) – used in Track mode */}
                 <input
                   name="weight"
                   type="number"
@@ -621,7 +694,8 @@ export default function MainApp() {
                   placeholder="Vehicle Weight (lbs)"
                   value={formData.weight}
                   onChange={handleChange}
-                  style={styles.input}
+                  style={{ ...styles.input, marginTop:8, opacity: dynoMode==='track' ? 1 : 0.6 }}
+                  disabled={dynoMode !== 'track'}
                 />
 
                 {/* Dyno Calibration (multiplier) */}
@@ -664,14 +738,17 @@ export default function MainApp() {
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>
-                  Weight provided:{' '}
-                  <strong style={{ color: dynoSetup.hasWeight ? '#74ffb0' : '#ff9a9a' }}>
-                    {dynoSetup.hasWeight ? `${formData.weight} lbs` : 'No'}
+                  Mode:{' '}<strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong>
+                </div>
+                <div>
+                  Weight considered:{' '}
+                  <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : '#ffc96b' }}>
+                    {dynoMode==='track' ? (dynoSetup.hasWeight ? `${formData.weight} lbs` : 'No (enter weight)') : 'No (Dyno mode)'}
                   </strong>
                 </div>
                 <div>
                   Engine RPM available:{' '}
-                  <strong style={{ color: dynoSetup.hasRPM ? '#74ffb0' : '#ffc96b' }}>
+                  <strong style={{ color: dynoSetup.hasRPM ? '#74ffb0' : '#ff9a9a' }}>
                     {dynoSetup.hasRPM ? 'Detected' : 'Not found (dyno hidden)'}
                   </strong>
                 </div>
@@ -685,17 +762,17 @@ export default function MainApp() {
                   <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
-                  HP (left) / TQ (right) vs RPM — single-gear WOT sweep • Cal: ×{calFactor.toFixed(2)} {dyno.hasWeight ? '' : '(normalized)'}
+                  HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b> • Cal: ×{calFactor.toFixed(2)} {dynoMode==='track' ? '' : '(relative)'}
                 </div>
                 <Line data={dynoChartData} options={dynoChartOptions} />
 
-                {/* Stats cards (fixed/accurate) */}
+                {/* Stats cards */}
                 <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
                   {dyno.peakHP && (
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ fontSize:12, opacity:.85 }}>Peak HP</div>
                       <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakHP.value)} hp @ {comma(dyno.peakHP.rpm)} rpm
+                        {comma(dyno.peakHP.value)} {dynoMode==='track' ? 'hp' : 'units'} @ {comma(dyno.peakHP.rpm,0)} rpm
                       </div>
                     </div>
                   )}
@@ -703,7 +780,7 @@ export default function MainApp() {
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ fontSize:12, opacity:.85 }}>Peak TQ</div>
                       <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakTQ.value)} lb-ft @ {comma(dyno.peakTQ.rpm)} rpm
+                        {comma(dyno.peakTQ.value)} {dynoMode==='track' ? 'lb-ft' : 'rel'} @ {comma(dyno.peakTQ.rpm,0)} rpm
                       </div>
                     </div>
                   )}
