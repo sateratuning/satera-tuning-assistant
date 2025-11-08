@@ -18,6 +18,10 @@ Chart.register(annotationPlugin);
 
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
+// ======= Tunables =======
+// Fixed dyno proportionality (no user calibration). Good baseline for your 536 whp log.
+const K_DYNO = 0.00012; // HP = K_DYNO * RPM * dRPM/dt
+
 const styles = {
   page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
   header: {
@@ -37,10 +41,6 @@ const styles = {
     width: '100%', maxWidth: 360,
     background: '#0f130f', border: '1px solid #1e2b1e',
     borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none'
-  },
-  smallInput: {
-    width: 140, background: '#0f130f', border: '1px solid #1e2b1e',
-    borderRadius: 8, padding: '8px 10px', color: '#d9ffe0', outline: 'none'
   },
   select: {
     width: '100%', maxWidth: 360,
@@ -87,7 +87,7 @@ const movAvg = (arr, win=5) => {
 };
 const comma = (n, d=1) => n.toLocaleString(undefined, { maximumFractionDigits: d });
 
-// ---------- flexible column finder ----------
+// ---------- flexible col finder ----------
 const findCol = (headers, candidates) => {
   for (const c of candidates) {
     const idx = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
@@ -100,7 +100,7 @@ const findCol = (headers, candidates) => {
   return -1;
 };
 
-// --- CSV parser with WOT trimming (captures optional Engine RPM & Pedal) ---
+// --- CSV parse with WOT trimming & optional RPM/Pedal ---
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
@@ -138,7 +138,7 @@ function parseCSV(raw) {
   }
   if (!points.length) return null;
 
-  // Detect WOT segments
+  // WOT segments
   let segments = [];
   let current = [];
   for (let pt of points) {
@@ -155,13 +155,14 @@ function parseCSV(raw) {
   });
 
   if (!segments.length) return pack(points);
-
   segments = segments.filter(seg => seg.length > 5);
   if (!segments.length) return pack(points);
 
+  // choose shortest WOT window (most like a pull)
   segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
   const best = segments[0];
 
+  // trim from launch
   const launchIdx = best.findIndex(p => p.p >= 86 && p.s > 0.5);
   const trimmed = launchIdx >= 0 ? best.slice(launchIdx) : best;
 
@@ -170,15 +171,14 @@ function parseCSV(raw) {
   return pack(norm);
 }
 
-// --- Single-gear sweep finder (tolerant): WOT + near-monotonic RPM + constant ratio ---
+// --- Single-gear sweep finder (WOT + near-monotonic rpm + near-constant rpm/mph ratio) ---
 function selectRpmSweep(time, rpm, mph, pedal = null) {
   if (!rpm || !mph || rpm.length < 20 || mph.length !== rpm.length) return null;
 
-  // Tunables
   const PEDAL_MIN = 80;
   const MIN_MPH   = 5;
-  const RATIO_TOL = 0.12;  // ±12% slip allowed
-  const RPM_DIP   = 75;    // small dips allowed
+  const RATIO_TOL = 0.12;
+  const RPM_DIP   = 75;
   const MIN_LEN   = 20;
 
   const isWOT = (i) => {
@@ -187,7 +187,6 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
     return Number.isFinite(v) ? v >= PEDAL_MIN : true;
   };
 
-  // Precompute rpm/mph ratio (skip very low mph)
   const ratio = rpm.map((r, i) => {
     const v = mph[i];
     if (!Number.isFinite(r) || !Number.isFinite(v) || v < MIN_MPH) return null;
@@ -201,9 +200,9 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
 
   const good = (i) => okRise(i) && isWOT(i) && ratio[i] !== null;
 
-  // Coarse windows of good points
+  // coarse windows
   const coarse = [];
-  let s = 0;
+  let s = 1;
   for (let i = 1; i < rpm.length; i++) {
     if (!good(i)) {
       if (i - 1 - s >= MIN_LEN) coarse.push([s, i - 1]);
@@ -213,7 +212,7 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   if (rpm.length - 1 - s >= MIN_LEN) coarse.push([s, rpm.length - 1]);
   if (!coarse.length) return null;
 
-  // Refine with rolling median ratio tolerance
+  // refine by rolling median of ratio
   const keepWindows = [];
   for (const [a, b] of coarse) {
     let i = a;
@@ -236,12 +235,11 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   }
   if (!keepWindows.length) return null;
 
-  // Pick longest window, then gently expand
+  // longest window then gentle expand
   keepWindows.sort((u, v) => (v[1] - v[0]) - (u[1] - u[0]));
   let [i0, i1] = keepWindows[0];
-
   const LOOSE = RATIO_TOL * 1.5;
-  // expand left
+
   let k = i0 - 1;
   while (k > 0 && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k + 1] - RPM_DIP) {
     const med = (ratio[i0] + ratio[i1]) / 2;
@@ -249,7 +247,6 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
     if (dev > LOOSE) break;
     i0 = k; k--;
   }
-  // expand right
   k = i1 + 1;
   while (k < rpm.length && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k - 1] - RPM_DIP) {
     const med = (ratio[i0] + ratio[i1]) / 2;
@@ -271,15 +268,18 @@ export default function MainApp() {
   const [formData, setFormData] = useState({
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
-    weight: '', // lbs (used in Track mode)
+    weight: '', // lbs (Track mode only)
     logFile: null,
   });
 
-  // Mode: 'dyno' (ignore weight, relative HP) or 'track' (use weight, absolute HP)
-  const [dynoMode, setDynoMode] = useState('dyno');
+  // Mode toggle
+  const [dynoMode, setDynoMode] = useState('dyno'); // default to dyno for your testing
 
-  // Dyno calibration (multiplier). 1.35 = +35%
-  const [calFactor, setCalFactor] = useState(1.35);
+  // Advanced parameters (Track mode only)
+  const [showAdv, setShowAdv] = useState(false);
+  const [crr, setCrr] = useState(0.015);
+  const [cda, setCda] = useState(8.5);      // ft^2
+  const [rho, setRho] = useState(0.00238);  // slug/ft^3
 
   const [leftText, setLeftText] = useState('');
   const [aiText, setAiText] = useState('');
@@ -344,8 +344,7 @@ export default function MainApp() {
       }));
       form.append('metrics', JSON.stringify(metrics || {}));
       form.append('weight', String(formData.weight || ''));
-      form.append('cal', String(calFactor));
-      form.append('mode', dynoMode); // FYI for future backend use
+      form.append('mode', dynoMode);
 
       const reviewRes = await fetch(`${API_BASE}/ai-review`, {
         method: 'POST',
@@ -376,7 +375,7 @@ export default function MainApp() {
     }
   };
 
-  // -------- Base speed chart --------
+  // -------- Speed chart (for context) --------
   const chartData = graphs ? {
     datasets: [{
       label: 'Vehicle Speed (mph)',
@@ -396,13 +395,12 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- Dyno (prefer backend; else local) --------
+  // -------- Dyno (prefer backend; else local compute) --------
   const dyno = useMemo(() => {
-    // If backend sends precomputed arrays, apply cal and use them
+    // Prefer backend precomputed arrays if present
     if (dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
-      const hp = dynoRemote.hp.map(v => v * calFactor);
-      const tq = dynoRemote.tq?.map(v => v * calFactor) ?? null;
-
+      const hp = [...dynoRemote.hp];
+      const tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
       let peakHP = null, peakTQ = null;
       if (hp.length) {
         let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
@@ -415,7 +413,7 @@ export default function MainApp() {
       return { ...dynoRemote, hp, tq, peakHP, peakTQ, usedRPM: true, mode: dynoMode };
     }
 
-    // Local compute
+    // Local compute needs RPM
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
 
     const time = graphs.time;
@@ -431,53 +429,54 @@ export default function MainApp() {
     const RPM = rpm.slice(i0, i1 + 1);
     const MPH = mph.slice(i0, i1 + 1);
 
-    // Physics constants
-    const MPH_TO_FTPS = 1.4666667;
-    const G = 32.174;  // ft/s^2
-    const HP_DEN = 550;
+    // Smooth RPM a touch to reduce noise in derivative
+    const RPMs = movAvg(RPM, 5);
 
-    // Velocity and acceleration (ft/s and ft/s^2) with smoothing
-    const V = MPH.map(v => v * MPH_TO_FTPS);
-    const A = V.map((_, i) => {
+    // Centered derivative of RPM (rev/min per second)
+    const dRPMdt = RPMs.map((_, i) => {
       const a = Math.max(0, i - 1);
-      const b = Math.min(V.length - 1, i + 1);
-      const dv = V[b] - V[a];
+      const b = Math.min(RPMs.length - 1, i + 1);
+      const dv = RPMs[b] - RPMs[a];
       const dt = T[b] - T[a];
       return dt > 0 ? dv / dt : 0;
     });
-    const Vsm = movAvg(V, 5);
-    const Asm = movAvg(A, 5);
-
-    // Mode behavior
-    const weight = parseFloat(formData.weight || '0'); // lbs
-    const hasWeight = isNum(weight) && weight > 0;
+    const dRPMdtS = movAvg(dRPMdt, 5);
 
     let HP;
-    if (dynoMode === 'track') {
-      // Absolute WHP estimate using mass * a * v / 550
-      const mass = hasWeight ? (weight / G) : null; // slugs
-      let P = Vsm.map((v, i) => {
-        const base = Asm[i] * v;
-        return mass ? Math.max(0, mass * base) : Math.max(0, base);
-      });
-      HP = P.map(p => mass ? (p / HP_DEN) : p);
+    if (dynoMode === 'dyno') {
+      // === New dyno model: HP = K_DYNO * RPM * dRPM/dt (no weight) ===
+      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i]));
     } else {
-      // Dyno mode: ignore weight, treat a*v as relative power
-      HP = Vsm.map((v, i) => Math.max(0, Asm[i] * v));
-      // Normalize to % so calFactor can scale into a plausible HP range
-      const peak = Math.max(...HP, 1e-6);
-      HP = HP.map(v => 100 * v / peak);
+      // Track model: road-load (weight + rolling + aero)
+      const MPH_TO_FTPS = 1.4666667;
+      const HP_DEN = 550;
+      const G = 32.174;
+      const V = MPH.map(v => v * MPH_TO_FTPS);
+      const Vs = movAvg(V, 5);
+      const A = Vs.map((_, i) => {
+        const a = Math.max(0, i - 1);
+        const b = Math.min(Vs.length - 1, i + 1);
+        const dv = Vs[b] - Vs[a];
+        const dt = T[b] - T[a];
+        return dt > 0 ? dv / dt : 0;
+      });
+      const As = movAvg(A, 5);
+
+      const weight = parseFloat(formData.weight || '0');
+      const mass = isNum(weight) && weight > 0 ? (weight / G) : 0;
+      const P_inert = Vs.map((v, i) => mass * As[i] * v);
+      const P_roll  = Vs.map(v => (crr * weight * v));
+      const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));
+      const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);
+      HP = P_tot.map(p => p / HP_DEN);
     }
 
-    // Apply calibration factor
-    HP = HP.map(v => v * calFactor);
-
-    // Assemble RPM vs HP, bin & smooth
+    // Build RPM vs HP curve (bin by 50 rpm, smooth)
     const pts = [];
-    for (let i = 0; i < RPM.length; i++) if (isNum(RPM[i]) && RPM[i] > 0 && isNum(HP[i])) pts.push({ x: RPM[i], hp: HP[i] });
+    for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HP[i])) pts.push({ x: RPMs[i], hp: HP[i] });
     if (!pts.length) return null;
-
     pts.sort((a, b) => a.x - b.x);
+
     const bin = 50;
     const bins = new Map();
     for (const p of pts) {
@@ -492,11 +491,8 @@ export default function MainApp() {
 
     const X  = series.map(p => p.x);
     const HPs = movAvg(series.map(p => p.hp), 5);
-
-    // Torque curve (if values are in HP units; in dyno relative mode this still trends well)
     const TQ  = X.map((r, i) => (r > 0 ? (HPs[i] * 5252) / r : null));
 
-    // Peaks after smoothing/scaling
     let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
     let iTQ = 0; for (let i=1;i<TQ.length;i++) if (TQ[i] > TQ[iTQ]) iTQ = i;
 
@@ -508,12 +504,12 @@ export default function MainApp() {
       tq: TQ,
       peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
       peakTQ: TQ.length ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1) } : null,
-      hasWeight,
+      hasWeight: dynoMode === 'track' ? (isNum(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0) : false,
       mode: dynoMode
     };
-  }, [dynoRemote, graphs, formData.weight, calFactor, dynoMode]);
+  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho]);
 
-  // -------- Dyno chart config (force equal Y scales) --------
+  // -------- Dyno chart (equal Y scales for HP & TQ) --------
   const dynoChartData = useMemo(() => {
     if (!dyno) return null;
 
@@ -606,7 +602,7 @@ export default function MainApp() {
     };
   }, [dyno]);
 
-  // --- Dyno setup status card ---
+  // --- Dyno setup status
   const dynoSetup = (() => {
     const hasWeight = !!formData.weight && !isNaN(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0;
     const hasRPM = !!(
@@ -680,12 +676,12 @@ export default function MainApp() {
                   >Track</button>
                   <span style={{ fontSize:12, opacity:.8 }}>
                     {dynoMode==='dyno'
-                      ? 'Ignores weight; relative HP scaled by Cal.'
-                      : 'Uses weight for absolute WHP estimate.'}
+                      ? 'Chassis dyno model (no weight).'
+                      : 'Road-load model (uses weight + drag).'}
                   </span>
                 </div>
 
-                {/* Vehicle Weight (lbs) – used in Track mode */}
+                {/* Weight (Track mode only) */}
                 <input
                   name="weight"
                   type="number"
@@ -698,24 +694,35 @@ export default function MainApp() {
                   disabled={dynoMode !== 'track'}
                 />
 
-                {/* Dyno Calibration (multiplier) */}
-                <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:6 }}>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.5"
-                    max="2.0"
-                    value={calFactor}
-                    onChange={(e)=> setCalFactor(parseFloat(e.target.value || '1'))}
-                    style={styles.smallInput}
-                  />
-                  <span style={{ fontSize:12, opacity:.8 }}>Dyno Cal (×)</span>
-                </div>
+                {/* Advanced drag params */}
+                {dynoMode === 'track' && (
+                  <div style={{ marginTop:8 }}>
+                    <button onClick={()=> setShowAdv(s=>!s)} style={styles.ghostBtn}>
+                      {showAdv ? 'Hide' : 'Show'} Advanced (Crr, CdA, Air)
+                    </button>
+                    {showAdv && (
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:8, marginTop:8 }}>
+                        <div>
+                          <div style={{ fontSize:12, opacity:.8, marginBottom:4 }}>Crr</div>
+                          <input type="number" step="0.001" value={crr} onChange={e=> setCrr(parseFloat(e.target.value||'0.015'))} style={styles.input}/>
+                        </div>
+                        <div>
+                          <div style={{ fontSize:12, opacity:.8, marginBottom:4 }}>CdA (ft²)</div>
+                          <input type="number" step="0.1" value={cda} onChange={e=> setCda(parseFloat(e.target.value||'8.5'))} style={styles.input}/>
+                        </div>
+                        <div>
+                          <div style={{ fontSize:12, opacity:.8, marginBottom:4 }}>Air Density (slug/ft³)</div>
+                          <input type="number" step="0.0001" value={rho} onChange={e=> setRho(parseFloat(e.target.value||'0.00238'))} style={styles.input}/>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           </aside>
 
-          {/* RIGHT: Upload + Graphs + AI Results */}
+          {/* RIGHT */}
           <main style={{ display: 'grid', gap: 16 }}>
             <div style={styles.card}>
               <h3 style={styles.sectionTitleFancy}>Upload a Datalog</h3>
@@ -733,16 +740,14 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* Simulated Dyno setup status */}
+            {/* Setup status */}
             <div style={styles.card}>
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
-                <div>
-                  Mode:{' '}<strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong>
-                </div>
+                <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
                 <div>
                   Weight considered:{' '}
-                  <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : '#ffc96b' }}>
+                  <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
                     {dynoMode==='track' ? (dynoSetup.hasWeight ? `${formData.weight} lbs` : 'No (enter weight)') : 'No (Dyno mode)'}
                   </strong>
                 </div>
@@ -756,23 +761,64 @@ export default function MainApp() {
             </div>
 
             {/* Dyno chart */}
-            {dyno && dynoChartData && dynoChartOptions && (
+            {dyno && (
               <div style={{ ...styles.card, height: 360 }}>
                 <div style={styles.titleWrap}>
                   <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
-                  HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b> • Cal: ×{calFactor.toFixed(2)} {dynoMode==='track' ? '' : '(relative)'}
+                  HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
                 </div>
-                <Line data={dynoChartData} options={dynoChartOptions} />
+                <Line data={{
+                  datasets: [
+                    {
+                      label: 'Horsepower',
+                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
+                      borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
+                      yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.25,
+                    },
+                    ...(dyno.tq ? [{
+                      label: 'Torque (lb-ft)',
+                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.tq[i] })),
+                      borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
+                      yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.25,
+                    }] : []),
+                    ...(dyno.peakHP ? [{
+                      label: 'Peak HP',
+                      data: [{ x: dyno.peakHP.rpm, y: dyno.peakHP.value }],
+                      yAxisID: 'yHP', borderColor: '#74ffb0', backgroundColor: '#74ffb0',
+                      pointRadius: 4, showLine: false,
+                    }] : []),
+                    ...(dyno.peakTQ ? [{
+                      label: 'Peak TQ',
+                      data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
+                      yAxisID: 'yTQ', borderColor: '#ffc96b', backgroundColor: '#ffc96b',
+                      pointRadius: 4, showLine: false,
+                    }] : []),
+                  ]
+                }} options={(() => {
+                  const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
+                  const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
+                  const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10;
+                  return {
+                    responsive: true, maintainAspectRatio: false, parsing: false,
+                    scales: {
+                      x: { type: 'linear', title: { display: true, text: 'RPM', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
+                      yHP: { position: 'left', title: { display: true, text: 'Horsepower', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' }, min: 0, max: niceMax },
+                      yTQ: dyno.tq ? { position: 'right', title: { display: true, text: 'Torque (lb-ft)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { drawOnChartArea: false }, min: 0, max: niceMax } : undefined
+                    },
+                    plugins: { legend: { labels: { color: '#adff2f' } }, tooltip: { mode: 'index', intersect: false } },
+                    interaction: { mode: 'index', intersect: false }
+                  };
+                })()} />
 
-                {/* Stats cards */}
+                {/* Stats */}
                 <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
                   {dyno.peakHP && (
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ fontSize:12, opacity:.85 }}>Peak HP</div>
                       <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakHP.value)} {dynoMode==='track' ? 'hp' : 'units'} @ {comma(dyno.peakHP.rpm,0)} rpm
+                        {comma(dyno.peakHP.value)} hp @ {comma(dyno.peakHP.rpm,0)} rpm
                       </div>
                     </div>
                   )}
@@ -780,7 +826,7 @@ export default function MainApp() {
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ fontSize:12, opacity:.85 }}>Peak TQ</div>
                       <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakTQ.value)} {dynoMode==='track' ? 'lb-ft' : 'rel'} @ {comma(dyno.peakTQ.rpm,0)} rpm
+                        {comma(dyno.peakTQ.value)} lb-ft @ {comma(dyno.peakTQ.rpm,0)} rpm
                       </div>
                     </div>
                   )}
@@ -804,7 +850,7 @@ export default function MainApp() {
             {aiResult && (
               <div style={styles.card}>
                 <h3 style={styles.sectionTitleFancy}>🔍 AI Suggestions</h3>
-                {suggestions.map(s => (
+                {deriveAdvice(aiText).map(s => (
                   <div key={s.id} style={{ marginTop: 12 }}>
                     {SateraTone.showSeverityBadges && (
                       <span style={{
@@ -820,7 +866,6 @@ export default function MainApp() {
                     <ul>{s.bullets.map((t, i) => <li key={i}>{t}</li>)}</ul>
                   </div>
                 ))}
-                {!suggestions.length && <div style={{ opacity: .9, marginTop: 8 }}>No additional suggestions.</div>}
               </div>
             )}
           </main>
