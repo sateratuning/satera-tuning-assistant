@@ -19,58 +19,8 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-// Fixed dyno proportionality (no user calibration). Baseline for your 536 whp log.
-// With the better derivative pipeline below, this constant should also scale correctly on high-power pulls.
-const K_DYNO = 0.0001311; // HP = K_DYNO * RPM * dRPM/dt
-
-const styles = {
-  page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
-  header: {
-    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-    padding: 20, background: 'linear-gradient(to bottom, #00ff88, #007744)',
-    color: '#000', fontSize: '2rem', fontWeight: 'bold',
-    boxShadow: '0 4px 10px rgba(0,255,136,0.4)'
-  },
-  headerRight: { display: 'flex', gap: 10 },
-  shell: { padding: 20 },
-  grid2: { display: 'grid', gridTemplateColumns: '410px 1fr', gap: 16 },
-  gridNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 16 },
-  card: { backgroundColor: '#1a1a1a', padding: 12, borderRadius: 8, border: '1px solid #2a2a2a' },
-  button: { backgroundColor: '#00ff88', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
-  ghostBtn: { background:'transparent', border:'1px solid #1e2b1e', color:'#d9ffe0', padding:'8px 12px', borderRadius:8, cursor:'pointer' },
-  input: {
-    width: '100%', maxWidth: 360,
-    background: '#0f130f', border: '1px solid #1e2b1e',
-    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none'
-  },
-  select: {
-    width: '100%', maxWidth: 360,
-    background: '#0f130f', border: '1px solid #1e2b1e',
-    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none',
-    appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
-    backgroundImage:
-      'linear-gradient(45deg, transparent 50%, #28ff6a 50%), linear-gradient(135deg, #28ff6a 50%, transparent 50%), linear-gradient(to right, #1e2b1e, #1e2b1e)',
-    backgroundPosition: 'calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px), calc(100% - 40px) 0',
-    backgroundSize: '6px 6px, 6px 6px, 28px 100%',
-    backgroundRepeat: 'no-repeat'
-  },
-  sidebarTitle: {
-    marginTop: 0, marginBottom: 8, fontWeight: 700, fontSize: 26, letterSpacing: 0.4,
-    backgroundImage: 'linear-gradient(180deg, #d6ffd9, #7dffa1 55%, #2fff6e)',
-    WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
-    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 0 16px rgba(61,255,118,.35),0 0 36px rgba(61,255,118,.18)',
-    animation: 'st-pulseGlow 2.2s ease-in-out infinite'
-  },
-  fieldGrid: { display: 'grid', gap: 8, gridTemplateColumns: '1fr', marginTop: 8 },
-  titleWrap: { display: 'grid', gap: 6, justifyItems: 'start', alignContent: 'center' },
-  sectionTitleFancy: {
-    margin: 0, fontWeight: 700, fontSize: 26, letterSpacing: 0.6, textTransform: 'uppercase',
-    backgroundImage: 'linear-gradient(90deg, #caffd1, #69ff8a, #caffd1)',
-    WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
-    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 4px 0 #0c150c,0 0 12px rgba(52,255,120,.35),0 0 28px rgba(52,255,120,.18)',
-    animation: 'st-pulseGlow 2.2s ease-in-out infinite'
-  },
-};
+// Baseline constant; HP ≈ K_DYNO * RPM * dRPM/dt * (pullGear^2)
+const K_DYNO = 0.0001311;
 
 // ---------- helpers ----------
 const isNum = (v) => Number.isFinite(v);
@@ -86,18 +36,13 @@ const movAvg = (arr, win=5) => {
     return sum / n;
   });
 };
-const comma = (n, d=1) => n.toLocaleString(undefined, { maximumFractionDigits: d });
-
-// Zero-phase-ish moving average: forward then backward pass
 const zeroPhaseMovAvg = (arr, win=5) => {
   if (!arr || arr.length === 0) return [];
   const fwd = movAvg(arr, win);
   const rev = movAvg([...fwd].reverse(), win).reverse();
   return rev;
 };
-
-// Uniform resample time series with linear interpolation
-const resampleUniform = (T, Y, targetHz = 50) => {
+const resampleUniform = (T, Y, targetHz = 60) => {
   if (!T || !Y || T.length !== Y.length || T.length < 3) return { t: [], y: [] };
   const t0 = T[0], tN = T[T.length - 1];
   const dt = 1 / targetHz;
@@ -118,6 +63,7 @@ const resampleUniform = (T, Y, targetHz = 50) => {
   }
   return { t: tU, y: yU };
 };
+const comma = (n, d=1) => n.toLocaleString(undefined, { maximumFractionDigits: d });
 
 // ---------- flexible col finder ----------
 const findCol = (headers, candidates) => {
@@ -289,6 +235,55 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   return [i0, i1];
 }
 
+const styles = {
+  page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
+  header: {
+    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+    padding: 20, background: 'linear-gradient(to bottom, #00ff88, #007744)',
+    color: '#000', fontSize: '2rem', fontWeight: 'bold',
+    boxShadow: '0 4px 10px rgba(0,255,136,0.4)'
+  },
+  headerRight: { display: 'flex', gap: 10 },
+  shell: { padding: 20 },
+  grid2: { display: 'grid', gridTemplateColumns: '410px 1fr', gap: 16 },
+  gridNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 16 },
+  card: { backgroundColor: '#1a1a1a', padding: 12, borderRadius: 8, border: '1px solid #2a2a2a' },
+  button: { backgroundColor: '#00ff88', color: '#000', padding: '10px 16px', border: 'none', cursor: 'pointer', borderRadius: 6 },
+  ghostBtn: { background:'transparent', border:'1px solid #1e2b1e', color:'#d9ffe0', padding:'8px 12px', borderRadius:8, cursor:'pointer' },
+  input: {
+    width: '100%', maxWidth: 360,
+    background: '#0f130f', border: '1px solid #1e2b1e',
+    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none'
+  },
+  select: {
+    width: '100%', maxWidth: 360,
+    background: '#0f130f', border: '1px solid #1e2b1e',
+    borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none',
+    appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
+    backgroundImage:
+      'linear-gradient(45deg, transparent 50%, #28ff6a 50%), linear-gradient(135deg, #28ff6a 50%, transparent 50%), linear-gradient(to right, #1e2b1e, #1e2b1e)',
+    backgroundPosition: 'calc(100% - 18px) calc(50% - 3px), calc(100% - 12px) calc(50% - 3px), calc(100% - 40px) 0',
+    backgroundSize: '6px 6px, 6px 6px, 28px 100%',
+    backgroundRepeat: 'no-repeat'
+  },
+  sidebarTitle: {
+    marginTop: 0, marginBottom: 8, fontWeight: 700, fontSize: 26, letterSpacing: 0.4,
+    backgroundImage: 'linear-gradient(180deg, #d6ffd9, #7dffa1 55%, #2fff6e)',
+    WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
+    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 0 16px rgba(61,255,118,.35),0 0 36px rgba(61,255,118,.18)',
+    animation: 'st-pulseGlow 2.2s ease-in-out infinite'
+  },
+  fieldGrid: { display: 'grid', gap: 8, gridTemplateColumns: '1fr', marginTop: 8 },
+  titleWrap: { display: 'grid', gap: 6, justifyItems: 'start', alignContent: 'center' },
+  sectionTitleFancy: {
+    margin: 0, fontWeight: 700, fontSize: 26, letterSpacing: 0.6, textTransform: 'uppercase',
+    backgroundImage: 'linear-gradient(90deg, #caffd1, #69ff8a, #caffd1)',
+    WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'white',
+    textShadow: '0 1px 0 #0c150c,0 2px 0 #0c150c,0 3px 0 #0c150c,0 4px 0 #0c150c,0 0 12px rgba(52,255,120,.35),0 0 28px rgba(52,255,120,.18)',
+    animation: 'st-pulseGlow 2.2s ease-in-out infinite'
+  },
+};
+
 export default function MainApp() {
   const [isNarrow, setIsNarrow] = useState(() => typeof window !== 'undefined' && window.innerWidth < 1100);
   useEffect(() => {
@@ -302,10 +297,13 @@ export default function MainApp() {
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
     weight: '', // lbs (Track mode only)
     logFile: null,
+
+    // NEW: customer chooses only the pull gear (trans ratio) used on the dyno
+    pullGear: '1.00', // e.g., 5th ≈ 1.27 on many 8-speed autos
   });
 
   // Mode toggle
-  const [dynoMode, setDynoMode] = useState('dyno'); // default to dyno for your testing
+  const [dynoMode, setDynoMode] = useState('dyno');
 
   // Advanced parameters (Track mode only)
   const [showAdv, setShowAdv] = useState(false);
@@ -460,39 +458,35 @@ export default function MainApp() {
     const T = time.slice(i0, i1 + 1);
     const RPM = rpm.slice(i0, i1 + 1);
 
-    // === New derivative pipeline ===
-    // 1) Uniform resample to stable dt
-    const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60); // 60 Hz for better peak fidelity
-
-    // 2) Zero-phase smoothing (forward + backward) to reduce noise without lag
-    const RPMs = zeroPhaseMovAvg(RPMu, 7); // 7-point window works well on 60 Hz
-
-    // 3) Central difference on smoothed, uniform RPM
+    // === Derivative pipeline: resample → zero-phase smooth → central difference ===
+    const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60);
+    const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
-      // Tu is uniform, so dt = 1/60
-      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // rev/min per second (since RPM units)
+      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM per second (since 60 Hz)
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
     let HP;
     if (dynoMode === 'dyno') {
-      // === Dyno mode: pure inertia estimate with fixed proportionality ===
-      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i]));
+      // === Dyno mode: gear-aware scaling. Customer supplies only the pull gear (trans ratio).
+      const tg = parseFloat(formData.pullGear || '1'); // transmission gear used for pull
+      const gearScale = isFinite(tg) && tg > 0 ? (tg * tg) : 1; // reflect inertia ~ overall^2; final drive cancels by referencing 1.00
+
+      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * gearScale));
     } else {
       // Track model: road-load (weight + rolling + aero)
       const MPH_TO_FTPS = 1.4666667;
       const HP_DEN = 550;
       const G = 32.174;
 
-      // Recreate the speed window consistent with the RPM window
       const MPHraw = mph.slice(i0, i1 + 1);
       const { y: MPHu } = resampleUniform(T, MPHraw, 60);
       const Vs = zeroPhaseMovAvg(MPHu.map(v => v * MPH_TO_FTPS), 5);
 
       const As = Vs.map((_, i, arr) => {
         if (i === 0 || i === arr.length - 1) return 0;
-        return (arr[i + 1] - arr[i - 1]) * (60 / 2); // ft/s^2 at 60 Hz
+        return (arr[i + 1] - arr[i - 1]) * (60 / 2); // ft/s^2
       });
 
       const weight = parseFloat(formData.weight || '0');
@@ -504,13 +498,13 @@ export default function MainApp() {
       HP = P_tot.map(p => p / HP_DEN);
     }
 
-    // Build RPM vs HP curve (bin by 50 rpm, smooth)
+    // Build RPM vs HP curve (bin + gentle smooth)
     const pts = [];
     for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HP[i])) pts.push({ x: RPMs[i], hp: HP[i] });
     if (!pts.length) return null;
     pts.sort((a, b) => a.x - b.x);
 
-    const bin = 50;
+    const bin = 100; // calmer visual
     const bins = new Map();
     for (const p of pts) {
       const key = Math.round(p.x / bin) * bin;
@@ -523,7 +517,7 @@ export default function MainApp() {
       .sort((a, b) => a.x - b.x);
 
     const X  = series.map(p => p.x);
-    const HPs = zeroPhaseMovAvg(series.map(p => p.hp), 5); // final visual smoothing without peak loss
+    const HPs = zeroPhaseMovAvg(series.map(p => p.hp), 9);
     const TQ  = X.map((r, i) => (r > 0 ? (HPs[i] * 5252) / r : null));
 
     let iHP = 0; for (let i=1;i<HPs.length;i++) if (HPs[i] > HPs[iHP]) iHP = i;
@@ -540,7 +534,7 @@ export default function MainApp() {
       hasWeight: dynoMode === 'track' ? (isNum(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0) : false,
       mode: dynoMode
     };
-  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho]);
+  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, formData.pullGear]);
 
   // -------- Dyno chart (equal Y scales for HP & TQ) --------
   const dynoChartData = useMemo(() => {
@@ -552,7 +546,8 @@ export default function MainApp() {
       borderColor: '#74ffb0',
       backgroundColor: 'rgba(116,255,176,0.18)',
       yAxisID: 'yHP',
-      borderWidth: 2, pointRadius: 0, tension: 0.25,
+      borderWidth: 2, pointRadius: 0, tension: 0.4,
+      cubicInterpolationMode: 'monotone',
     }];
 
     if (dyno.tq) {
@@ -562,7 +557,8 @@ export default function MainApp() {
         borderColor: '#ffc96b',
         backgroundColor: 'rgba(255,201,107,0.18)',
         yAxisID: 'yTQ',
-        borderWidth: 2, pointRadius: 0, tension: 0.25,
+        borderWidth: 2, pointRadius: 0, tension: 0.4,
+        cubicInterpolationMode: 'monotone',
       });
     }
 
@@ -603,6 +599,7 @@ export default function MainApp() {
       responsive: true,
       maintainAspectRatio: false,
       parsing: false,
+      spanGaps: true,
       scales: {
         x: {
           type: 'linear',
@@ -714,6 +711,19 @@ export default function MainApp() {
                   </span>
                 </div>
 
+                {/* NEW: Pull gear (transmission ratio) */}
+                <input
+                  name="pullGear"
+                  type="number"
+                  min="0.50"
+                  max="6.00"
+                  step="0.01"
+                  placeholder="Pull Gear (trans ratio, e.g., 1.27 for 5th)"
+                  value={formData.pullGear}
+                  onChange={handleChange}
+                  style={{ ...styles.input, marginTop:8 }}
+                />
+
                 {/* Weight (Track mode only) */}
                 <input
                   name="weight"
@@ -778,6 +788,7 @@ export default function MainApp() {
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
+                <div>Pull Gear (Trans Ratio): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.00'}</strong></div>
                 <div>
                   Weight considered:{' '}
                   <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
@@ -802,48 +813,7 @@ export default function MainApp() {
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
                 </div>
-                <Line data={{
-                  datasets: [
-                    {
-                      label: 'Horsepower',
-                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
-                      borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
-                      yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.25,
-                    },
-                    ...(dyno.tq ? [{
-                      label: 'Torque (lb-ft)',
-                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.tq[i] })),
-                      borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
-                      yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.25,
-                    }] : []),
-                    ...(dyno.peakHP ? [{
-                      label: 'Peak HP',
-                      data: [{ x: dyno.peakHP.rpm, y: dyno.peakHP.value }],
-                      yAxisID: 'yHP', borderColor: '#74ffb0', backgroundColor: '#74ffb0',
-                      pointRadius: 4, showLine: false,
-                    }] : []),
-                    ...(dyno.peakTQ ? [{
-                      label: 'Peak TQ',
-                      data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
-                      yAxisID: 'yTQ', borderColor: '#ffc96b', backgroundColor: '#ffc96b',
-                      pointRadius: 4, showLine: false,
-                    }] : []),
-                  ]
-                }} options={(() => {
-                  const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
-                  const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
-                  const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10;
-                  return {
-                    responsive: true, maintainAspectRatio: false, parsing: false,
-                    scales: {
-                      x: { type: 'linear', title: { display: true, text: 'RPM', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
-                      yHP: { position: 'left', title: { display: true, text: 'Horsepower', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' }, min: 0, max: niceMax },
-                      yTQ: dyno.tq ? { position: 'right', title: { display: true, text: 'Torque (lb-ft)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { drawOnChartArea: false }, min: 0, max: niceMax } : undefined
-                    },
-                    plugins: { legend: { labels: { color: '#adff2f' } }, tooltip: { mode: 'index', intersect: false } },
-                    interaction: { mode: 'index', intersect: false }
-                  };
-                })()} />
+                <Line data={dynoChartData} options={dynoChartOptions} />
 
                 {/* Stats */}
                 <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
@@ -889,15 +859,19 @@ export default function MainApp() {
                       <span style={{
                         display: 'inline-block', padding: '2px 8px', borderRadius: 999,
                         fontSize: 12, marginRight: 8,
-                        background: s.severity === 'high' ? '#ff9a9a' : s.severity === 'med' ? '#ffc96b' : '#74ffb0',
+                        background:
+                          s.severity === 'high'
+                            ? '#ff9a9a'
+                            : s.severity === 'med'
+                            ? '#ffc96b'
+                            : '#74ffb0',
                         color: '#111'
                       }}>
                         {s.severity === 'high'
-  ? 'High Priority'
-  : s.severity === 'med'
-  ? 'Medium'
-  : 'Info'}
-
+                          ? 'High Priority'
+                          : s.severity === 'med'
+                          ? 'Medium'
+                          : 'Info'}
                       </span>
                     )}
                     <strong style={{ marginLeft: 4, color: '#eaff9c' }}>{s.label}</strong>
