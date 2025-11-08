@@ -19,10 +19,10 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-// Baseline constant (kept close to your earlier working value)
-const K_DYNO = 0.0001415; // +~8% to match your two cars after inverse scaling
+// Slight bump to bring both cars a bit higher without user knobs
+const K_DYNO = 0.0001465; // was ~0.0001415
 // Reference conditions derived from your 536whp car
-const REF_OVERALL = 1.29 * 3.09; // = 3.9861
+const REF_OVERALL = 1.29 * 3.09; // 3.9861
 const REF_TIRE_IN = 28.0;
 
 // ---------- helpers ----------
@@ -238,6 +238,39 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   return [i0, i1];
 }
 
+// --- Auto pull-gear detection from RPM/MPH/tire/rear ---
+function detectPullGear({ time, rpm, mph, tireIn, rear }) {
+  if (!rpm || !mph || rpm.length < 12) return null;
+  if (!isNum(tireIn) || tireIn <= 0 || !isNum(rear) || rear <= 0) return null;
+
+  // Use the whole provided window (already cropped to WOT single-gear sweep)
+  const ratios = [];
+  for (let i = 0; i < rpm.length; i++) {
+    const R = rpm[i];
+    const V = mph[i];
+    if (!isNum(R) || !isNum(V) || V < 5) continue;
+    // overall ≈ (RPM × tire_diam) / (MPH × 336)
+    const overall = (R * tireIn) / (V * 336);
+    if (!isNum(overall) || overall <= 0) continue;
+    const tg = overall / rear;
+    if (isNum(tg) && tg > 0.3 && tg < 6.5) ratios.push(tg);
+  }
+  if (ratios.length < 6) return null;
+
+  // median + MAD outlier rejection
+  const sorted = [...ratios].sort((a,b)=>a-b);
+  const med = sorted[Math.floor(sorted.length/2)];
+  const devs = sorted.map(v => Math.abs(v - med));
+  const mad  = devs.sort((a,b)=>a-b)[Math.floor(devs.length/2)] || 0;
+  const keep = ratios.filter(v => Math.abs(v - med) <= 3 * (mad || 0.01));
+  if (keep.length < 6) return null;
+
+  // Smooth median of kept
+  const est = keep.sort((a,b)=>a-b)[Math.floor(keep.length/2)];
+  // round to 0.01 for display/use
+  return Math.round(est * 100) / 100;
+}
+
 const styles = {
   page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
   header: {
@@ -301,15 +334,22 @@ export default function MainApp() {
     weight: '', // lbs (Track mode only)
     logFile: null,
 
-    // default to your stated 5th-gear ratio
-    pullGear: '1.29',
+    pullGear: '1.29', // default; auto-detection overrides when enabled
   });
 
+  // Dyno/Track toggle
   const [dynoMode, setDynoMode] = useState('dyno');
+
+  // Advanced parameters (Track mode only)
   const [showAdv, setShowAdv] = useState(false);
   const [crr, setCrr] = useState(0.015);
   const [cda, setCda] = useState(8.5);
   const [rho, setRho] = useState(0.00238);
+
+  // Auto gear detect
+  const [autoDetectGear, setAutoDetectGear] = useState(true);
+  const [detectedGear, setDetectedGear] = useState(null);
+  const [detectNote, setDetectNote] = useState('');
 
   const [leftText, setLeftText] = useState('');
   const [aiText, setAiText] = useState('');
@@ -344,6 +384,68 @@ export default function MainApp() {
     };
     reader.readAsText(file);
   };
+
+  // -------- Speed chart (context) --------
+  const chartData = graphs ? {
+    datasets: [{
+      label: 'Vehicle Speed (mph)',
+      data: graphs.time.map((t, i) => ({ x: t, y: graphs.speed[i] })),
+      borderColor: '#00ff88',
+      backgroundColor: 'rgba(0,255,136,0.15)',
+      borderWidth: 2, pointRadius: 0, tension: 0.2
+    }]
+  } : null;
+
+  const chartOptions = {
+    responsive: true, maintainAspectRatio: false, parsing: false,
+    scales: {
+      x: { type: 'linear', min: 0, title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
+      y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
+    },
+    plugins: { legend: { labels: { color: '#adff2f' } } }
+  };
+
+  // Try to detect gear whenever we have enough info
+  useEffect(() => {
+    if (!autoDetectGear || !graphs || !graphs.rpm || !graphs.speed) {
+      setDetectedGear(null);
+      setDetectNote('');
+      return;
+    }
+    const tireIn = parseFloat(String(formData.tire || '').replace(/[^0-9.]/g, '') || `${REF_TIRE_IN}`);
+    const rear   = parseFloat(formData.gear || '0');
+    if (!isNum(tireIn) || tireIn <= 0 || !isNum(rear) || rear <= 0) {
+      setDetectedGear(null);
+      setDetectNote('Need rear gear & tire to auto-detect pull gear.');
+      return;
+    }
+
+    // Reuse the same WOT single-gear window as dyno uses
+    const time = graphs.time || [];
+    const rpm  = graphs.rpm  || [];
+    const mph  = graphs.speed || [];
+    const pedal = graphs.pedal || null;
+
+    const sweep = selectRpmSweep(time, rpm, mph, pedal);
+    if (!sweep) {
+      setDetectedGear(null);
+      setDetectNote('Could not find a clean single-gear WOT window.');
+      return;
+    }
+    const [i0, i1] = sweep;
+
+    const T = time.slice(i0, i1 + 1);
+    const RPM = rpm.slice(i0, i1 + 1);
+    const MPH = mph.slice(i0, i1 + 1);
+    const est = detectPullGear({ time: T, rpm: RPM, mph: MPH, tireIn, rear });
+    if (isNum(est)) {
+      setDetectedGear(est);
+      setDetectNote('');
+    } else {
+      setDetectedGear(null);
+      setDetectNote('Detection unstable—enter pull gear manually.');
+    }
+  }, [autoDetectGear, graphs, formData.tire, formData.gear]);
 
   const handleSubmit = async () => {
     const required = ['engine', 'power', 'fuel', 'trans', 'year', 'model'];
@@ -405,26 +507,6 @@ export default function MainApp() {
     }
   };
 
-  // -------- Speed chart (context) --------
-  const chartData = graphs ? {
-    datasets: [{
-      label: 'Vehicle Speed (mph)',
-      data: graphs.time.map((t, i) => ({ x: t, y: graphs.speed[i] })),
-      borderColor: '#00ff88',
-      backgroundColor: 'rgba(0,255,136,0.15)',
-      borderWidth: 2, pointRadius: 0, tension: 0.2
-    }]
-  } : null;
-
-  const chartOptions = {
-    responsive: true, maintainAspectRatio: false, parsing: false,
-    scales: {
-      x: { type: 'linear', min: 0, title: { display: true, text: 'Time (s)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
-      y: { title: { display: true, text: 'Speed (mph)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } }
-    },
-    plugins: { legend: { labels: { color: '#adff2f' } } }
-  };
-
   // -------- Dyno (prefer backend; else local compute) --------
   const dyno = useMemo(() => {
     // Prefer backend precomputed arrays if present
@@ -457,9 +539,10 @@ export default function MainApp() {
 
     const T = time.slice(i0, i1 + 1);
     const RPM = rpm.slice(i0, i1 + 1);
+    const MPHraw = mph.slice(i0, i1 + 1);
 
     // Derivative pipeline: resample → zero-phase smooth → central difference
-    const { t: Tu, y: RPMu } = resampleUniform(T, RPM, 60);
+    const { y: RPMu } = resampleUniform(T, RPM, 60);
     const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
@@ -467,17 +550,17 @@ export default function MainApp() {
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
+    // Decide pull gear: auto-detected (preferred) or manual
+    const rear   = parseFloat(formData.gear || '0');
+    const tireIn = parseFloat(String(formData.tire || `${REF_TIRE_IN}`).replace(/[^0-9.]/g, '') || `${REF_TIRE_IN}`);
+    const pull = (autoDetectGear && isNum(detectedGear)) ? detectedGear : parseFloat(formData.pullGear || '1.29');
+
     let HP;
     if (dynoMode === 'dyno') {
-      // === Dyno mode: inverse normalization to your reference car ===
-      // overall = pullGear * rearGear
-      const tg = parseFloat(formData.pullGear || '1.29');
-      const fd = parseFloat(formData.gear || '3.09');
-      const tireIn = parseFloat(String(formData.tire || '28').replace(/[^0-9.]/g, '') || '28');
-
-      const overall = (isFinite(tg) && tg > 0 ? tg : 1.29) * (isFinite(fd) && fd > 0 ? fd : 3.09);
+      // Inverse normalization to your reference car
+      const overall = (isNum(pull) && pull > 0 ? pull : 1.29) * (isNum(rear) && rear > 0 ? rear : 3.09);
       const s_overall = Math.pow(REF_OVERALL / overall, 2);
-      const s_tire    = Math.pow(REF_TIRE_IN / (isFinite(tireIn) && tireIn > 0 ? tireIn : REF_TIRE_IN), 2);
+      const s_tire    = Math.pow(REF_TIRE_IN / (isNum(tireIn) && tireIn > 0 ? tireIn : REF_TIRE_IN), 2);
       const scale = s_overall * s_tire;
 
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
@@ -487,7 +570,6 @@ export default function MainApp() {
       const HP_DEN = 550;
       const G = 32.174;
 
-      const MPHraw = mph.slice(i0, i1 + 1);
       const { y: MPHu } = resampleUniform(T, MPHraw, 60);
       const Vs = zeroPhaseMovAvg(MPHu.map(v => v * MPH_TO_FTPS), 5);
 
@@ -538,12 +620,12 @@ export default function MainApp() {
       tq: TQ,
       peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
       peakTQ: TQ.length ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1) } : null,
-      hasWeight: dynoMode === 'track' ? (isNum(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0) : false,
-      mode: dynoMode
+      mode: dynoMode,
+      pullGearUsed: isNum(pull) ? +pull.toFixed(2) : null,
     };
-  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, formData.pullGear, formData.gear, formData.tire]);
+  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, formData.pullGear, formData.gear, formData.tire, autoDetectGear, detectedGear]);
 
-  // -------- Dyno chart (equal Y scales for HP & TQ) --------
+  // -------- Dyno chart data/options --------
   const dynoChartData = useMemo(() => {
     if (!dyno) return null;
 
@@ -638,14 +720,8 @@ export default function MainApp() {
     };
   }, [dyno]);
 
-  const dynoSetup = (() => {
-    const hasWeight = !!formData.weight && !isNaN(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0;
-    const hasRPM = !!(
-      (dyno && dyno.usedRPM) ||
-      (graphs && graphs.rpm && graphs.rpm.some(v => v !== null))
-    );
-    return { hasWeight, hasRPM };
-  })();
+  // --- Dyno setup status
+  const hasRPM = !!((dyno && dyno.usedRPM) || (graphs && graphs.rpm && graphs.rpm.some(v => v !== null)));
 
   return (
     <div style={styles.page}>
@@ -699,6 +775,7 @@ export default function MainApp() {
                   <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
 
+                {/* Mode toggle */}
                 <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
                   <button
                     onClick={()=> setDynoMode('dyno')}
@@ -715,17 +792,31 @@ export default function MainApp() {
                   </span>
                 </div>
 
-                {/* Pull gear (transmission ratio used for the dyno pull) */}
+                {/* Auto gear detection toggle */}
+                <label style={{ display:'flex', gap:8, alignItems:'center', marginTop:10 }}>
+                  <input
+                    type="checkbox"
+                    checked={autoDetectGear}
+                    onChange={e => setAutoDetectGear(e.target.checked)}
+                  />
+                  <span>Auto-detect pull gear from log</span>
+                </label>
+                {detectNote && (
+                  <div style={{ fontSize:12, color:'#ffc96b', marginTop:4 }}>{detectNote}</div>
+                )}
+
+                {/* Pull gear (manual only if auto is off or failed) */}
                 <input
                   name="pullGear"
                   type="number"
                   min="0.50"
                   max="6.00"
                   step="0.01"
-                  placeholder="Pull Gear (trans ratio, e.g., 1.29 for 5th)"
+                  placeholder="Pull Gear (trans ratio)"
                   value={formData.pullGear}
                   onChange={handleChange}
-                  style={{ ...styles.input, marginTop:8 }}
+                  style={{ ...styles.input, marginTop:8, opacity: autoDetectGear && detectedGear ? 0.5 : 1 }}
+                  disabled={autoDetectGear && detectedGear}
                 />
 
                 {/* Weight (Track mode only) */}
@@ -741,6 +832,7 @@ export default function MainApp() {
                   disabled={dynoMode !== 'track'}
                 />
 
+                {/* Advanced drag params */}
                 {dynoMode === 'track' && (
                   <div style={{ marginTop:8 }}>
                     <button onClick={()=> setShowAdv(s=>!s)} style={styles.ghostBtn}>
@@ -786,35 +878,38 @@ export default function MainApp() {
               </div>
             )}
 
+            {/* Setup status */}
             <div style={styles.card}>
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
-                <div>Pull Gear (Trans): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.29'}</strong></div>
+                <div>
+                  Pull Gear:{' '}
+                  <strong style={{ color:'#eaff9c' }}>
+                    {autoDetectGear
+                      ? (isNum(detectedGear) ? `${detectedGear.toFixed(2)} (auto)` : '—')
+                      : (formData.pullGear || '—')}
+                  </strong>
+                </div>
                 <div>Rear Gear: <strong style={{ color:'#eaff9c' }}>{formData.gear || '—'}</strong></div>
                 <div>Tire Diameter: <strong style={{ color:'#eaff9c' }}>{formData.tire || '—'}</strong></div>
                 <div>
-                  Weight considered:{' '}
-                  <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
-                    {dynoMode==='track' ? (dynoSetup.hasWeight ? `${formData.weight} lbs` : 'No (enter weight)') : 'No (Dyno mode)'}
-                  </strong>
-                </div>
-                <div>
                   Engine RPM available:{' '}
-                  <strong style={{ color: dynoSetup.hasRPM ? '#74ffb0' : '#ff9a9a' }}>
-                    {dynoSetup.hasRPM ? 'Detected' : 'Not found (dyno hidden)'}
+                  <strong style={{ color: hasRPM ? '#74ffb0' : '#ff9a9a' }}>
+                    {hasRPM ? 'Detected' : 'Not found (dyno hidden)'}
                   </strong>
                 </div>
               </div>
             </div>
 
+            {/* Dyno chart */}
             {dyno && (
               <div style={{ ...styles.card, height: 360 }}>
                 <div style={styles.titleWrap}>
                   <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
-                  HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
+                  HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dyno.mode}</b>
                 </div>
                 <Line data={{
                   datasets: [
@@ -859,7 +954,14 @@ export default function MainApp() {
                   };
                 })()} />
 
+                {/* Stats */}
                 <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
+                  {dyno.pullGearUsed && (
+                    <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
+                      <div style={{ fontSize:12, opacity:.85 }}>Pull Gear Used</div>
+                      <div style={{ fontWeight:700, color:'#eaff9c' }}>{dyno.pullGearUsed.toFixed(2)}</div>
+                    </div>
+                  )}
                   {dyno.peakHP && (
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
                       <div style={{ fontSize:12, opacity:.85 }}>Peak HP</div>
