@@ -19,11 +19,11 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
-// Baseline constant (fit around your 536whp reference when using REF_* below)
-const K_DYNO = 0.0001311;
-// Reference conditions for scale normalization
-const REF_OVERALL = 3.00;   // reference overall ratio (trans × rear)
-const REF_TIRE_IN = 27.0;   // reference tire diameter (inches)
+// Baseline constant (kept close to your earlier working value)
+const K_DYNO = 0.0001415; // +~8% to match your two cars after inverse scaling
+// Reference conditions derived from your 536whp car
+const REF_OVERALL = 1.29 * 3.09; // = 3.9861
+const REF_TIRE_IN = 28.0;
 
 // ---------- helpers ----------
 const isNum = (v) => Number.isFinite(v);
@@ -206,7 +206,7 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
         const sorted = [...medBuf].sort((x, y) => x - y);
         const med = sorted[Math.floor(sorted.length / 2)];
         const dev = Math.abs(ratio[j] - med) / Math.max(med, 1e-6);
-        if (dev > RATIO_TOL) break;
+        if (dev > 0.12) break;
         j++;
       }
       const end = j - 1;
@@ -219,7 +219,7 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   // longest window then gentle expand
   keepWindows.sort((u, v) => (v[1] - v[0]) - (u[1] - u[0]));
   let [i0, i1] = keepWindows[0];
-  const LOOSE = RATIO_TOL * 1.5;
+  const LOOSE = 0.18;
 
   let k = i0 - 1;
   while (k > 0 && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k + 1] - RPM_DIP) {
@@ -260,7 +260,7 @@ const styles = {
   },
   select: {
     width: '100%', maxWidth: 360,
-    background: '#0f130f', border: '1px solid #1e2b1e',
+    background: '#0f130f', border: '1px solid '#1e2b1e',
     borderRadius: 8, padding: '9px 11px', color: '#d9ffe0', outline: 'none',
     appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
     backgroundImage:
@@ -301,18 +301,15 @@ export default function MainApp() {
     weight: '', // lbs (Track mode only)
     logFile: null,
 
-    // NEW: customer selects only trans gear used for the dyno pull (e.g., 5th ≈ 1.27)
-    pullGear: '1.00',
+    // default to your stated 5th-gear ratio
+    pullGear: '1.29',
   });
 
-  // Mode toggle
   const [dynoMode, setDynoMode] = useState('dyno');
-
-  // Advanced parameters (Track mode only)
   const [showAdv, setShowAdv] = useState(false);
   const [crr, setCrr] = useState(0.015);
-  const [cda, setCda] = useState(8.5);      // ft^2
-  const [rho, setRho] = useState(0.00238);  // slug/ft^3
+  const [cda, setCda] = useState(8.5);
+  const [rho, setRho] = useState(0.00238);
 
   const [leftText, setLeftText] = useState('');
   const [aiText, setAiText] = useState('');
@@ -466,23 +463,22 @@ export default function MainApp() {
     const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
-      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM per second @60Hz
+      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM/s @60Hz
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
     let HP;
     if (dynoMode === 'dyno') {
-      // === Dyno mode: scale by (overall/REF_OVERALL)^2 * (tire/REF_TIRE_IN)^2 ===
-      // Pull gear (trans gear used for the dyno pull; you said both were 5th, not 1:1)
-      const tg = parseFloat(formData.pullGear || '1');
-      // Rear gear (final drive) from your existing dropdown (string like "3.09")
-      const fd = parseFloat(formData.gear || '0');
-      // Tire diameter in inches — parse any "28" / "28.0" etc from dropdown
-      const tireIn = parseFloat(String(formData.tire || '').replace(/[^0-9.]/g, '') || '0');
+      // === Dyno mode: inverse normalization to your reference car ===
+      // overall = pullGear * rearGear
+      const tg = parseFloat(formData.pullGear || '1.29');
+      const fd = parseFloat(formData.gear || '3.09');
+      const tireIn = parseFloat(String(formData.tire || '28').replace(/[^0-9.]/g, '') || '28');
 
-      const overall = (isFinite(tg) && tg > 0 ? tg : 1) * (isFinite(fd) && fd > 0 ? fd : REF_OVERALL);
-      const tireScale = (isFinite(tireIn) && tireIn > 0 ? (tireIn / REF_TIRE_IN) : 1);
-      const scale = Math.pow(overall / REF_OVERALL, 2) * Math.pow(tireScale, 2);
+      const overall = (isFinite(tg) && tg > 0 ? tg : 1.29) * (isFinite(fd) && fd > 0 ? fd : 3.09);
+      const s_overall = Math.pow(REF_OVERALL / overall, 2);
+      const s_tire    = Math.pow(REF_TIRE_IN / (isFinite(tireIn) && tireIn > 0 ? tireIn : REF_TIRE_IN), 2);
+      const scale = s_overall * s_tire;
 
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
     } else {
@@ -515,7 +511,7 @@ export default function MainApp() {
     if (!pts.length) return null;
     pts.sort((a, b) => a.x - b.x);
 
-    const bin = 100; // calm visuals
+    const bin = 100;
     const bins = new Map();
     for (const p of pts) {
       const key = Math.round(p.x / bin) * bin;
@@ -573,7 +569,6 @@ export default function MainApp() {
       });
     }
 
-    // Peak markers
     if (dyno.peakHP) {
       datasets.push({
         label: 'Peak HP',
@@ -643,7 +638,6 @@ export default function MainApp() {
     };
   }, [dyno]);
 
-  // --- Dyno setup status
   const dynoSetup = (() => {
     const hasWeight = !!formData.weight && !isNaN(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0;
     const hasRPM = !!(
@@ -705,7 +699,6 @@ export default function MainApp() {
                   <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
                 </select>
 
-                {/* Mode toggle */}
                 <div style={{ display:'flex', gap:8, alignItems:'center', marginTop:10, flexWrap:'wrap' }}>
                   <button
                     onClick={()=> setDynoMode('dyno')}
@@ -722,14 +715,14 @@ export default function MainApp() {
                   </span>
                 </div>
 
-                {/* NEW: Pull gear (transmission ratio used for the dyno pull) */}
+                {/* Pull gear (transmission ratio used for the dyno pull) */}
                 <input
                   name="pullGear"
                   type="number"
                   min="0.50"
                   max="6.00"
                   step="0.01"
-                  placeholder="Pull Gear (trans ratio, e.g., 1.27 for 5th)"
+                  placeholder="Pull Gear (trans ratio, e.g., 1.29 for 5th)"
                   value={formData.pullGear}
                   onChange={handleChange}
                   style={{ ...styles.input, marginTop:8 }}
@@ -748,7 +741,6 @@ export default function MainApp() {
                   disabled={dynoMode !== 'track'}
                 />
 
-                {/* Advanced drag params */}
                 {dynoMode === 'track' && (
                   <div style={{ marginTop:8 }}>
                     <button onClick={()=> setShowAdv(s=>!s)} style={styles.ghostBtn}>
@@ -794,12 +786,11 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* Setup status */}
             <div style={styles.card}>
               <h3 style={styles.sectionTitleFancy}>🏁 Simulated Dyno (setup)</h3>
               <div style={{ lineHeight: 1.6 }}>
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
-                <div>Pull Gear (Trans): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.00'}</strong></div>
+                <div>Pull Gear (Trans): <strong style={{ color:'#eaff9c' }}>{formData.pullGear || '1.29'}</strong></div>
                 <div>Rear Gear: <strong style={{ color:'#eaff9c' }}>{formData.gear || '—'}</strong></div>
                 <div>Tire Diameter: <strong style={{ color:'#eaff9c' }}>{formData.tire || '—'}</strong></div>
                 <div>
@@ -817,7 +808,6 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* Dyno chart */}
             {dyno && (
               <div style={{ ...styles.card, height: 360 }}>
                 <div style={styles.titleWrap}>
@@ -826,9 +816,49 @@ export default function MainApp() {
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
                 </div>
-                <Line data={dynoChartData} options={dynoChartOptions} />
+                <Line data={{
+                  datasets: [
+                    {
+                      label: 'Horsepower',
+                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
+                      borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
+                      yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.4, cubicInterpolationMode: 'monotone',
+                    },
+                    ...(dyno.tq ? [{
+                      label: 'Torque (lb-ft)',
+                      data: dyno.x.map((v, i) => ({ x: v, y: dyno.tq[i] })),
+                      borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
+                      yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.4, cubicInterpolationMode: 'monotone',
+                    }] : []),
+                    ...(dyno.peakHP ? [{
+                      label: 'Peak HP',
+                      data: [{ x: dyno.peakHP.rpm, y: dyno.peakHP.value }],
+                      yAxisID: 'yHP', borderColor: '#74ffb0', backgroundColor: '#74ffb0',
+                      pointRadius: 4, showLine: false,
+                    }] : []),
+                    ...(dyno.peakTQ ? [{
+                      label: 'Peak TQ',
+                      data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
+                      yAxisID: 'yTQ', borderColor: '#ffc96b', backgroundColor: '#ffc96b',
+                      pointRadius: 4, showLine: false,
+                    }] : []),
+                  ]
+                }} options={(() => {
+                  const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
+                  const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
+                  const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10;
+                  return {
+                    responsive: true, maintainAspectRatio: false, parsing: false, spanGaps: true,
+                    scales: {
+                      x: { type: 'linear', title: { display: true, text: 'RPM', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' } },
+                      yHP: { position: 'left', title: { display: true, text: 'Horsepower', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { color: '#333' }, min: 0, max: niceMax },
+                      yTQ: dyno.tq ? { position: 'right', title: { display: true, text: 'Torque (lb-ft)', color: '#adff2f' }, ticks: { color: '#adff2f' }, grid: { drawOnChartArea: false }, min: 0, max: niceMax } : undefined
+                    },
+                    plugins: { legend: { labels: { color: '#adff2f' } }, tooltip: { mode: 'index', intersect: false } },
+                    interaction: { mode: 'index', intersect: false }
+                  };
+                })()} />
 
-                {/* Stats */}
                 <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
                   {dyno.peakHP && (
                     <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
