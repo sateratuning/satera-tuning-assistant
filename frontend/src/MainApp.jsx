@@ -20,7 +20,7 @@ const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ======= Tunables =======
 // Fixed dyno proportionality (no user calibration). Good baseline for your 536 whp log.
-const K_DYNO = 0.0001318; // HP = K_DYNO * RPM * dRPM/dt
+const K_DYNO = 0.0001315; // HP = K_DYNO * RPM * dRPM/dt
 
 const styles = {
   page: { backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial' },
