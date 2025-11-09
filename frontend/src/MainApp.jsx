@@ -465,7 +465,8 @@ export default function MainApp() {
       setAiText((aiPart || '').trim());
 
       // IMPORTANT: Only use backend dyno curve in DYNO mode.
-      setDynoRemote((dynoMode === 'dyno' && dynoJSON && !dynoJSON.error) ? dynoJSON : null);
+      setDynoRemote(null);
+
 
       setStatus('');
     } catch (err) {
