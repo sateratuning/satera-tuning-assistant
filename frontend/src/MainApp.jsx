@@ -496,16 +496,27 @@ export default function MainApp() {
     // If backend provided dyno curves and we're in DYNO mode, use them
     if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
       const hp = [...dynoRemote.hp];
-      const tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
+      let tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
+
+      // ---- BACKFILL TORQUE if missing/mismatched (fixes missing Peak TQ & right axis) ----
+      if (!tq || tq.length !== hp.length) {
+        const xRPM = Array.isArray(dynoRemote.x) ? dynoRemote.x : [];
+        if (xRPM.length === hp.length) {
+          tq = hp.map((h, i) => (isNum(xRPM[i]) && xRPM[i] > 0 ? (h * 5252) / xRPM[i] : null));
+        }
+      }
+
+      // Peaks
       let peakHP = null, peakTQ = null;
       if (hp.length) {
-        let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+        let iHP = 0; for (let i=1;i<hp.length;i++) if (isNum(hp[i]) && hp[i] > hp[iHP]) iHP = i;
         peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
       }
       if (tq && tq.length) {
-        let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
+        let iTQ = 0; for (let i=1;i<tq.length;i++) if (isNum(tq[i]) && tq[i] > tq[iTQ]) iTQ = i;
         peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
       }
+
       return { ...dynoRemote, hp, tq, peakHP, peakTQ, usedRPM: true, mode: 'dyno' };
     }
 
@@ -736,9 +747,9 @@ export default function MainApp() {
 
   const dynoChartOptions = useMemo(() => {
     if (!dyno) return null;
-    const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
-    const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
-    const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10;
+    const maxHP = dyno.hp?.length ? Math.max(...dyno.hp.filter(isNum)) : 0;
+    const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq.filter(isNum)) : 0;
+    const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10 || 10;
 
     return {
       responsive: true,
