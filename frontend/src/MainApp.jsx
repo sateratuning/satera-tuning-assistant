@@ -19,12 +19,12 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ========= Dyno Tunables (match backend) =========
-const K_DYNO = 0.000143;           // HP = K_DYNO * RPM * dRPM/dt * scale
+const K_DYNO = 0.0001428;           // HP = K_DYNO * RPM * dRPM/dt * scale
 const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
 
 // ========= Track-only trim (quick global scaler) =========
-const TRACK_TRIM = 1.18; // 1.00 = no change. >1 raises reported track HP.
+const TRACK_TRIM = 1.25; // 1.00 = no change. >1 raises reported track HP.
 
 // ========= Physics constants (Track) =========
 const FT_PER_MPH = 1.4666667; // mph → ft/s
