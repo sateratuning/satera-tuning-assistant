@@ -359,6 +359,9 @@ export default function MainApp() {
   const [status, setStatus] = useState('');
   const [dynoRemote, setDynoRemote] = useState(null);
 
+  // NEW: Cache the auto-detected pull gear at upload time (stable pre/post Analyze)
+  const [cachedDetectedPull, setCachedDetectedPull] = useState(null);
+
   const [catalogGears, setCatalogGears] = useState([]);
   useEffect(() => {
     const name = formData.trans?.trim();
@@ -386,10 +389,43 @@ export default function MainApp() {
       const parsed = parseCSV(reader.result);
       if (!parsed) {
         setStatus('❌ Failed to parse CSV (check format).');
+        setCachedDetectedPull(null);
       } else {
         setStatus('CSV parsed.');
         setGraphs(parsed);
         setMetrics({ zeroTo60: null, fortyTo100: null, sixtyTo130: null });
+
+        // ===== Cache pull gear detection ONCE at upload time =====
+        try {
+          const { time, rpm, speed, pedal } = parsed || {};
+          if (rpm && speed && time) {
+            const rearGear =
+              Number.isFinite(parseFloat(formData.gear)) && parseFloat(formData.gear) > 0
+                ? parseFloat(formData.gear)
+                : 3.09;
+            const tireInParsed = parseFloat(String(formData.tire || '').replace(/[^0-9.]/g, ''));
+            const tireIn = Number.isFinite(tireInParsed) && tireInParsed > 0 ? tireInParsed : REF_TIRE_IN;
+
+            const sweep = selectRpmSweep(time, rpm, speed, pedal || null);
+            if (sweep) {
+              const [i0, i1] = sweep;
+              const det = detectPullGear({
+                rpm: rpm.slice(i0, i1 + 1),
+                mph: speed.slice(i0, i1 + 1),
+                tireIn,
+                rear: rearGear
+              });
+              setCachedDetectedPull(Number.isFinite(det.gear) ? det.gear : null);
+            } else {
+              setCachedDetectedPull(null);
+            }
+          } else {
+            setCachedDetectedPull(null);
+          }
+        } catch {
+          setCachedDetectedPull(null);
+        }
+        // =========================================================
       }
     };
     reader.readAsText(file);
@@ -411,7 +447,7 @@ export default function MainApp() {
     setAiResult('');
     setLeftText('');
     setAiText('');
-    setDynoRemote(null);
+    setDynoRemote(null); // stay local for Dyno mode
 
     try {
       const form = new FormData();
@@ -464,9 +500,8 @@ export default function MainApp() {
       setLeftText((quickChecks || '').trim());
       setAiText((aiPart || '').trim());
 
-      // IMPORTANT: Only use backend dyno curve in DYNO mode.
+      // IMPORTANT: we keep dynoRemote null so local curve remains the source in Dyno mode
       setDynoRemote(null);
-
 
       setStatus('');
     } catch (err) {
@@ -498,33 +533,32 @@ export default function MainApp() {
 
   // -------- Dyno (prefer backend for DYNO only; TRACK always local) --------
   const dyno = useMemo(() => {
-    // Use backend curve only in Dyno mode
+    // Use backend curve only in Dyno mode (disabled here by design since dynoRemote is forced null)
     if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
-  const hp = dynoRemote.hp.map(v => v * DYNO_REMOTE_TRIM);
-  const tq = dynoRemote.tq ? dynoRemote.tq.map(v => v * DYNO_REMOTE_TRIM) : null;
+      const hp = dynoRemote.hp.map(v => v * DYNO_REMOTE_TRIM);
+      const tq = dynoRemote.tq ? dynoRemote.tq.map(v => v * DYNO_REMOTE_TRIM) : null;
 
-  let peakHP = null, peakTQ = null;
-  if (hp.length) {
-    let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
-    peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
-  }
-  if (tq && tq.length) {
-    let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
-    peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
-  }
+      let peakHP = null, peakTQ = null;
+      if (hp.length) {
+        let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+        peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
+      }
+      if (tq && tq.length) {
+        let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
+        peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
+      }
 
-  return {
-    ...dynoRemote,
-    hp, tq, peakHP, peakTQ,
-    usedRPM: true,
-    mode: dynoMode,
-    pullGearUsed: dynoRemote.pullGearUsed ?? null,
-    pullGearSource: dynoRemote.detectConf != null
-      ? (dynoRemote.pullGearUsed != null ? 'auto-estimated' : null)
-      : null
-  };
-}
-
+      return {
+        ...dynoRemote,
+        hp, tq, peakHP, peakTQ,
+        usedRPM: true,
+        mode: dynoMode,
+        pullGearUsed: dynoRemote.pullGearUsed ?? null,
+        pullGearSource: dynoRemote.detectConf != null
+          ? (dynoRemote.pullGearUsed != null ? 'auto-estimated' : null)
+          : null
+      };
+    }
 
     // Local compute (both Dyno + Track supported here)
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
@@ -560,8 +594,12 @@ export default function MainApp() {
 
     let detectedGear = null;
     if (autoDetectGear) {
-      const det = detectPullGear({ rpm: RPMs, mph: MPH, tireIn, rear: rearGear });
-      detectedGear = det.gear;
+      // Prefer the cached detection from upload; fallback to live detection
+      detectedGear = Number.isFinite(cachedDetectedPull) ? cachedDetectedPull : null;
+      if (!Number.isFinite(detectedGear)) {
+        const det = detectPullGear({ rpm: RPMs, mph: MPH, tireIn, rear: rearGear });
+        detectedGear = det.gear;
+      }
     }
     const chosen = pickPullGear({
       autoDetect: autoDetectGear,
@@ -643,7 +681,7 @@ export default function MainApp() {
       hasWeight: dynoMode === 'track' ? (isNum(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0) : false
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, autoDetectGear, formData.pullLabel, formData.pullGear, formData.trans, formData.tire, formData.gear, catalogGears]);
+  }, [dynoRemote, graphs, formData.weight, dynoMode, crr, cda, rho, autoDetectGear, formData.pullLabel, formData.pullGear, formData.trans, formData.tire, formData.gear, catalogGears, cachedDetectedPull]);
 
   // -------- Dyno chart (equal Y scales for HP & TQ) --------
   const dynoChartOptions = useMemo(() => {
@@ -890,8 +928,8 @@ export default function MainApp() {
                 </div>
                 <div>
                   Engine RPM available:{' '}
-                  <strong style={{ color: ((graphs && graphs.rpm && graphs.rpm.some(v => v !== null)) || (dyno && dyno.usedRPM)) ? '#74ffb0' : '#ff9a9a' }}>
-                    {((graphs && graphs.rpm && graphs.rpm.some(v => v !== null)) || (dyno && dyno.usedRPM)) ? 'Detected' : 'Not found (dyno hidden)'}
+                  <strong style={{ color: ((dyno && dyno.usedRPM) || (graphs && graphs.rpm && graphs.rpm.some(v => v !== null))) ? '#74ffb0' : '#ff9a9a' }}>
+                    {((dyno && dyno.usedRPM) || (graphs && graphs.rpm && graphs.rpm.some(v => v !== null))) ? 'Detected' : 'Not found (dyno hidden)'}
                   </strong>
                 </div>
                 {dyno?.pullGearUsed && (
