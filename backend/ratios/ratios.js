@@ -4,5 +4,5 @@ module.exports = {
   '8HP90/95': { '1st': 4.71, '2nd': 3.14, '3rd': 2.10, '4th': 1.67, '5th': 1.29, '6th': 1.00, '7th': 0.84, '8th': 0.67 },
   'TR6060': { '1st': 2.97, '2nd': 2.07, '3rd': 1.43, '4th': 1.00, '5th': 0.84, '6th': 0.57 },
   'NAG1/WA580': { '1st': 3.59, '2nd': 2.19, '3rd': 1.41, '4th': 1.00, '5th': 0.83 },
-  // Add other boxes you support…
+  // Add other boxes you support...
 };
