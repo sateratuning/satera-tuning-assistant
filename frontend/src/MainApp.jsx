@@ -19,7 +19,7 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ========= Dyno Tunables (match backend) =========
-const K_DYNO = 0.000146;           // HP = K_DYNO * RPM * dRPM/dt * scale
+const K_DYNO = 0.0001436;           // HP = K_DYNO * RPM * dRPM/dt * scale
 const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
 
