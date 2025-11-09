@@ -301,7 +301,7 @@ function selectWotWindowByPedal(time, mph, pedalArr = null, tpsArr = null) {
   }
   if (s !== -1 && time.length - s >= 6) segs.push([s, time.length - 1]);
   if (!segs.length) return [0, time.length - 1];
-  segs.sort((a, b) => (time[a[1]] - time[a[0]]) - (time[b[1]] - time[b[0]]));
+  segs.sort((a, b) => (time[a[1]] - time[a[0]]) - (time[b[1]] - b[0]));
   let [i0, i1] = segs[0];
   while (i0 < i1 && (!Number.isFinite(mph[i0]) || mph[i0] <= 0.5)) i0++;
   return [i0, i1];
@@ -496,17 +496,16 @@ export default function MainApp() {
     // If backend provided dyno curves and we're in DYNO mode, use them
     if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
       const hp = [...dynoRemote.hp];
-      let tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
 
-      // ---- BACKFILL TORQUE if missing/mismatched (fixes missing Peak TQ & right axis) ----
-      if (!tq || tq.length !== hp.length) {
-        const xRPM = Array.isArray(dynoRemote.x) ? dynoRemote.x : [];
-        if (xRPM.length === hp.length) {
-          tq = hp.map((h, i) => (isNum(xRPM[i]) && xRPM[i] > 0 ? (h * 5252) / xRPM[i] : null));
-        }
+      // --- Robust TQ backfill if needed (or lengths mismatch)
+      let tq = null;
+      if (dynoRemote.tq && Array.isArray(dynoRemote.tq) && dynoRemote.tq.length === (dynoRemote.x?.length || 0)) {
+        tq = [...dynoRemote.tq];
+      } else if (Array.isArray(dynoRemote.x) && dynoRemote.x.length === hp.length) {
+        tq = dynoRemote.x.map((r, i) => (isNum(r) && r > 0 && isNum(hp[i])) ? (hp[i] * 5252) / r : null);
       }
 
-      // Peaks
+      // Peak markers
       let peakHP = null, peakTQ = null;
       if (hp.length) {
         let iHP = 0; for (let i=1;i<hp.length;i++) if (isNum(hp[i]) && hp[i] > hp[iHP]) iHP = i;
@@ -516,7 +515,6 @@ export default function MainApp() {
         let iTQ = 0; for (let i=1;i<tq.length;i++) if (isNum(tq[i]) && tq[i] > tq[iTQ]) iTQ = i;
         peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
       }
-
       return { ...dynoRemote, hp, tq, peakHP, peakTQ, usedRPM: true, mode: 'dyno' };
     }
 
@@ -701,9 +699,11 @@ export default function MainApp() {
   const dynoChartData = useMemo(() => {
     if (!dyno) return null;
 
+    // Guard against NaNs/nulls
+    const hpPts = dyno.x.map((v,i)=>({x:v,y:dyno.hp[i]})).filter(p=>isNum(p.x)&&isNum(p.y));
     const datasets = [{
       label: 'Horsepower',
-      data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
+      data: hpPts,
       borderColor: '#74ffb0',
       backgroundColor: 'rgba(116,255,176,0.18)',
       yAxisID: 'yHP',
@@ -711,9 +711,10 @@ export default function MainApp() {
     }];
 
     if (dyno.tq) {
+      const tqPts = dyno.x.map((v,i)=>({x:v,y:dyno.tq[i]})).filter(p=>isNum(p.x)&&isNum(p.y));
       datasets.push({
         label: 'Torque (lb-ft)',
-        data: dyno.x.map((v, i) => ({ x: v, y: dyno.tq[i] })),
+        data: tqPts,
         borderColor: '#ffc96b',
         backgroundColor: 'rgba(255,201,107,0.18)',
         yAxisID: 'yTQ',
@@ -731,7 +732,7 @@ export default function MainApp() {
         pointRadius: 4, showLine: false,
       });
     }
-    if (dyno.peakTQ) {
+    if (dyno.peakTQ && dyno.tq) {
       datasets.push({
         label: 'Peak TQ',
         data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
@@ -992,28 +993,4 @@ export default function MainApp() {
       </div>
     </div>
   );
-}
-
-
-// --- small utility: uniform resample (used in dyno compute) ---
-function resampleUniform(T, Y, targetHz = 60) {
-  if (!T || !Y || T.length !== Y.length || T.length < 3) return { t: [], y: [] };
-  const t0 = T[0], tN = T[T.length - 1];
-  const dt = 1 / targetHz;
-  const N = Math.max(3, Math.floor((tN - t0) / dt));
-  const tU = new Array(N);
-  const yU = new Array(N);
-  let j = 1;
-  for (let i = 0; i < N; i++) {
-    const t = t0 + i * dt;
-    tU[i] = t;
-    while (j < T.length && T[j] < t) j++;
-    const aIdx = Math.max(0, j - 1);
-    const bIdx = Math.min(T.length - 1, j);
-    const Ta = T[aIdx], Tb = T[bIdx];
-    const Ya = Y[aIdx], Yb = Y[bIdx];
-    const f = (Tb - Ta) !== 0 ? Math.min(1, Math.max(0, (t - Ta) / (Tb - Ta))) : 0;
-    yU[i] = (isNum(Ya) && isNum(Yb)) ? (Ya + (Yb - Ya) * f) : NaN;
-  }
-  return { t: tU, y: yU };
 }
