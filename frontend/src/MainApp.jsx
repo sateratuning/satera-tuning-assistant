@@ -499,28 +499,31 @@ export default function MainApp() {
   const dyno = useMemo(() => {
     // Use backend curve only in Dyno mode
     if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
-      const hp = [...dynoRemote.hp];
-      const tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
-      let peakHP = null, peakTQ = null;
-      if (hp.length) {
-        let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
-        peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
-      }
-      if (tq && tq.length) {
-        let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
-        peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
-      }
-      return {
-        ...dynoRemote,
-        hp, tq, peakHP, peakTQ,
-        usedRPM: true,
-        mode: dynoMode,
-        pullGearUsed: dynoRemote.pullGearUsed ?? null,
-        pullGearSource: dynoRemote.detectConf != null
-          ? (dynoRemote.pullGearUsed != null ? 'auto-estimated' : null)
-          : null
-      };
-    }
+  const hp = dynoRemote.hp.map(v => v * DYNO_REMOTE_TRIM);
+  const tq = dynoRemote.tq ? dynoRemote.tq.map(v => v * DYNO_REMOTE_TRIM) : null;
+
+  let peakHP = null, peakTQ = null;
+  if (hp.length) {
+    let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+    peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
+  }
+  if (tq && tq.length) {
+    let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
+    peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
+  }
+
+  return {
+    ...dynoRemote,
+    hp, tq, peakHP, peakTQ,
+    usedRPM: true,
+    mode: dynoMode,
+    pullGearUsed: dynoRemote.pullGearUsed ?? null,
+    pullGearSource: dynoRemote.detectConf != null
+      ? (dynoRemote.pullGearUsed != null ? 'auto-estimated' : null)
+      : null
+  };
+}
+
 
     // Local compute (both Dyno + Track supported here)
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
