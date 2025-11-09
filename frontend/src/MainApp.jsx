@@ -538,7 +538,6 @@ export default function MainApp() {
 
     // Resample/smooth for stable derivative
     const { t: Tu, y: RPMu } = (() => {
-      // small guard if time isn't strictly increasing
       const strictlyInc = T.every((v, i) => i === 0 || v > T[i-1]);
       return strictlyInc ? resampleUniform(T, RPM, 60) : { t: [...T], y: [...RPM] };
     })();
@@ -643,9 +642,17 @@ export default function MainApp() {
   // -------- Dyno chart (equal Y scales for HP & TQ) --------
   const dynoChartOptions = useMemo(() => {
     if (!dyno) return null;
-    const maxHP = dyno.hp?.length ? Math.max(...dyno.hp) : 0;
-    const maxTQ = dyno.tq?.length ? Math.max(...dyno.tq) : 0;
-    const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10;
+
+    const maxFinite = (arr) => {
+      if (!arr) return 0;
+      const f = arr.filter(Number.isFinite);
+      return f.length ? Math.max(...f) : 0;
+    };
+
+    const maxHP = maxFinite(dyno.hp);
+    const maxTQ = maxFinite(dyno.tq);
+    const niceMax = Math.ceil(Math.max(maxHP, maxTQ) / 10) * 10 || 10;
+
     return {
       responsive: true,
       maintainAspectRatio: false,
@@ -908,13 +915,17 @@ export default function MainApp() {
                     datasets: [
                       {
                         label: 'Horsepower',
-                        data: dyno.x.map((v, i) => ({ x: v, y: dyno.hp[i] })),
+                        data: dyno.x
+                          .map((v, i) => ({ x: v, y: dyno.hp[i] }))
+                          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
                         borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
                         yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.25,
                       },
                       ...(dyno.tq ? [{
                         label: 'Torque (lb-ft)',
-                        data: dyno.x.map((v, i) => ({ x: v, y: dyno.tq[i] })),
+                        data: dyno.x
+                          .map((v, i) => ({ x: v, y: dyno.tq[i] }))
+                          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
                         borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
                         yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.25,
                       }] : []),
