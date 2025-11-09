@@ -73,7 +73,6 @@ const styles = {
   },
 };
 
-// ---------- helpers ----------
 const isNum = (v) => Number.isFinite(v);
 const movAvg = (arr, win=5) => {
   if (!arr || !arr.length) return [];
@@ -164,7 +163,7 @@ function parseCSV(raw) {
   segments = segments.filter(seg => seg.length > 5);
   if (!segments.length) return pack(points);
 
-  // shortest WOT window (most like a single pull)
+  // shortest WOT window
   segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
   const best = segments[0];
 
@@ -177,7 +176,7 @@ function parseCSV(raw) {
   return pack(norm);
 }
 
-// --- Single-gear sweep finder (WOT + near-monotonic rpm + near-constant rpm/mph ratio) ---
+// --- Single-gear sweep finder ---
 function selectRpmSweep(time, rpm, mph, pedal = null) {
   if (!rpm || !mph || rpm.length < 20 || mph.length !== rpm.length) return null;
 
@@ -206,7 +205,6 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
 
   const good = (i) => okRise(i) && isWOT(i) && ratio[i] !== null;
 
-  // coarse windows
   const coarse = [];
   let s = 1;
   for (let i = 1; i < rpm.length; i++) {
@@ -218,7 +216,6 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   if (rpm.length - 1 - s >= MIN_LEN) coarse.push([s, rpm.length - 1]);
   if (!coarse.length) return null;
 
-  // refine by rolling median of ratio
   const keepWindows = [];
   for (const [a, b] of coarse) {
     let i = a;
@@ -241,7 +238,6 @@ function selectRpmSweep(time, rpm, mph, pedal = null) {
   }
   if (!keepWindows.length) return null;
 
-  // longest window then gentle expand
   keepWindows.sort((u, v) => (v[1] - v[0]) - (u[1] - u[0]));
   let [i0, i1] = keepWindows[0];
   const LOOSE = RATIO_TOL * 1.5;
@@ -329,24 +325,18 @@ export default function MainApp() {
   const [formData, setFormData] = useState({
     vin: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: '',
-    weight: '', // lbs (Track mode only)
-    // pull gear UI (fallbacks)
-    pullLabel: '',   // e.g., "5th", "6th", or "__custom__"
-    pullGear: '',    // numeric manual entry when custom
+    weight: '',
+    pullLabel: '',
+    pullGear: '',
     logFile: null,
   });
 
-  // Mode toggle
-  const [dynoMode, setDynoMode] = useState('dyno'); // default to dyno for testing
-
-  // Auto-detect gear toggle
+  const [dynoMode, setDynoMode] = useState('dyno');
   const [autoDetectGear, setAutoDetectGear] = useState(true);
-
-  // Advanced parameters (Track mode only)
   const [showAdv, setShowAdv] = useState(false);
   const [crr, setCrr] = useState(0.015);
-  const [cda, setCda] = useState(8.5);      // ft^2
-  const [rho, setRho] = useState(0.00238);  // slug/ft^3
+  const [cda, setCda] = useState(8.5);
+  const [rho, setRho] = useState(0.00238);
 
   const [leftText, setLeftText] = useState('');
   const [aiText, setAiText] = useState('');
@@ -356,7 +346,6 @@ export default function MainApp() {
   const [status, setStatus] = useState('');
   const [dynoRemote, setDynoRemote] = useState(null);
 
-  // Gear catalog for selected transmission (backend source of truth)
   const [catalogGears, setCatalogGears] = useState([]);
   useEffect(() => {
     const name = formData.trans?.trim();
@@ -424,7 +413,6 @@ export default function MainApp() {
       form.append('weight', String(formData.weight || ''));
       form.append('mode', dynoMode);
 
-      // Send optional dyno params so backend can be the source of truth
       const rearVal = parseFloat(formData.gear || '');
       if (Number.isFinite(rearVal) && rearVal > 0) form.append('rear', String(rearVal));
 
@@ -434,7 +422,6 @@ export default function MainApp() {
       if (formData.trans) form.append('trans', formData.trans);
 
       if (!autoDetectGear) {
-        // If user selected a catalog gear, use it; else if Custom, use manual numeric
         if (formData.pullLabel && formData.pullLabel !== '__custom__' && catalogGears.length) {
           const found = catalogGears.find(g => g.label === formData.pullLabel);
           if (found) form.append('pullGear', String(found.ratio));
@@ -493,9 +480,8 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- Dyno (prefer backend; else local compute with scaling & gear detect/snap) --------
+  // -------- Dyno (prefer backend; else local) --------
   const dyno = useMemo(() => {
-    // Prefer backend precomputed arrays if present
     if (dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
       const hp = [...dynoRemote.hp];
       const tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
@@ -520,7 +506,6 @@ export default function MainApp() {
       };
     }
 
-    // Local compute needs RPM
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
 
     const time  = graphs.time;
@@ -536,7 +521,6 @@ export default function MainApp() {
     const RPM = rpm.slice(i0, i1 + 1);
     const MPH = mph.slice(i0, i1 + 1);
 
-    // Resample/smooth for stable derivative
     const { t: Tu, y: RPMu } = (() => {
       const strictlyInc = T.every((v, i) => i === 0 || v > T[i-1]);
       return strictlyInc ? resampleUniform(T, RPM, 60) : { t: [...T], y: [...RPM] };
@@ -544,16 +528,14 @@ export default function MainApp() {
     const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
-      return (arr[i + 1] - arr[i - 1]) * (60 / 2); // RPM/s at ~60 Hz
+      return (arr[i + 1] - arr[i - 1]) * (60 / 2);
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
 
-    // Rear gear & tire
     const rear = parseFloat(formData.gear || '');
     const rearGear = Number.isFinite(rear) && rear > 0 ? rear : 3.09;
     const tireIn = parseFloat(String(formData.tire || `${REF_TIRE_IN}`).replace(/[^0-9.]/g, '')) || REF_TIRE_IN;
 
-    // Auto detect pull gear (or fallbacks)
     let detectedGear = null;
     if (autoDetectGear) {
       const det = detectPullGear({ rpm: RPMs, mph: MPH, tireIn, rear: rearGear });
@@ -570,14 +552,12 @@ export default function MainApp() {
 
     let HP;
     if (dynoMode === 'dyno') {
-      // Dyno model with ratio/tire scaling (match backend)
       const overall = pull * rearGear;
       const s_overall = Math.pow(REF_OVERALL / overall, 2);
       const s_tire    = Math.pow(REF_TIRE_IN / tireIn, 2);
       const scale = s_overall * s_tire;
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
     } else {
-      // Track model: road-load (weight + rolling + aero)
       const MPH_TO_FTPS = 1.4666667;
       const HP_DEN = 550;
       const G = 32.174;
@@ -598,7 +578,6 @@ export default function MainApp() {
       HP = P_tot.map(p => p / HP_DEN);
     }
 
-    // Build RPM vs HP curve (bin by 100 rpm, smooth)
     const pts = [];
     for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HP[i])) pts.push({ x: RPMs[i], hp: HP[i] });
     if (!pts.length) return null;
@@ -689,7 +668,6 @@ export default function MainApp() {
     };
   }, [dyno]);
 
-  // --- Dyno setup status
   const dynoSetup = (() => {
     const hasWeight = !!formData.weight && !isNaN(parseFloat(formData.weight)) && parseFloat(formData.weight) > 0;
     const hasRPM = !!(
@@ -818,7 +796,7 @@ export default function MainApp() {
                   </label>
                 </div>
 
-                {/* When auto-detect is off or unavailable, let user choose a gear from catalog or manual */}
+                {/* Manual/catalog gear if needed */}
                 {(!autoDetectGear || catalogGears.length === 0) && (
                   <>
                     {catalogGears.length > 0 && (
@@ -901,74 +879,90 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* Dyno chart */}
+            {/* Dyno chart + summaries (new structure) */}
             {dyno && (
-              <div style={{ ...styles.card, height: 360 }}>
+              <div className="st-card" style={{ backgroundColor:'#1a1a1a', border:'1px solid #2a2a2a', borderRadius:8, padding:12 }}>
                 <div style={styles.titleWrap}>
                   <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
                 </div>
-                <Line
-                  data={{
-                    datasets: [
-                      {
-                        label: 'Horsepower',
-                        data: dyno.x
-                          .map((v, i) => ({ x: v, y: dyno.hp[i] }))
-                          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
-                        borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
-                        yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.25,
-                      },
-                      ...(dyno.tq ? [{
-                        label: 'Torque (lb-ft)',
-                        data: dyno.x
-                          .map((v, i) => ({ x: v, y: dyno.tq[i] }))
-                          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
-                        borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
-                        yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.25,
-                      }] : []),
-                      ...(dyno.peakHP ? [{
-                        label: 'Peak HP',
-                        data: [{ x: dyno.peakHP.rpm, y: dyno.peakHP.value }],
-                        yAxisID: 'yHP', borderColor: '#74ffb0', backgroundColor: '#74ffb0',
-                        pointRadius: 4, showLine: false,
-                      }] : []),
-                      ...(dyno.peakTQ ? [{
-                        label: 'Peak TQ',
-                        data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
-                        yAxisID: 'yTQ', borderColor: '#ffc96b', backgroundColor: '#ffc96b',
-                        pointRadius: 4, showLine: false,
-                      }] : []),
-                    ]
-                  }}
-                  options={dynoChartOptions}
-                />
 
-                {/* Stats */}
-                <div style={{ display:'flex', gap:16, marginTop:10, flexWrap:'wrap' }}>
+                {/* Fixed-height chart */}
+                <div className="chart-container">
+                  <Line
+                    data={{
+                      datasets: [
+                        {
+                          label: 'Horsepower',
+                          data: dyno.x
+                            .map((v, i) => ({ x: v, y: dyno.hp[i] }))
+                            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
+                          borderColor: '#74ffb0', backgroundColor: 'rgba(116,255,176,0.18)',
+                          yAxisID: 'yHP', borderWidth: 2, pointRadius: 0, tension: 0.25,
+                        },
+                        ...(dyno.tq ? [{
+                          label: 'Torque (lb-ft)',
+                          data: dyno.x
+                            .map((v, i) => ({ x: v, y: dyno.tq[i] }))
+                            .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y)),
+                          borderColor: '#ffc96b', backgroundColor: 'rgba(255,201,107,0.18)',
+                          yAxisID: 'yTQ', borderWidth: 2, pointRadius: 0, tension: 0.25,
+                        }] : []),
+                        ...(dyno.peakHP ? [{
+                          label: 'Peak HP',
+                          data: [{ x: dyno.peakHP.rpm, y: dyno.peakHP.value }],
+                          yAxisID: 'yHP', borderColor: '#74ffb0', backgroundColor: '#74ffb0',
+                          pointRadius: 4, showLine: false,
+                        }] : []),
+                        ...(dyno.peakTQ ? [{
+                          label: 'Peak TQ',
+                          data: [{ x: dyno.peakTQ.rpm, y: dyno.peakTQ.value }],
+                          yAxisID: 'yTQ', borderColor: '#ffc96b', backgroundColor: '#ffc96b',
+                          pointRadius: 4, showLine: false,
+                        }] : []),
+                      ]
+                    }}
+                    options={dynoChartOptions}
+                  />
+                </div>
+
+                {/* NEW: Summary cards under the chart */}
+                <div className="summary-section">
                   {dyno.peakHP && (
-                    <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
-                      <div style={{ fontSize:12, opacity:.85 }}>Peak HP</div>
-                      <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakHP.value)} hp @ {comma(dyno.peakHP.rpm,0)} rpm
+                    <div className="summary-card">
+                      <h3>Peak HP</h3>
+                      <div className="summary-value">
+                        {comma(dyno.peakHP.value)}
                       </div>
+                      <div className="summary-sub">at {comma(dyno.peakHP.rpm,0)} RPM</div>
                     </div>
                   )}
                   {dyno.peakTQ && (
-                    <div style={{ background:'#0f130f', border:'1px solid #1e2b1e', borderRadius:8, padding:'8px 10px' }}>
-                      <div style={{ fontSize:12, opacity:.85 }}>Peak TQ</div>
-                      <div style={{ fontWeight:700, color:'#eaff9c' }}>
-                        {comma(dyno.peakTQ.value)} lb-ft @ {comma(dyno.peakTQ.rpm,0)} rpm
+                    <div className="summary-card">
+                      <h3>Peak TQ</h3>
+                      <div className="summary-value">
+                        {comma(dyno.peakTQ.value)}
                       </div>
+                      <div className="summary-sub">at {comma(dyno.peakTQ.rpm,0)} RPM</div>
                     </div>
                   )}
+                </div>
+
+                <div className="st-section-divider" />
+
+                {/* Boost block as a single full-width card to avoid mixing/collisions */}
+                <div className="summary-section">
+                  <div className="summary-card" style={{ gridColumn: '1 / -1' }}>
+                    <h3>Boost (PSI)</h3>
+                    <BoostSummary boostData={dynoRemote?.boost || null} checklistText={leftText} />
+                  </div>
                 </div>
               </div>
             )}
 
-            {!!leftText && (
+            {!!leftText && !dyno && (
               <div style={styles.card}>
                 <BoostSummary checklistText={leftText} />
               </div>

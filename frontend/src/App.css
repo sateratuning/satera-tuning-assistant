@@ -318,3 +318,84 @@ input[type="file"]::file-selector-button:hover {
     cursor: pointer;
   }
 }
+
+/* ===== NEW: Dyno chart & summary spacing ===== */
+
+/* Keep HP/TQ chart visible and stable height */
+.chart-container {
+  position: relative;
+  height: 420px;              /* lock chart height so it doesn’t collapse */
+  margin-top: 16px;
+  margin-bottom: 32px;        /* breathing room before summaries */
+}
+
+/* Section wrapper for metric grids (power / boost etc.) */
+.summary-section {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 16px;
+  margin-top: 8px;
+  margin-bottom: 24px;
+}
+
+/* Individual metric card */
+.summary-card {
+  background: #111511;
+  border: 1px solid #1c281d;
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+}
+
+/* Titles and values in the metric cards */
+.summary-card h3 {
+  color: #aaff5a;
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin: 0 0 8px 0;
+  letter-spacing: .2px;
+}
+.summary-value {
+  color: #d6ff9f;
+  font-size: 2rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+/* Small helper text (e.g., "at 2368 RPM") */
+.summary-sub {
+  color: #92b794;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* Optional divider to separate groups (use if needed) */
+.st-section-divider {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(40,255,110,.0), rgba(40,255,110,.35), rgba(40,255,110,.0));
+  margin: 24px 0;
+}
+
+/* Ensure cards never overlap the chart even in tight containers */
+.st-main .chart-container + .summary-section,
+.st-main .chart-container + .st-card {
+  margin-top: 20px;
+}
+
+/* Extra safety for long Boost sections so they don't push chart out of view */
+.boost-section { /* attach to BoostSummary wrapper if you like */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
+/* Prevent flex parents from shrinking the chart */
+.chart-container canvas {
+  min-height: 100% !important;
+  max-height: 100% !important;
+}
+
+/* Tighten small screens */
+@media (max-width: 600px) {
+  .chart-container { height: 360px; margin-bottom: 24px; }
+}
