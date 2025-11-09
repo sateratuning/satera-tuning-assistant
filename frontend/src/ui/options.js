@@ -8,7 +8,7 @@ export const throttles     = ['Stock','84mm','90mm','95mm','105mm','108mm','112m
 export const powerAdders   = ['N/A','PD blower','Centrifugal','Turbo','Nitrous'];
 
 // ✅ Must match backend TRANS_RATIOS keys exactly for snap-to-catalog
-export const transmissions = ['8HP70','8HP90','TR6060','NAG1/WA580','Other'];
+export const transmissions = ['8HP70/75','8HP90/95','TR6060','NAG1/WA580','Other'];
 
 // ✅ Remove inch symbol so the app can parse a number (e.g., 28) cleanly
 export const tireHeights   = ['26','27','28','29','30','31','32','Other'];

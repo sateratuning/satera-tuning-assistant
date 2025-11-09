@@ -24,7 +24,12 @@ const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
 
 // ========= Track-only trim (quick global scaler) =========
-const TRACK_TRIM = 25; // 1.00 = no change. >1 raises reported track HP.
+const TRACK_TRIM = 1.18; // 1.00 = no change. >1 raises reported track HP.
+
+// ========= Physics constants (Track) =========
+const FT_PER_MPH = 1.4666667; // mph → ft/s
+const G_FTPS2 = 32.174;       // ft/s²
+const HP_DEN = 550;           // ft·lbf/s per HP
 
 // ========= Styles =========
 const styles = {
@@ -337,7 +342,9 @@ export default function MainApp() {
   const [dynoMode, setDynoMode] = useState('dyno');
   const [autoDetectGear, setAutoDetectGear] = useState(true);
   const [showAdv, setShowAdv] = useState(false);
-  const [crr, setCrr] = useState(0.5);
+
+  // Sensible Track defaults
+  const [crr, setCrr] = useState(0.015);
   const [cda, setCda] = useState(8.5);
   const [rho, setRho] = useState(0.00238);
 
@@ -453,7 +460,9 @@ export default function MainApp() {
       setAiResult(combined || 'No AI assessment returned.');
       setLeftText((quickChecks || '').trim());
       setAiText((aiPart || '').trim());
-      setDynoRemote(dynoJSON || null);
+
+      // IMPORTANT: Only use backend dyno curve in DYNO mode.
+      setDynoRemote((dynoMode === 'dyno' && dynoJSON && !dynoJSON.error) ? dynoJSON : null);
 
       setStatus('');
     } catch (err) {
@@ -483,9 +492,10 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- Dyno (prefer backend; else local) --------
+  // -------- Dyno (prefer backend for DYNO only; TRACK always local) --------
   const dyno = useMemo(() => {
-    if (dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
+    // Use backend curve only in Dyno mode
+    if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
       const hp = [...dynoRemote.hp];
       const tq = dynoRemote.tq ? [...dynoRemote.tq] : null;
       let peakHP = null, peakTQ = null;
@@ -509,6 +519,7 @@ export default function MainApp() {
       };
     }
 
+    // Local compute (both Dyno + Track supported here)
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
 
     const time  = graphs.time;
@@ -531,6 +542,7 @@ export default function MainApp() {
     const RPMs = zeroPhaseMovAvg(RPMu, 7);
     const dRPMdt = RPMs.map((_, i, arr) => {
       if (i === 0 || i === arr.length - 1) return 0;
+      // central difference over uniform 60 Hz resample → dt = 1/60
       return (arr[i + 1] - arr[i - 1]) * (60 / 2);
     });
     const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
@@ -561,25 +573,29 @@ export default function MainApp() {
       const scale = s_overall * s_tire;
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
     } else {
-      const MPH_TO_FTPS = 1.4666667;
-      const HP_DEN = 550;
-      const G = 32.174;
-      const V = MPH.map(v => v * MPH_TO_FTPS);
-      const Vs = zeroPhaseMovAvg(V, 5);
-      const A = Vs.map((_, i, arr) => {
-        if (i === 0 || i === arr.length - 1) return 0;
-        return (arr[i + 1] - arr[i - 1]) * (60 / 2);
+      // === TRACK MODE: true dt-based acceleration ===
+      const Vfts = MPH.map(v => v * FT_PER_MPH);
+      const Vs   = zeroPhaseMovAvg(Vfts, 5);
+
+      // central derivative using actual time deltas
+      const As = Vs.map((_, i) => {
+        if (i === 0 || i === Vs.length - 1) return 0;
+        const dv = Vs[i + 1] - Vs[i - 1];
+        const dt = (T[i + 1] - T[i - 1]); // seconds
+        return (dt !== 0) ? (dv / dt) : 0;
       });
-      const As = zeroPhaseMovAvg(A, 5);
+      const Asm = zeroPhaseMovAvg(As, 5);
 
       const weight = parseFloat(formData.weight || '0');
-      const mass = isNum(weight) && weight > 0 ? (weight / G) : 0;
-      const P_inert = Vs.map((v, i) => mass * As[i] * v);
-      const P_roll  = Vs.map(v => (crr * weight * v));
-      const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));
-      const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);
-      HP = P_tot.map(p => (p / HP_DEN) * TRACK_TRIM);
+      const mass = (isNum(weight) && weight > 0) ? (weight / G_FTPS2) : 0;
 
+      // Forces and power
+      const P_inert = Vs.map((v, i) => mass * Asm[i] * v);                  // ft·lbf/s
+      const P_roll  = Vs.map(v => (crr * weight * v));                       // ft·lbf/s
+      const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));            // ft·lbf/s
+      const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);      // ft·lbf/s
+
+      HP = P_tot.map(p => (p / HP_DEN) * TRACK_TRIM);
     }
 
     const pts = [];
@@ -861,14 +877,14 @@ export default function MainApp() {
                 <div>Mode: <strong style={{ color:'#eaff9c' }}>{dynoMode === 'dyno' ? 'Dyno' : 'Track'}</strong></div>
                 <div>
                   Weight considered:{' '}
-                  <strong style={{ color: dynoMode==='track' && dynoSetup.hasWeight ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
-                    {dynoMode==='track' ? (dynoSetup.hasWeight ? `${formData.weight} lbs` : 'No (enter weight)') : 'No (Dyno mode)'}
+                  <strong style={{ color: dynoMode==='track' && (!!formData.weight && parseFloat(formData.weight) > 0) ? '#74ffb0' : (dynoMode==='track' ? '#ffc96b' : '#74ffb0') }}>
+                    {dynoMode==='track' ? ((!!formData.weight && parseFloat(formData.weight) > 0) ? `${formData.weight} lbs` : 'No (enter weight)') : 'No (Dyno mode)'}
                   </strong>
                 </div>
                 <div>
                   Engine RPM available:{' '}
-                  <strong style={{ color: dynoSetup.hasRPM ? '#74ffb0' : '#ff9a9a' }}>
-                    {dynoSetup.hasRPM ? 'Detected' : 'Not found (dyno hidden)'}
+                  <strong style={{ color: ((graphs && graphs.rpm && graphs.rpm.some(v => v !== null)) || (dyno && dyno.usedRPM)) ? '#74ffb0' : '#ff9a9a' }}>
+                    {((graphs && graphs.rpm && graphs.rpm.some(v => v !== null)) || (dyno && dyno.usedRPM)) ? 'Detected' : 'Not found (dyno hidden)'}
                   </strong>
                 </div>
                 {dyno?.pullGearUsed && (
@@ -883,7 +899,7 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* Dyno chart + summaries (new structure) */}
+            {/* Dyno chart + summaries */}
             {dyno && (
               <div className="st-card" style={{ backgroundColor:'#1a1a1a', border:'1px solid #2a2a2a', borderRadius:8, padding:12 }}>
                 <div style={styles.titleWrap}>
@@ -932,7 +948,7 @@ export default function MainApp() {
                   />
                 </div>
 
-                {/* NEW: Summary cards under the chart */}
+                {/* Summary cards */}
                 <div className="summary-section">
                   {dyno.peakHP && (
                     <div className="summary-card">
@@ -956,7 +972,7 @@ export default function MainApp() {
 
                 <div className="st-section-divider" />
 
-                {/* Boost block as a single full-width card to avoid mixing/collisions */}
+                {/* Boost block */}
                 <div className="summary-section">
                   <div className="summary-card" style={{ gridColumn: '1 / -1' }}>
                     <h3>Boost (PSI)</h3>
