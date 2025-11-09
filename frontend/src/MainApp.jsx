@@ -903,7 +903,7 @@ export default function MainApp() {
             {dyno && (
               <div className="st-card" style={{ backgroundColor:'#1a1a1a', border:'1px solid #2a2a2a', borderRadius:8, padding:12 }}>
                 <div style={styles.titleWrap}>
-                  <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
+                  <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet (Results may not be accurate. This is an early BETA state)</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
