@@ -22,6 +22,9 @@ const API_BASE = process.env.REACT_APP_API_BASE || '';
 const K_DYNO = 0.0001435;           // HP = K_DYNO * RPM * dRPM/dt * scale
 const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
+// Applies only to POST-Analyze (server) dyno curve
+const DYNO_REMOTE_TRIM = 0.99; // 0.99 = ~1% lower. Raise/lower as needed.
+
 
 // ========= Track-only trim (quick global scaler) =========
 const TRACK_TRIM = 1.2; // 1.00 = no change. >1 raises reported track HP.
