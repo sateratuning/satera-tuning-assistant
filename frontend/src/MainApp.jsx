@@ -24,7 +24,7 @@ const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
 
 // ========= Track-only trim (quick global scaler) =========
-const TRACK_TRIM = 1.18; // 1.00 = no change. >1 raises reported track HP.
+const TRACK_TRIM = 25; // 1.00 = no change. >1 raises reported track HP.
 
 // ========= Styles =========
 const styles = {
