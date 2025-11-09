@@ -19,9 +19,12 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ========= Dyno Tunables (match backend) =========
-const K_DYNO = 0.0001436;           // HP = K_DYNO * RPM * dRPM/dt * scale
+const K_DYNO = 0.000139;           // HP = K_DYNO * RPM * dRPM/dt * scale
 const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
+
+// ========= Track-only trim (quick global scaler) =========
+const TRACK_TRIM = 1.18; // 1.00 = no change. >1 raises reported track HP.
 
 // ========= Styles =========
 const styles = {
@@ -334,7 +337,7 @@ export default function MainApp() {
   const [dynoMode, setDynoMode] = useState('dyno');
   const [autoDetectGear, setAutoDetectGear] = useState(true);
   const [showAdv, setShowAdv] = useState(false);
-  const [crr, setCrr] = useState(0.015);
+  const [crr, setCrr] = useState(0.5);
   const [cda, setCda] = useState(8.5);
   const [rho, setRho] = useState(0.00238);
 
@@ -575,7 +578,8 @@ export default function MainApp() {
       const P_roll  = Vs.map(v => (crr * weight * v));
       const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));
       const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);
-      HP = P_tot.map(p => p / HP_DEN);
+      HP = P_tot.map(p => (p / HP_DEN) * TRACK_TRIM);
+
     }
 
     const pts = [];
