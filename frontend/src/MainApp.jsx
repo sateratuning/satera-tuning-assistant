@@ -19,15 +19,15 @@ Chart.register(annotationPlugin);
 const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ========= Dyno Tunables (match backend) =========
-const K_DYNO = 0.0001430;           // HP = K_DYNO * RPM * dRPM/dt * scale
+const K_DYNO = 0.0001435;           // HP = K_DYNO * RPM * dRPM/dt * scale
 const REF_TIRE_IN = 28.0;
 const REF_OVERALL = 1.29 * 3.09;    // 5th × rear (baseline)
+// Applies only to POST-Analyze (server) dyno curve
+const DYNO_REMOTE_TRIM = 0.99; // 0.99 = ~1% lower. Raise/lower as needed.
 
-// ========= Force local-only dyno (no server curve) =========
-const DYNO_USE_REMOTE = false; // <- keep false so Analyze can't change Dyno numbers
 
 // ========= Track-only trim (quick global scaler) =========
-const TRACK_TRIM = 1.18; // 1.00 = no change. >1 raises reported track HP.
+const TRACK_TRIM = 1.2; // 1.00 = no change. >1 raises reported track HP.
 
 // ========= Physics constants (Track) =========
 const FT_PER_MPH = 1.4666667; // mph → ft/s
@@ -411,8 +411,6 @@ export default function MainApp() {
     setAiResult('');
     setLeftText('');
     setAiText('');
-
-    // IMPORTANT: always null so DYNO can't be overridden by backend
     setDynoRemote(null);
 
     try {
@@ -453,10 +451,11 @@ export default function MainApp() {
       if (!reviewRes.ok) throw new Error(`AI review failed: ${reviewRes.status}`);
 
       const text = await reviewRes.text();
-      const [mainPart/*, dynoPart*/] = text.split('===DYNO===');
+      const [mainPart, dynoPart] = text.split('===DYNO===');
       const [quickChecks, aiPart] = (mainPart || '').split('===SPLIT===');
 
-      // We intentionally ignore dynoPart here since DYNO_USE_REMOTE=false
+      let dynoJSON = null;
+      try { if (dynoPart) dynoJSON = JSON.parse(dynoPart); } catch {}
 
       const combined =
         (quickChecks || '').trim() +
@@ -464,6 +463,9 @@ export default function MainApp() {
       setAiResult(combined || 'No AI assessment returned.');
       setLeftText((quickChecks || '').trim());
       setAiText((aiPart || '').trim());
+
+      // IMPORTANT: Only use backend dyno curve in DYNO mode.
+      setDynoRemote((dynoMode === 'dyno' && dynoJSON && !dynoJSON.error) ? dynoJSON : null);
 
       setStatus('');
     } catch (err) {
@@ -493,11 +495,37 @@ export default function MainApp() {
     plugins: { legend: { labels: { color: '#adff2f' } } }
   };
 
-  // -------- Dyno (LOCAL ONLY in Dyno mode; Track always local) --------
+  // -------- Dyno (prefer backend for DYNO only; TRACK always local) --------
   const dyno = useMemo(() => {
-    // No remote dyno usage at all when DYNO_USE_REMOTE === false
-    // Track already never used remote in our last update.
+    // Use backend curve only in Dyno mode
+    if (dynoMode === 'dyno' && dynoRemote && !dynoRemote.error && dynoRemote.hp?.length) {
+  const hp = dynoRemote.hp.map(v => v * DYNO_REMOTE_TRIM);
+  const tq = dynoRemote.tq ? dynoRemote.tq.map(v => v * DYNO_REMOTE_TRIM) : null;
 
+  let peakHP = null, peakTQ = null;
+  if (hp.length) {
+    let iHP = 0; for (let i=1;i<hp.length;i++) if (hp[i] > hp[iHP]) iHP = i;
+    peakHP = { rpm: dynoRemote.x[iHP], value: +hp[iHP].toFixed(1) };
+  }
+  if (tq && tq.length) {
+    let iTQ = 0; for (let i=1;i<tq.length;i++) if (tq[i] > tq[iTQ]) iTQ = i;
+    peakTQ = { rpm: dynoRemote.x[iTQ], value: +tq[iTQ].toFixed(1) };
+  }
+
+  return {
+    ...dynoRemote,
+    hp, tq, peakHP, peakTQ,
+    usedRPM: true,
+    mode: dynoMode,
+    pullGearUsed: dynoRemote.pullGearUsed ?? null,
+    pullGearSource: dynoRemote.detectConf != null
+      ? (dynoRemote.pullGearUsed != null ? 'auto-estimated' : null)
+      : null
+  };
+}
+
+
+    // Local compute (both Dyno + Track supported here)
     if (!graphs || !graphs.rpm || !graphs.rpm.some(v => isNum(v) && v > 0)) return null;
 
     const time  = graphs.time;
@@ -551,7 +579,7 @@ export default function MainApp() {
       const scale = s_overall * s_tire;
       HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
     } else {
-      // === TRACK MODE (unchanged) ===
+      // === TRACK MODE: true dt-based acceleration ===
       const Vfts = MPH.map(v => v * FT_PER_MPH);
       const Vs   = zeroPhaseMovAvg(Vfts, 5);
 
@@ -567,10 +595,11 @@ export default function MainApp() {
       const weight = parseFloat(formData.weight || '0');
       const mass = (isNum(weight) && weight > 0) ? (weight / G_FTPS2) : 0;
 
-      const P_inert = Vs.map((v, i) => mass * Asm[i] * v);
-      const P_roll  = Vs.map(v => (crr * weight * v));
-      const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));
-      const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);
+      // Forces and power
+      const P_inert = Vs.map((v, i) => mass * Asm[i] * v);                  // ft·lbf/s
+      const P_roll  = Vs.map(v => (crr * weight * v));                       // ft·lbf/s
+      const P_aero  = Vs.map(v => (0.5 * rho * cda * v * v * v));            // ft·lbf/s
+      const P_tot   = P_inert.map((p, i) => p + P_roll[i] + P_aero[i]);      // ft·lbf/s
 
       HP = P_tot.map(p => (p / HP_DEN) * TRACK_TRIM);
     }
@@ -880,7 +909,7 @@ export default function MainApp() {
             {dyno && (
               <div className="st-card" style={{ backgroundColor:'#1a1a1a', border:'1px solid #2a2a2a', borderRadius:8, padding:12 }}>
                 <div style={styles.titleWrap}>
-                  <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet</h3>
+                  <h3 style={styles.sectionTitleFancy}>🧪 Simulated Dyno Sheet (Results may not be accurate. This is an early BETA state)</h3>
                 </div>
                 <div style={{ fontSize: 13, opacity: 0.85, marginBottom: 6 }}>
                   HP (left) / TQ (right) vs RPM — single-gear WOT • Mode: <b>{dynoMode}</b>
@@ -953,7 +982,7 @@ export default function MainApp() {
                 <div className="summary-section">
                   <div className="summary-card" style={{ gridColumn: '1 / -1' }}>
                     <h3>Boost (PSI)</h3>
-                    <BoostSummary boostData={null} checklistText={leftText} />
+                    <BoostSummary boostData={dynoRemote?.boost || null} checklistText={leftText} />
                   </div>
                 </div>
               </div>
