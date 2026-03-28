@@ -105,8 +105,14 @@ function analyzeCsvContent(content) {
   const headerRowIndex = lines.findIndex(r => /(^|,)\s*offset\s*(,|$)/i.test(r));
   if (headerRowIndex === -1) throw new Error('Could not locate header row');
   const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
-  const dataStart = headerRowIndex + 4;
-  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(','));
+  // Skip units, blanks, and optional [Channel Data] label — find first numeric data row
+  let dataStart = headerRowIndex + 1;
+  while (dataStart < lines.length) {
+    const line = lines[dataStart].trim();
+    if (line && /^-?[0-9]/.test(line) && line.includes(",")) break;
+    dataStart++;
+  }
+  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(","));
   const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
   const parsed = dataRows.map(row => {
     const values = row.split(',');
