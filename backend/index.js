@@ -291,13 +291,15 @@ function formatChecklist(parsed, headers) {
     // ── Fuel Pressure (Actual vs Desired) ──────────────
     // HP Tuners uses these column names — check both common variants
     const fuelActualCandidates = [
+      'Fuel Rail Pressure',           // confirmed HP Tuners column name
       'Fuel Rail Pressure (Actual)',
       'Fuel Pressure (Actual)',
       'Fuel Rail Pressure Actual',
       'Fuel Pressure Actual',
-      'Fuel Rail Pressure',
+      'Fuel Pressure',
     ];
     const fuelDesiredCandidates = [
+      'Desired Fuel Pressure',        // confirmed HP Tuners column name
       'Fuel Rail Pressure (Desired)',
       'Fuel Pressure (Desired)',
       'Fuel Rail Pressure Desired',
@@ -305,8 +307,17 @@ function formatChecklist(parsed, headers) {
       'Desired Fuel Rail Pressure',
     ];
 
-    const fuelActualCol  = fuelActualCandidates.find(hasCol);
-    const fuelDesiredCol = fuelDesiredCandidates.find(hasCol);
+    // Case-insensitive match — handles any capitalization HP Tuners uses
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+    const findColCI = (candidates) => {
+      for (const c of candidates) {
+        const idx = lowerHeaders.indexOf(c.toLowerCase().trim());
+        if (idx !== -1) return headers[idx];
+      }
+      return undefined;
+    };
+    const fuelActualCol  = findColCI(fuelActualCandidates);
+    const fuelDesiredCol = findColCI(fuelDesiredCandidates);
 
     if (fuelActualCol && fuelDesiredCol) {
       // Evaluate during WOT only for meaningful rail pressure data
