@@ -532,26 +532,25 @@ AI Review:/i)[0].trim();
   // Extract AI narrative (Summary + What This Means For You) from reviewText
   const reviewAiParts = useMemo(() => {
     if (!reviewText) return { summary: null, action: null };
-    const aiSection = reviewText.split(/
-
-AI Review:/i)[1] || '';
-    const cleaned = aiSection.replace(/^AI Review:\s*/i, '').trim();
-    const summaryMatch = cleaned.match(/^(?:Summary\s*[:
-]?\s*)?([\s\S]*?)(?=What This Means For You|$)/i);
-    const actionMatch  = cleaned.match(/What This Means For You\s*[:
-]?\s*([\s\S]+?)$/i);
-    let summary = summaryMatch ? summaryMatch[1].trim() : cleaned;
-    summary = summary.replace(/^Summary\s*[:
-]?\s*/i, '').trim();
-    const action = actionMatch ? actionMatch[1].trim() : null;
-    return { summary: summary || null, action };
+    // Split on the "AI Review:" marker inserted by runLogReview
+    const parts = reviewText.split('AI Review:');
+    if (parts.length < 2) return { summary: null, action: null };
+    const aiSection = parts[1].trim();
+    // Strip leading "Summary" heading if the AI included it
+    const withoutSummaryHead = aiSection.replace(/^Summary\s*/i, '').trim();
+    // Split into summary + action on "What This Means For You"
+    const splitIdx = withoutSummaryHead.search(/What This Means For You/i);
+    if (splitIdx === -1) return { summary: withoutSummaryHead || null, action: null };
+    const summary = withoutSummaryHead.slice(0, splitIdx).trim();
+    const action  = withoutSummaryHead.slice(splitIdx).replace(/^What This Means For You\s*/i, '').trim();
+    return { summary: summary || null, action: action || null };
   }, [reviewText]);
 
   // ── Layout breakpoints ─────────────────────────────────
   // 3-col on wide, 1-col on narrow
   const layoutStyle = isNarrow
     ? { display: 'grid', gridTemplateColumns: '1fr', gap: 16 }
-    : { display: 'grid', gridTemplateColumns: '340px 1fr 380px', gap: 16 };
+    : { display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16 };
 
   return (
     <div style={css.page}>
@@ -707,73 +706,62 @@ AI Review:/i)[1] || '';
           </div>
         </div>
 
-        {/* ── 3-COLUMN LAYOUT ─────────────────────────── */}
+        {/* ── VEHICLE BAR (horizontal, full width) ────── */}
+        <div style={{ ...css.card, marginBottom: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+            <p style={{ ...css.sectionTitle, margin: 0 }}>Vehicle Details</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={submitToLeaderboard} disabled={submitting} style={{ ...css.btnPrimary, padding: '8px 18px' }}>
+                {submitting ? 'Submitting…' : '🏆 Submit to Leaderboard'}
+              </button>
+              {!user && <span style={{ fontSize: 11, color: T.amber }}>Sign in required</span>}
+              {status && !showEmailForm && (
+                <span style={{ fontSize: 12, color: status.startsWith('✅') ? T.green : status.startsWith('❌') ? T.red : T.muted }}>
+                  {status}
+                </span>
+              )}
+            </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
+            <input
+              name="name"
+              placeholder={user ? maskedDisplayName(user) : 'Display name'}
+              value={user ? maskedDisplayName(user) : vehicle.name}
+              onChange={user ? undefined : e => setVehicle(v => ({ ...v, name: e.target.value }))}
+              readOnly={!!user}
+              style={{ ...css.input, opacity: user ? 0.6 : 1, cursor: user ? 'not-allowed' : 'text' }}
+            />
+            <select name="year" value={vehicle.year} onChange={e => setVehicle(v => ({ ...v, year: e.target.value }))} style={css.select}>
+              <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+            <select name="model" value={vehicle.model} onChange={e => setVehicle(v => ({ ...v, model: e.target.value }))} style={css.select}>
+              <option value="">Model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            <select name="engine" value={vehicle.engine} onChange={e => setVehicle(v => ({ ...v, engine: e.target.value }))} style={css.select}>
+              <option value="">Engine</option>{engines.map(e => <option key={e} value={e}>{e}</option>)}
+            </select>
+            <select name="trans" value={vehicle.trans} onChange={e => setVehicle(v => ({ ...v, trans: e.target.value }))} style={css.select}>
+              <option value="">Transmission</option>{transmissions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            <select name="power" value={vehicle.power} onChange={e => setVehicle(v => ({ ...v, power: e.target.value }))} style={css.select}>
+              <option value="">Power</option>{powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+            <select name="fuel" value={vehicle.fuel} onChange={e => setVehicle(v => ({ ...v, fuel: e.target.value }))} style={css.select}>
+              <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <select name="gear" value={vehicle.gear} onChange={e => setVehicle(v => ({ ...v, gear: e.target.value }))} style={css.select}>
+              <option value="">Rear Gear</option>{gearRatios.map(g => <option key={g} value={g}>{g}</option>)}
+            </select>
+            <select name="tire" value={vehicle.tire} onChange={e => setVehicle(v => ({ ...v, tire: e.target.value }))} style={css.select}>
+              <option value="">Tire Height</option>{tireHeights.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </div>
+        </div>
+
+        {/* ── 2-COLUMN LAYOUT: center + leaderboard ────── */}
         <div style={layoutStyle}>
 
-          {/* ── COL 1: Vehicle / Submit ───────────────── */}
-          <aside style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
-            <div style={css.card}>
-              <p style={css.sectionTitle}>Vehicle Details</p>
-              <div style={{ display: 'grid', gap: 8 }}>
-                <input
-                  name="name"
-                  placeholder={user ? maskedDisplayName(user) : 'Display name'}
-                  value={user ? maskedDisplayName(user) : vehicle.name}
-                  onChange={user ? undefined : e => setVehicle(v => ({ ...v, name: e.target.value }))}
-                  readOnly={!!user}
-                  style={{ ...css.input, opacity: user ? 0.6 : 1, cursor: user ? 'not-allowed' : 'text' }}
-                />
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <select name="year" value={vehicle.year} onChange={e => setVehicle(v => ({ ...v, year: e.target.value }))} style={css.select}>
-                    <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
-                  </select>
-                  <select name="model" value={vehicle.model} onChange={e => setVehicle(v => ({ ...v, model: e.target.value }))} style={css.select}>
-                    <option value="">Model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}
-                  </select>
-                </div>
-                <select name="engine" value={vehicle.engine} onChange={e => setVehicle(v => ({ ...v, engine: e.target.value }))} style={css.select}>
-                  <option value="">Engine</option>{engines.map(e => <option key={e} value={e}>{e}</option>)}
-                </select>
-                <select name="trans" value={vehicle.trans} onChange={e => setVehicle(v => ({ ...v, trans: e.target.value }))} style={css.select}>
-                  <option value="">Transmission</option>{transmissions.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <select name="power" value={vehicle.power} onChange={e => setVehicle(v => ({ ...v, power: e.target.value }))} style={css.select}>
-                    <option value="">Power</option>{powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
-                  </select>
-                  <select name="fuel" value={vehicle.fuel} onChange={e => setVehicle(v => ({ ...v, fuel: e.target.value }))} style={css.select}>
-                    <option value="">Fuel</option>{fuels.map(f => <option key={f} value={f}>{f}</option>)}
-                  </select>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
-                  <select name="gear" value={vehicle.gear} onChange={e => setVehicle(v => ({ ...v, gear: e.target.value }))} style={css.select}>
-                    <option value="">Rear Gear</option>{gearRatios.map(g => <option key={g} value={g}>{g}</option>)}
-                  </select>
-                  <select name="tire" value={vehicle.tire} onChange={e => setVehicle(v => ({ ...v, tire: e.target.value }))} style={css.select}>
-                    <option value="">Tire Height</option>{tireHeights.map(t => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <button onClick={submitToLeaderboard} disabled={submitting} style={{ ...css.btnPrimary, width: '100%', textAlign: 'center' }}>
-                  {submitting ? 'Submitting…' : '🏆 Submit to Leaderboard'}
-                </button>
-                {!user && (
-                  <p style={{ fontSize: 11, color: T.amber, margin: 0, textAlign: 'center' }}>
-                    Sign in required to submit
-                  </p>
-                )}
-                {status && !showEmailForm && (
-                  <p style={{ fontSize: 12, color: status.startsWith('✅') ? T.green : status.startsWith('❌') ? T.red : T.muted, margin: 0, textAlign: 'center' }}>
-                    {status}
-                  </p>
-                )}
-              </div>
-            </div>
-          </aside>
-
-          {/* ── COL 2: Graph + AI Review ──────────────── */}
+          {/* ── COL 1: Graph + AI Review ──────────────── */}
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
 
             {/* Speed graph */}
@@ -958,7 +946,7 @@ AI Review:/i)[1] || '';
             </div>
           </div>
 
-          {/* ── COL 3: Leaderboard ────────────────────── */}
+          {/* ── COL 2: Leaderboard ────────────────────── */}
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <div style={css.card}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 8 }}>
