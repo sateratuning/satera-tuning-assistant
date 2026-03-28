@@ -547,7 +547,7 @@ export default function LogComparison() {
   // 3-col on wide, 1-col on narrow
   const layoutStyle = isNarrow
     ? { display: 'grid', gridTemplateColumns: '1fr', gap: 16 }
-    : { display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 420px', gap: 16 };
+    : { display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 };
 
   return (
     <div style={css.page}>
@@ -954,7 +954,7 @@ export default function LogComparison() {
               </div>
 
               {/* Filters */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 12 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, marginBottom: 12 }}>
                 <select value={filters.year} onChange={e => setFilters(f => ({ ...f, year: e.target.value }))} style={{ ...css.select, fontSize: 12 }}>
                   <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
@@ -987,14 +987,14 @@ export default function LogComparison() {
                   <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                     <thead>
                       <tr style={{ background: '#0d150d' }}>
-                        {['#','Name','Model','Power','Time',''].map((h, i) => (
+                        {['#','Name','Year','Model','Power','Time',''].map((h, i) => (
                           <th key={i} style={{
                             position: 'sticky', top: 0, background: '#0d150d',
-                            textAlign: i === 4 ? 'right' : i === 5 ? 'center' : 'left',
-                            padding: '8px 8px', fontSize: 11, color: T.muted,
+                            textAlign: i === 5 ? 'right' : i === 6 ? 'center' : 'left',
+                            padding: '8px 10px', fontSize: 11, color: T.muted,
                             fontWeight: 600, letterSpacing: 0.8, textTransform: 'uppercase',
                             borderBottom: `1px solid ${T.border}`,
-                            width: [32, 90, 90, 80, 60, 70][i],
+                            width: [36, 100, 50, 90, 80, 70, 80][i],
                           }}>{h}</th>
                         ))}
                       </tr>
@@ -1004,10 +1004,11 @@ export default function LogComparison() {
                         const isTop = idx < 3;
                         return (
                           <tr key={r.id} className={`lb-row${isTop ? ' lb-row-top' : ''}`}>
-                            <td style={{ width: 32, textAlign: 'center' }}><RankMedal rank={idx + 1}/></td>
+                            <td style={{ width: 36, textAlign: 'center' }}><RankMedal rank={idx + 1}/></td>
                             <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {r.user_alias || 'Anon'}
                             </td>
+                            <td style={{ color: T.muted }}>{r.vehicle_year || r.year || '—'}</td>
                             <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.muted }}>
                               {r.vehicle_model || r.model || '—'}
                             </td>
