@@ -512,11 +512,16 @@ export default function LogComparison() {
   const reviewLines = useMemo(() => {
     if (!reviewText) return [];
     return reviewText.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
-      let type = 'info';
-      if (line.startsWith('⚠️') || line.startsWith('🚨')) type = 'warn';
-      else if (line.startsWith('✅')) type = 'ok';
-      else if (['📈','🚀','🚦','📊','🌀','🎯'].some(e => line.startsWith(e))) type = 'stat';
-      return { type, line };
+      let type = 'info', body = line;
+      if (line.startsWith('CRITICAL:'))      { type = 'critical'; body = line.slice(9).trim(); }
+      else if (line.startsWith('WARN:'))     { type = 'warn';     body = line.slice(5).trim(); }
+      else if (line.startsWith('OK:'))       { type = 'ok';       body = line.slice(3).trim(); }
+      else if (line.startsWith('STAT:'))     { type = 'stat';     body = line.slice(5).trim(); }
+      else if (line.startsWith('INFO:'))     { type = 'info';     body = line.slice(5).trim(); }
+      else if (line.startsWith('⚠️') || line.startsWith('🚨')) { type = 'warn'; }
+      else if (line.startsWith('✅')) { type = 'ok'; }
+      else if (['📈','🚀','🚦','📊','🌀','🎯'].some(e => line.startsWith(e))) { type = 'stat'; }
+      return { type, body };
     });
   }, [reviewText]);
 
@@ -816,21 +821,76 @@ export default function LogComparison() {
                 </div>
               )}
 
-              {!reviewLoading && reviewLines.length > 0 && (
-                <div>
-                  {reviewLines.map((l, i) => {
-                    const colors = { ok: T.green, warn: T.amber, stat: T.blue, info: T.muted };
-                    const bgs    = { ok: 'rgba(61,255,122,0.05)', warn: 'rgba(245,166,35,0.06)', stat: 'rgba(77,184,255,0.05)', info: 'transparent' };
-                    return (
-                      <div key={i} style={{ padding: '6px 10px', borderRadius: 6, background: bgs[l.type], marginBottom: 3 }}>
-                        <span style={{ fontSize: 13, lineHeight: 1.5, color: colors[l.type], whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-                          {l.line}
-                        </span>
+              {!reviewLoading && reviewLines.length > 0 && (() => {
+                const CHECK_STYLE = {
+                  critical: { icon: '🚨', label: 'Critical', color: '#ff5252', bg: 'rgba(255,82,82,0.06)',   border: '#ff5252' },
+                  warn:     { icon: '⚠️',  label: 'Warning',  color: '#f5a623', bg: 'rgba(245,166,35,0.06)', border: '#f5a623' },
+                  ok:       { icon: '✅',  label: 'Good',     color: '#3dff7a', bg: 'rgba(61,255,122,0.05)', border: '#3dff7a' },
+                  stat:     { icon: '📊',  label: 'Data',     color: '#4db8ff', bg: 'rgba(77,184,255,0.05)', border: '#4db8ff' },
+                  info:     { icon: 'ℹ️',  label: 'Info',     color: '#6b9f6b', bg: 'transparent',           border: '#2e4a2e' },
+                };
+                const criticals = reviewLines.filter(l => l.type === 'critical');
+                const warns     = reviewLines.filter(l => l.type === 'warn');
+                const oks       = reviewLines.filter(l => l.type === 'ok');
+                const stats     = reviewLines.filter(l => l.type === 'stat');
+                const infos     = reviewLines.filter(l => l.type === 'info');
+                const Row = ({ type, body }) => {
+                  const s = CHECK_STYLE[type] || CHECK_STYLE.info;
+                  return (
+                    <div style={{ display:'flex', gap:8, padding:'8px 10px', borderRadius:6, background:s.bg, marginBottom:3, borderLeft:`3px solid ${s.border}` }}>
+                      <span style={{ fontSize:13, flexShrink:0 }}>{s.icon}</span>
+                      <div>
+                        <span style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:s.color, display:'block', marginBottom:2 }}>{s.label}</span>
+                        <span style={{ fontSize:12, lineHeight:1.6, color:'#dff0df', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{body}</span>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
+                    </div>
+                  );
+                };
+                return (
+                  <div style={{ display:'grid', gap:10, marginTop:4 }}>
+                    {criticals.length > 0 && (
+                      <div style={{ background:'rgba(255,82,82,0.06)', border:'1px solid rgba(255,82,82,0.2)', borderRadius:8, padding:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:'#ff5252', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>⚠ Needs Immediate Attention</div>
+                        {criticals.map((l,i) => <Row key={i} {...l}/>)}
+                      </div>
+                    )}
+                    {warns.length > 0 && (
+                      <div style={{ background:'rgba(245,166,35,0.04)', border:'1px solid rgba(245,166,35,0.15)', borderRadius:8, padding:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:'#f5a623', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>Attention Needed</div>
+                        {warns.map((l,i) => <Row key={i} {...l}/>)}
+                      </div>
+                    )}
+                    {stats.length > 0 && (
+                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:'#6b9f6b', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>Performance Data</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+                          {stats.map((l,i) => {
+                            const parts = l.body.split(':');
+                            const label = parts[0]?.trim(), value = parts.slice(1).join(':').trim();
+                            return (
+                              <div key={i} style={{ background:'#0e160e', border:'1px solid #1f2d1f', borderRadius:6, padding:'8px 10px' }}>
+                                <div style={{ fontSize:10, color:'#6b9f6b', textTransform:'uppercase', letterSpacing:0.8, marginBottom:3 }}>{label}</div>
+                                <div style={{ fontSize:14, fontWeight:700, color:'#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {oks.length > 0 && (
+                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
+                        <div style={{ fontSize:11, fontWeight:700, color:'#3dff7a', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>All Clear</div>
+                        {oks.map((l,i) => <Row key={i} {...l}/>)}
+                      </div>
+                    )}
+                    {infos.length > 0 && (
+                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
+                        {infos.map((l,i) => <Row key={i} {...l}/>)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
