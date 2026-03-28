@@ -246,12 +246,18 @@ function resampleUniform(T,Y,targetHz=60){
 // ── Checklist line parser ──────────────────────────────────
 function parseChecklistLines(text) {
   if (!text) return [];
-  return text.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
-    let type = 'info';
-    if (line.startsWith('⚠️') || line.startsWith('🚨')) type = 'warn';
-    else if (line.startsWith('✅')) type = 'ok';
-    else if (line.startsWith('📈') || line.startsWith('🚀') || line.startsWith('🚦') || line.startsWith('📊') || line.startsWith('🌀') || line.startsWith('🎯')) type = 'stat';
-    return { type, text: line };
+  return text.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    let type = 'info', body = line;
+    if (line.startsWith('CRITICAL:')) { type = 'critical'; body = line.slice(9).trim(); }
+    else if (line.startsWith('WARN:'))     { type = 'warn';     body = line.slice(5).trim(); }
+    else if (line.startsWith('OK:'))       { type = 'ok';       body = line.slice(3).trim(); }
+    else if (line.startsWith('STAT:'))     { type = 'stat';     body = line.slice(5).trim(); }
+    else if (line.startsWith('INFO:'))     { type = 'info';     body = line.slice(5).trim(); }
+    // legacy emoji fallback
+    else if (line.startsWith('⚠️') || line.startsWith('🚨')) { type = 'warn'; }
+    else if (line.startsWith('✅')) { type = 'ok'; }
+    else if (['📈','🚀','🚦','📊','🌀','🎯'].some(e => line.startsWith(e))) { type = 'stat'; }
+    return { type, body };
   });
 }
 
@@ -269,18 +275,32 @@ function Skeleton({ height = 18, width = '100%', style = {} }) {
 }
 
 // ── Checklist row ──────────────────────────────────────────
-function CheckRow({ type, text }) {
-  const colors = { ok: T.green, warn: T.amber, stat: T.blue, info: T.muted };
-  const bg     = { ok: 'rgba(61,255,122,0.05)', warn: 'rgba(245,166,35,0.06)', stat: 'rgba(77,184,255,0.05)', info: 'transparent' };
+const CHECK_STYLE = {
+  critical: { icon: '🚨', label: 'Critical',  color: '#ff5252', bg: 'rgba(255,82,82,0.06)',    border: 'rgba(255,82,82,0.25)'    },
+  warn:     { icon: '⚠️',  label: 'Warning',   color: '#f5a623', bg: 'rgba(245,166,35,0.06)',  border: 'rgba(245,166,35,0.25)'   },
+  ok:       { icon: '✅',  label: 'Good',      color: '#3dff7a', bg: 'rgba(61,255,122,0.05)',  border: 'rgba(61,255,122,0.2)'    },
+  stat:     { icon: '📊',  label: 'Data',      color: '#4db8ff', bg: 'rgba(77,184,255,0.05)',  border: 'rgba(77,184,255,0.2)'    },
+  info:     { icon: 'ℹ️',  label: 'Info',      color: '#6b9f6b', bg: 'transparent',            border: 'rgba(107,159,107,0.15)'  },
+};
+function CheckRow({ type, body }) {
+  const s = CHECK_STYLE[type] || CHECK_STYLE.info;
   return (
     <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 10,
-      padding: '7px 10px', borderRadius: 6,
-      background: bg[type], marginBottom: 3,
+      display: 'flex', gap: 10, padding: '9px 12px',
+      borderRadius: 7, background: s.bg, marginBottom: 4,
+      borderLeft: `3px solid ${s.color}`,
+      alignItems: 'flex-start',
     }}>
-      <span style={{ fontSize: 13, lineHeight: 1.5, color: colors[type], whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-        {text}
-      </span>
+      <span style={{ fontSize: 14, flexShrink: 0, marginTop: 1 }}>{s.icon}</span>
+      <div style={{ flex: 1 }}>
+        <span style={{
+          fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
+          color: s.color, display: 'block', marginBottom: 2, opacity: 0.9,
+        }}>{s.label}</span>
+        <span style={{ fontSize: 13, lineHeight: 1.6, color: '#dff0df', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {body}
+        </span>
+      </div>
     </div>
   );
 }
@@ -796,12 +816,64 @@ export default function MainApp() {
             )}
 
             {/* Checklist */}
-            {!loading && checklistLines.length > 0 && (
-              <div style={{ ...css.card, animation:'fadeIn 0.4s ease' }}>
-                <p style={css.sectionTitle}>Quick Check Results</p>
-                {checklistLines.map((l,i) => <CheckRow key={i} {...l}/>)}
-              </div>
-            )}
+            {!loading && checklistLines.length > 0 && (() => {
+              const criticals = checklistLines.filter(l => l.type === 'critical');
+              const warns     = checklistLines.filter(l => l.type === 'warn');
+              const oks       = checklistLines.filter(l => l.type === 'ok');
+              const stats     = checklistLines.filter(l => l.type === 'stat');
+              const infos     = checklistLines.filter(l => l.type === 'info');
+              return (
+                <div style={{ display:'grid', gap:12, animation:'fadeIn 0.4s ease' }}>
+                  {/* Alert banner for criticals */}
+                  {criticals.length > 0 && (
+                    <div style={{ background:'rgba(255,82,82,0.07)', border:'1px solid rgba(255,82,82,0.25)', borderRadius:10, padding:16 }}>
+                      <p style={{ ...css.sectionTitle, color:'#ff5252', margin:'0 0 10px' }}>⚠ Needs Immediate Attention</p>
+                      {criticals.map((l,i) => <CheckRow key={i} {...l}/>)}
+                    </div>
+                  )}
+                  {/* Warnings */}
+                  {warns.length > 0 && (
+                    <div style={{ background:'rgba(245,166,35,0.04)', border:'1px solid rgba(245,166,35,0.15)', borderRadius:10, padding:16 }}>
+                      <p style={{ ...css.sectionTitle, color:'#f5a623', margin:'0 0 10px' }}>Attention Needed</p>
+                      {warns.map((l,i) => <CheckRow key={i} {...l}/>)}
+                    </div>
+                  )}
+                  {/* Stats row */}
+                  {stats.length > 0 && (
+                    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
+                      <p style={{ ...css.sectionTitle, margin:'0 0 10px' }}>Performance Data</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:8 }}>
+                        {stats.map((l,i) => {
+                          const parts = l.body.split(':');
+                          const label = parts[0]?.trim();
+                          const value = parts.slice(1).join(':').trim();
+                          return (
+                            <div key={i} style={{ background:'#0e160e', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px' }}>
+                              <div style={{ fontSize:11, color:T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:4 }}>{label}</div>
+                              <div style={{ fontSize:16, fontWeight:700, color:'#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  {/* All clear */}
+                  {oks.length > 0 && (
+                    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
+                      <p style={{ ...css.sectionTitle, margin:'0 0 10px' }}>All Clear</p>
+                      {oks.map((l,i) => <CheckRow key={i} {...l}/>)}
+                    </div>
+                  )}
+                  {/* Info items */}
+                  {infos.length > 0 && (
+                    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
+                      <p style={{ ...css.sectionTitle, margin:'0 0 10px' }}>Notes</p>
+                      {infos.map((l,i) => <CheckRow key={i} {...l}/>)}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {/* Dyno setup status */}
             {graphs && !loading && (
@@ -867,20 +939,33 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* AI Assessment */}
-            {!loading && aiText && (
-              <div style={{ ...css.card, animation:'fadeIn 0.55s ease' }}>
-                <p style={css.sectionTitle}>🧠 AI Assessment</p>
-                <div style={{
-                  background:'#0a100a', border:`1px solid ${T.border}`,
-                  borderRadius:8, padding:14,
-                  fontSize:13, lineHeight:1.7, color:T.text,
-                  whiteSpace:'pre-wrap', wordBreak:'break-word',
-                }}>
-                  {aiText}
+            {/* AI Assessment — split into Summary + What This Means For You */}
+            {!loading && aiText && (() => {
+              const summaryMatch = aiText.match(/Summary\s*([\s\S]*?)(?=What This Means For You|$)/i);
+              const actionMatch  = aiText.match(/What This Means For You\s*([\s\S]*?)$/i);
+              const summaryText  = summaryMatch ? summaryMatch[1].trim() : aiText.trim();
+              const actionText   = actionMatch  ? actionMatch[1].trim()  : null;
+              return (
+                <div style={{ display:'grid', gap:12, animation:'fadeIn 0.55s ease' }}>
+                  <div style={{ background:T.card, border:`1px solid ${T.borderHi}`, borderRadius:10, padding:20 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+                      <div style={{ width:36, height:36, borderRadius:8, background:'rgba(61,255,122,0.1)', border:`1px solid rgba(61,255,122,0.2)`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🧠</div>
+                      <p style={{ ...css.sectionTitle, margin:0 }}>AI Summary</p>
+                    </div>
+                    <p style={{ fontSize:14, lineHeight:1.75, color:T.text, margin:0 }}>{summaryText}</p>
+                  </div>
+                  {actionText && (
+                    <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:20 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+                        <div style={{ width:36, height:36, borderRadius:8, background:'rgba(77,184,255,0.1)', border:`1px solid rgba(77,184,255,0.2)`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🔧</div>
+                        <p style={{ ...css.sectionTitle, color:'#4db8ff', margin:0 }}>What This Means For You</p>
+                      </div>
+                      <p style={{ fontSize:14, lineHeight:1.75, color:T.text, margin:0 }}>{actionText}</p>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* AI Suggestions */}
             {!loading && suggestions.length > 0 && (
