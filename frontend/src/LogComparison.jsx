@@ -511,7 +511,9 @@ export default function LogComparison() {
   // ── Review text parser (reuse from MainApp style) ──────
   const reviewLines = useMemo(() => {
     if (!reviewText) return [];
-    return reviewText.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    // Strip everything from "AI Review:" onward — that section is shown separately
+    const checklistOnly = reviewText.split(/\n\nAI Review:/i)[0].trim();
+    return checklistOnly.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
       let type = 'info', body = line;
       if (line.startsWith('CRITICAL:'))      { type = 'critical'; body = line.slice(9).trim(); }
       else if (line.startsWith('WARN:'))     { type = 'warn';     body = line.slice(5).trim(); }
@@ -836,12 +838,25 @@ export default function LogComparison() {
                 const infos     = reviewLines.filter(l => l.type === 'info');
                 const Row = ({ type, body }) => {
                   const s = CHECK_STYLE[type] || CHECK_STYLE.info;
+                  const dashIdx = body.indexOf(' — ');
+                  const colonIdx = body.indexOf('. ');
+                  let headline = null, detail = body;
+                  if (dashIdx !== -1 && dashIdx < 80) {
+                    headline = body.slice(0, dashIdx).trim();
+                    detail   = body.slice(dashIdx + 3).trim();
+                  } else if (colonIdx !== -1 && colonIdx < 80 && (type === 'critical' || type === 'warn')) {
+                    headline = body.slice(0, colonIdx + 1).trim();
+                    detail   = body.slice(colonIdx + 2).trim();
+                  }
                   return (
-                    <div style={{ display:'flex', gap:8, padding:'8px 10px', borderRadius:6, background:s.bg, marginBottom:3, borderLeft:`3px solid ${s.border}` }}>
+                    <div style={{ display:'flex', gap:8, padding:'9px 12px', borderRadius:6, background:s.bg, marginBottom:3, borderLeft:`3px solid ${s.border}` }}>
                       <span style={{ fontSize:13, flexShrink:0 }}>{s.icon}</span>
-                      <div>
-                        <span style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:s.color, display:'block', marginBottom:2 }}>{s.label}</span>
-                        <span style={{ fontSize:12, lineHeight:1.6, color:'#dff0df', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{body}</span>
+                      <div style={{ flex:1 }}>
+                        <span style={{ fontSize:10, fontWeight:700, letterSpacing:1, textTransform:'uppercase', color:s.color, display:'block', marginBottom:4 }}>{s.label}</span>
+                        {headline && (
+                          <span style={{ fontSize:13, fontWeight:700, color:s.color, display:'block', marginBottom:4, lineHeight:1.4 }}>{headline}</span>
+                        )}
+                        <span style={{ fontSize:12, lineHeight:1.6, color:'#dff0df', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{detail}</span>
                       </div>
                     </div>
                   );
@@ -867,10 +882,15 @@ export default function LogComparison() {
                           {stats.map((l,i) => {
                             const parts = l.body.split(':');
                             const label = parts[0]?.trim(), value = parts.slice(1).join(':').trim();
+                            const isTimer = /0.60|40.100|60.130/i.test(label);
                             return (
-                              <div key={i} style={{ background:'#0e160e', border:'1px solid #1f2d1f', borderRadius:6, padding:'8px 10px' }}>
-                                <div style={{ fontSize:10, color:'#6b9f6b', textTransform:'uppercase', letterSpacing:0.8, marginBottom:3 }}>{label}</div>
-                                <div style={{ fontSize:14, fontWeight:700, color:'#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                              <div key={i} style={{
+                                background: isTimer ? 'rgba(61,255,122,0.06)' : '#0e160e',
+                                border: isTimer ? '1px solid rgba(61,255,122,0.25)' : '1px solid #1f2d1f',
+                                borderRadius:6, padding:'8px 10px'
+                              }}>
+                                <div style={{ fontSize:10, color: isTimer ? '#3dff7a' : '#6b9f6b', textTransform:'uppercase', letterSpacing:0.8, marginBottom:3, fontWeight: isTimer ? 700 : 400 }}>{label}</div>
+                                <div style={{ fontSize: isTimer ? 20 : 14, fontWeight:700, color: isTimer ? '#3dff7a' : '#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
                               </div>
                             );
                           })}
