@@ -663,6 +663,28 @@ export default function LogComparison() {
               <div className="st-step-text"><strong>Submit Your Time</strong>Sign in and add your run to the leaderboard</div>
             </div>
           </div>
+          <div style={{ marginTop:12, paddingTop:12, borderTop:'1px solid rgba(61,255,122,0.08)', display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ fontSize:11, color:'#5a8f5a' }}>Not sure how to export a CSV from HP Tuners?</span>
+            <a
+              href="https://youtu.be/PJ2-haxPl6I"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display:'inline-flex', alignItems:'center', gap:6,
+                padding:'5px 12px', borderRadius:6,
+                background:'rgba(255,0,0,0.08)', border:'1px solid rgba(255,80,80,0.25)',
+                color:'#ff6b6b', fontSize:11, fontWeight:600,
+                letterSpacing:0.5, textDecoration:'none',
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background='rgba(255,0,0,0.15)'; e.currentTarget.style.borderColor='rgba(255,80,80,0.5)'; }}
+              onMouseLeave={e => { e.currentTarget.style.background='rgba(255,0,0,0.08)'; e.currentTarget.style.borderColor='rgba(255,80,80,0.25)'; }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="#ff6b6b">
+                <path d="M23 7s-.3-2-1.2-2.8c-1.1-1.2-2.4-1.2-3-1.3C16.1 2.8 12 2.8 12 2.8s-4.1 0-6.8.2c-.6.1-1.9.1-3 1.3C1.3 5 1 7 1 7S.8 9.2.8 11.5v2.1c0 2.3.2 4.5.2 4.5s.3 2 1.2 2.8c1.1 1.2 2.6 1.1 3.3 1.2C7.6 22.2 12 22.2 12 22.2s4.1 0 6.8-.3c.6-.1 1.9-.1 3-1.3.9-.8 1.2-2.8 1.2-2.8s.2-2.2.2-4.5v-2.1C23.2 9.2 23 7 23 7zM9.7 15.5V8.4l8.1 3.6-8.1 3.5z"/>
+              </svg>
+              Watch: How to Export CSV from HP Tuners
+            </a>
+          </div>
         </div>
 
         {/* ── UPLOAD CONTROLS ─────────────────────────── */}
