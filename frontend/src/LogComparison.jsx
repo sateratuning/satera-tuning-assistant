@@ -511,9 +511,11 @@ export default function LogComparison() {
   // ── Review text parser (reuse from MainApp style) ──────
   const reviewLines = useMemo(() => {
     if (!reviewText) return [];
-    // Strip everything from "AI Review:" onward — that section is shown separately
-    const checklistOnly = reviewText.split(/\n\nAI Review:/i)[0].trim();
-    return checklistOnly.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
+    const checklistOnly = reviewText.split(/
+
+AI Review:/i)[0].trim();
+    return checklistOnly.split('
+').map(l => l.trim()).filter(Boolean).map(line => {
       let type = 'info', body = line;
       if (line.startsWith('CRITICAL:'))      { type = 'critical'; body = line.slice(9).trim(); }
       else if (line.startsWith('WARN:'))     { type = 'warn';     body = line.slice(5).trim(); }
@@ -525,6 +527,24 @@ export default function LogComparison() {
       else if (['📈','🚀','🚦','📊','🌀','🎯'].some(e => line.startsWith(e))) { type = 'stat'; }
       return { type, body };
     });
+  }, [reviewText]);
+
+  // Extract AI narrative (Summary + What This Means For You) from reviewText
+  const reviewAiParts = useMemo(() => {
+    if (!reviewText) return { summary: null, action: null };
+    const aiSection = reviewText.split(/
+
+AI Review:/i)[1] || '';
+    const cleaned = aiSection.replace(/^AI Review:\s*/i, '').trim();
+    const summaryMatch = cleaned.match(/^(?:Summary\s*[:
+]?\s*)?([\s\S]*?)(?=What This Means For You|$)/i);
+    const actionMatch  = cleaned.match(/What This Means For You\s*[:
+]?\s*([\s\S]+?)$/i);
+    let summary = summaryMatch ? summaryMatch[1].trim() : cleaned;
+    summary = summary.replace(/^Summary\s*[:
+]?\s*/i, '').trim();
+    const action = actionMatch ? actionMatch[1].trim() : null;
+    return { summary: summary || null, action };
   }, [reviewText]);
 
   // ── Layout breakpoints ─────────────────────────────────
@@ -911,6 +931,30 @@ export default function LogComparison() {
                   </div>
                 );
               })()}
+
+              {/* ── AI Summary cards ── */}
+              {!reviewLoading && (reviewAiParts.summary || reviewAiParts.action) && (
+                <div style={{ display:'grid', gap:10, marginTop:4 }}>
+                  {reviewAiParts.summary && (
+                    <div style={{ background:'#141e14', border:'1px solid #2e472e', borderRadius:8, padding:16 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                        <span style={{ fontSize:16 }}>🧠</span>
+                        <span style={{ fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:0.3 }}>Summary</span>
+                      </div>
+                      <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.summary}</p>
+                    </div>
+                  )}
+                  {reviewAiParts.action && (
+                    <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:16 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                        <span style={{ fontSize:16 }}>🔧</span>
+                        <span style={{ fontSize:12, fontWeight:700, color:'#4db8ff', letterSpacing:0.3 }}>What This Means For You</span>
+                      </div>
+                      <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.action}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 
