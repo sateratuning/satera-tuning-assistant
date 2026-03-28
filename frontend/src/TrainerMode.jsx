@@ -163,6 +163,236 @@ function StepIndicator({ steps, current }) {
   );
 }
 
+
+// ── SparkAdvisor Component ─────────────────────────────────
+function SparkAdvisor({ rpmAirBins, meta }) {
+  const [tableText, setTableText]   = useState('');
+  const [result, setResult]         = useState(null);
+  const [loading, setLoading]       = useState(false);
+  const [error, setError]           = useState('');
+  const [showCells, setShowCells]   = useState(false);
+
+  const severityColor = (s) => ({
+    critical: T.red, severe: T.red, moderate: T.amber,
+    minor: '#ffd166', add: T.green, ok: T.muted, none: T.faint,
+  }[s] || T.muted);
+
+  const severityLabel = (s) => ({
+    critical: '🚨 CRITICAL', severe: '⚠️ Severe', moderate: '⚠️ Moderate',
+    minor: '⚡ Minor', add: '✅ Add timing', ok: '✅ OK', none: '— No data',
+  }[s] || s);
+
+  const handleAnalyze = async () => {
+    if (!tableText.trim()) { setError('Paste your WOT spark table first.'); return; }
+    if (!rpmAirBins || !rpmAirBins.length) { setError('No log data available — run a log analysis first.'); return; }
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await axios.post(`${API_BASE}/spark-advisor`, { tableText, rpmAirBins, meta });
+      if (!res.data.ok) throw new Error(res.data.error);
+      setResult(res.data);
+    } catch (e) {
+      setError(e?.response?.data?.error || e.message || 'Analysis failed.');
+    } finally { setLoading(false); }
+  };
+
+  const downloadCSV = (csv, filename) => {
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div style={{ ...css.card, animation:'fadeInUp 0.65s ease', border:`1px solid ${T.borderHi}` }}>
+      {/* Header */}
+      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
+        <span style={{ fontSize:20 }}>⚡</span>
+        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>WOT Spark Table Advisor</span>
+        <span style={{ fontSize:10, color:T.faint, background:'rgba(61,255,122,0.06)', border:`1px solid rgba(61,255,122,0.1)`, borderRadius:4, padding:'2px 8px', letterSpacing:1 }}>BETA</span>
+      </div>
+      <p style={{ fontSize:13, color:T.muted, margin:'0 0 16px', lineHeight:1.6 }}>
+        Paste your current WOT spark table from HP Tuners (copy the table cells including headers). The AI will cross-reference the log data and recommend cell-by-cell adjustments based on detected knock retard.
+      </p>
+
+      {/* How to copy from HP Tuners */}
+      <div style={{ background:'rgba(61,255,122,0.04)', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px', marginBottom:14, fontSize:12, color:T.muted, lineHeight:1.7 }}>
+        <strong style={{ color:T.green, display:'block', marginBottom:4 }}>How to copy from HP Tuners:</strong>
+        VCM Editor → Engine → Spark → WOT Spark Table → right-click anywhere in the table →
+        <strong style={{ color:T.text }}> "Copy with Axis"</strong> → paste below.
+        This captures the RPM column headers and airmass row headers in the correct format.
+        Do <strong style={{ color:T.text }}>not</strong> use plain Ctrl+C — it won't include the axis labels.
+      </div>
+
+      {/* Table paste area */}
+      <label style={css.label}>Current WOT Spark Table (paste from HP Tuners)</label>
+      <textarea
+        value={tableText}
+        onChange={e => setTableText(e.target.value)}
+        placeholder={"Airmass\\RPM,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000\n0.20,12,14,16,18,20,22,24,26,26,26,24,22,20,18\n0.25,12,14,16,18,20,22,24,26,26,26,24,22,20,18\n..."}
+        rows={8}
+        style={{ ...css.input, resize:'vertical', fontFamily:'monospace', fontSize:12, lineHeight:1.5, marginBottom:12 }}
+        spellCheck={false}
+      />
+
+      {error && (
+        <div style={{ padding:'10px 14px', borderRadius:7, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13, marginBottom:12 }}>
+          {error}
+        </div>
+      )}
+
+      <button
+        onClick={handleAnalyze}
+        disabled={loading || !tableText.trim()}
+        style={{ ...css.btnPrimary, opacity: (loading||!tableText.trim()) ? 0.4 : 1, marginBottom: result ? 20 : 0 }}
+      >
+        {loading ? '⏳ Analyzing…' : '⚡ Analyze & Recommend Adjustments'}
+      </button>
+
+      {/* Results */}
+      {result && (
+        <div style={{ animation:'fadeInUp 0.3s ease' }}>
+
+          {/* Stats bar */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(110px,1fr))', gap:8, marginBottom:16 }}>
+            {[
+              { label:'Total Cells', value: result.stats.totalCells, color: T.muted },
+              { label:'Critical/Severe', value: result.stats.critical + result.stats.severe, color: result.stats.critical + result.stats.severe > 0 ? T.red : T.muted },
+              { label:'Moderate', value: result.stats.moderate, color: result.stats.moderate > 0 ? T.amber : T.muted },
+              { label:'Minor', value: result.stats.minor, color: result.stats.minor > 0 ? '#ffd166' : T.muted },
+              { label:'Timing Added', value: result.stats.additions, color: T.green },
+              { label:'No Change', value: result.stats.noChange, color: T.muted },
+            ].map((s,i) => (
+              <div key={i} style={{ background:'rgba(0,0,0,0.25)', border:`1px solid ${T.border}`, borderRadius:7, padding:'8px 12px', textAlign:'center' }}>
+                <div style={{ fontSize:10, color:T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:3 }}>{s.label}</div>
+                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:22, fontWeight:700, color:s.color }}>{s.value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* AI narrative */}
+          {result.narrative && (
+            <div style={{ background:'rgba(61,255,122,0.04)', border:`1px solid rgba(61,255,122,0.15)`, borderRadius:8, padding:16, marginBottom:16, position:'relative', overflow:'hidden' }}>
+              <div style={{ position:'absolute', top:0, left:0, right:0, height:1, background:'linear-gradient(90deg, transparent, rgba(61,255,122,0.3), transparent)' }}/>
+              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                <span style={{ fontSize:16 }}>🧠</span>
+                <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>AI Assessment</span>
+              </div>
+              <p style={{ fontSize:13, lineHeight:1.75, color:T.text, margin:0 }}>{result.narrative}</p>
+            </div>
+          )}
+
+          {/* Safety disclaimer */}
+          <div style={{ background:'rgba(245,166,35,0.06)', border:'1px solid rgba(245,166,35,0.2)', borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:12, color:T.amber, lineHeight:1.6 }}>
+            ⚠️ <strong>Tuner review required:</strong> These are AI-generated recommendations based on log data only. Always review every cell before applying. Do not flash to a customer vehicle without verification. Maximum single-pass reduction is {3}°.
+          </div>
+
+          {/* Dimension warning */}
+          {result.warnings?.length > 0 && (
+            <div style={{ padding:'10px 14px', borderRadius:7, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:12, marginBottom:14 }}>
+              {result.warnings.map((w,i) => <div key={i}>⚠️ {w}</div>)}
+            </div>
+          )}
+          {result.tableShape && (
+            <div style={{ fontSize:12, color: result.tableShape.is17x17 ? T.green : T.amber, marginBottom:14, display:'flex', alignItems:'center', gap:6 }}>
+              {result.tableShape.is17x17 ? '✅' : '⚠️'} Table dimensions: {result.tableShape.rows} airmass rows × {result.tableShape.cols} RPM columns
+              {result.tableShape.is17x17 ? ' — 17×17 confirmed ✓' : ' — expected 17×17'}
+            </div>
+          )}
+
+          {/* Download options */}
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
+            {/* Paste-ready — primary action */}
+            <div style={{ background:'rgba(61,255,122,0.05)', border:`1px solid rgba(61,255,122,0.2)`, borderRadius:8, padding:14 }}>
+              <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase', marginBottom:6 }}>
+                Paste Into HP Tuners
+              </div>
+              <p style={{ fontSize:11, color:T.muted, margin:'0 0 10px', lineHeight:1.5 }}>
+                Select all 17×17 cells in HP Tuners → right-click → Paste. Values only, no headers.
+              </p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                <button onClick={() => { navigator.clipboard.writeText(result.adjustedPasteReady); }} style={{ ...css.btnPrimary, padding:'8px 14px', fontSize:12 }}>
+                  📋 Copy Adjusted to Clipboard
+                </button>
+                <button onClick={() => downloadCSV(result.adjustedPasteReady, `spark_paste_adjusted_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
+                  ⬇ Download
+                </button>
+              </div>
+            </div>
+
+            {/* Copy with Axis — reference */}
+            <div style={{ background:'rgba(77,184,255,0.04)', border:`1px solid rgba(77,184,255,0.15)`, borderRadius:8, padding:14 }}>
+              <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:T.blue, letterSpacing:1.5, textTransform:'uppercase', marginBottom:6 }}>
+                Save for Reference
+              </div>
+              <p style={{ fontSize:11, color:T.muted, margin:'0 0 10px', lineHeight:1.5 }}>
+                Full table with axis headers — same format as "Copy with Axis" from HP Tuners.
+              </p>
+              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                <button onClick={() => downloadCSV(result.adjustedCopyWithAxis, `spark_adjusted_with_axis_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
+                  ⬇ Adjusted (with axis)
+                </button>
+                <button onClick={() => downloadCSV(result.originalCopyWithAxis, `spark_original_with_axis_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
+                  ⬇ Original (with axis)
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* How to paste instructions */}
+          <div style={{ background:'rgba(61,255,122,0.03)', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px', marginBottom:14, fontSize:12, color:T.muted, lineHeight:1.7 }}>
+            <strong style={{ color:T.green, display:'block', marginBottom:4 }}>How to paste back into HP Tuners:</strong>
+            1. Click "Copy Adjusted to Clipboard" above<br/>
+            2. In HP Tuners VCM Editor, click the top-left cell of the WOT Spark table (airmass 0.35, RPM 512)<br/>
+            3. Hold Shift + click the bottom-right cell (airmass 1.00, RPM 7008) to select all 17×17 cells<br/>
+            4. Right-click → Paste (or Ctrl+V)<br/>
+            5. Review each changed cell before saving or flashing
+          </div>
+
+          <button onClick={() => setShowCells(s => !s)} style={{ ...css.btnGhost, marginBottom:16 }}>
+            {showCells ? '▲ Hide' : '▼ Show'} Cell-by-Cell Detail ({result.adjustments.filter(a => a.delta !== 0).length} changes)
+          </button>
+
+          {/* Cell detail table */}
+          {showCells && (
+            <div style={{ borderRadius:8, border:`1px solid ${T.border}`, overflow:'hidden', maxHeight:400, overflowY:'auto' }}>
+              <table style={{ width:'100%', borderCollapse:'collapse', tableLayout:'fixed', fontSize:12 }}>
+                <thead>
+                  <tr style={{ background:'#0d150d', position:'sticky', top:0 }}>
+                    {['RPM','Airmass','Current °','Adjusted °','Δ','Severity','Notes'].map((h,i) => (
+                      <th key={i} style={{ padding:'8px 10px', textAlign: i >= 2 && i <= 4 ? 'right' : 'left', color:T.muted, fontWeight:600, letterSpacing:0.8, textTransform:'uppercase', fontSize:10, borderBottom:`1px solid ${T.border}`, width:[70,70,70,75,55,90,'auto'][i] }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {result.adjustments
+                    .filter(a => a.delta !== 0 || a.severity === 'critical' || a.severity === 'severe')
+                    .sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta))
+                    .map((a,i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
+                      <td style={{ padding:'7px 10px', color:T.muted, fontFamily:'monospace' }}>{a.rpm}</td>
+                      <td style={{ padding:'7px 10px', color:T.muted, fontFamily:'monospace' }}>{a.airmass}</td>
+                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace' }}>{a.current}°</td>
+                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace', color: a.adjusted < a.current ? T.amber : a.adjusted > a.current ? T.green : T.text }}>{a.adjusted}°</td>
+                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace', fontWeight:700, color: a.delta < 0 ? T.amber : a.delta > 0 ? T.green : T.muted }}>{a.delta > 0 ? `+${a.delta}` : a.delta}°</td>
+                      <td style={{ padding:'7px 10px' }}>
+                        <span style={{ fontSize:10, fontWeight:700, color:severityColor(a.severity) }}>{severityLabel(a.severity)}</span>
+                      </td>
+                      <td style={{ padding:'7px 10px', fontSize:11, color:T.muted, lineHeight:1.4 }}>{a.reason}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Main Component ─────────────────────────────────────────
 const dropdownOptions = {
   year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
@@ -200,6 +430,7 @@ export default function TrainerMode() {
   const [status, setStatus]           = useState('');
   const [toast, setToast]             = useState({ text:'', type:'ok' });
   const [examplesTotal, setExamplesTotal] = useState(null);
+  const [rpmAirBins, setRpmAirBins]     = useState([]);
 
   const chatEndRef = useRef(null);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chat]);
@@ -246,6 +477,9 @@ export default function TrainerMode() {
       if (id) setTrainerEntryId(id);
 
       setChat([{ role:'assistant', content: data.aiSummary || 'Analysis complete.' }]);
+      // Store rpmAirBins for spark advisor
+      const bins = data.logs?.rpmAirBins || data.extended?.after?.rpmAirBins || data.extended?.before?.rpmAirBins || [];
+      setRpmAirBins(bins);
       setStep(2);
       setStatus('');
       showToast('Analysis complete — review the summary and metrics below.', 'ok');
@@ -597,6 +831,11 @@ export default function TrainerMode() {
                   </button>
                 </div>
               </div>
+            )}
+
+            {/* ── SPARK TABLE ADVISOR ── */}
+            {step >= 2 && (
+              <SparkAdvisor rpmAirBins={rpmAirBins} meta={form} />
             )}
 
             {/* Training controls */}
