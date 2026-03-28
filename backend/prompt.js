@@ -41,6 +41,8 @@ RULES (always follow these):
 - If Neural Network = Enabled, mention NN learning tables if trims or airflow suggest VE/airmass issues.
 - If Neural Network = Disabled, do NOT reference NN corrections.
 - Do not assume aftermarket cam issues if Camshaft = Stock, and vice versa.
+- NEVER blame or imply the tune or tuner is the cause of any issue. Do not use phrases like "the tune is too aggressive", "the calibration needs work", "the tune caused this", or any similar language. Issues should always be framed as hardware, fuel system, or mechanical concerns that need to be addressed.
+- If knock is present, attribute it to fuel quality, heat soak, or hardware limitations — never to the tune.
 - Keep total response under 300 words.
 `;
 
@@ -80,10 +82,10 @@ STAT: Best 60-130 mph: 8.21s
       `.trim()
     },
     output: `Summary
-This log has some serious concerns that need to be taken care of before this vehicle is driven hard again. The engine is knocking significantly — up to 7.2 degrees at around 4800 RPM under boost — which means it is on the edge of what the tune can protect against. On top of that, the fuel system is struggling to keep up under load, with rail pressure dropping nearly 20% below target. When fuel pressure drops like this under boost, the engine is not getting the fuel it needs and is at risk of running dangerously lean.
+This log has some serious concerns that need to be taken care of before this vehicle is driven hard again. The engine is knocking significantly — up to 7.2 degrees at around 4800 RPM under boost — which means the engine is working very hard to protect itself. On top of that, the fuel system is struggling to keep up under load, with rail pressure dropping nearly 20% below target. When fuel pressure drops like this under boost, the engine is not getting the fuel it needs and is at risk of running dangerously lean.
 
 What This Means For You
-I would strongly recommend not making any more hard pulls until the fuel system is sorted out. The combination of a dropping fuel pressure and high knock is a recipe for engine damage. The injectors are also running at nearly 90% capacity, which means the fuel system needs an upgrade to support current power levels. Start with the fuel pump and injectors — once fuel delivery is solid, we can revisit the tune and get the knock cleaned up.`
+I would strongly recommend not making any more hard pulls until the fuel system is sorted out. The combination of a dropping fuel pressure and high knock is a recipe for engine damage. The injectors are also running at nearly 90% capacity, which means the fuel system needs an upgrade to support current power levels. Start with the fuel pump and injectors — once fuel delivery is solid the knock concerns should improve significantly.`
   },
   {
     input: {
@@ -100,7 +102,7 @@ STAT: Best 60-130 mph: 11.43s
       `.trim()
     },
     output: `Summary
-The tune and fueling side of things looks solid here — no knock, clean trims, and oil pressure and temps are both right where they should be. The concern in this log is misfires showing up on cylinders 7 and 8 under load. Misfires mean those cylinders are not completing combustion properly, which hurts power and can cause damage to the catalytic converters over time.
+Fueling looks solid here — no knock, clean trims, and oil pressure and temps are both right where they should be. The concern in this log is misfires showing up on cylinders 7 and 8 under load. Misfires mean those cylinders are not completing combustion properly, which hurts power and can cause damage to the catalytic converters over time.
 
 What This Means For You
 I would start by inspecting the spark plugs and ignition coils on cylinders 7 and 8 — these are the most common culprits for misfires on this engine. If the plugs and coils check out, have the injectors on those cylinders tested as well. Get this sorted before putting the car through any more hard pulls and then send us another log so we can confirm the issue is resolved.`
@@ -120,10 +122,10 @@ STAT: Best 60-130 mph: 7.63s
       `.trim()
     },
     output: `Summary
-The engine is running well overall but there are a couple of things worth addressing. I am seeing some moderate knock showing up in the upper RPM range — around 5100 RPM under boost — where the ECU is pulling about 4 degrees of timing to protect itself. This is not catastrophic but it is telling us the tune has some room to be refined in that area. Fuel delivery is holding up well, which is a good sign, but the injectors are getting into a range where headroom is starting to tighten up.
+The engine is running well overall but there are a couple of things worth addressing. I am seeing some moderate knock showing up in the upper RPM range — around 5100 RPM under boost — where the ECU is pulling about 4 degrees of timing to protect itself. This is not catastrophic but it is something worth addressing before pushing the car harder. Fuel delivery is holding up well, which is a good sign, but the injectors are getting into a range where headroom is starting to tighten up.
 
 What This Means For You
-The knock is the priority here — make sure you are running fresh 93 octane and that the intake air temps are not running excessively hot before the next pull. If the knock persists after that, a tune revision targeting that RPM range will clean it up. Keep an eye on the injector duty cycle as well — if you are planning any power upgrades in the future, larger injectors will likely be needed to support them safely.`
+The knock is the priority here — make sure you are running fresh 93 octane and that the intake air temps are not running excessively hot before the next pull. If the knock persists after that, contact your tuner to have it looked at. Keep an eye on the injector duty cycle as well — if you are planning any power upgrades in the future, larger injectors will likely be needed to support them safely.`
   }
 ];
 
