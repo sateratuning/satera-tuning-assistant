@@ -1,707 +1,642 @@
-import React, { useState, useMemo } from 'react';
+// frontend/src/TrainerMode.jsx
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import axios from 'axios';
+import { Link } from 'react-router-dom';
 
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
-const TRAINING_SYSTEM_MSG =
-  'Answer only with corrected spark table or concise tuning result. No explanations, no prose.';
+const TRAINING_SYSTEM_MSG = 'You are Satera Tuning AI trainer. Learn from this before/after comparison to improve future tune assessments.';
 
-/* ----------------- Helpers: IDs & Normalization ----------------- */
+// ── Design tokens (matches site theme) ────────────────────
+const T = {
+  bg: '#090c09', card: '#111811', cardHi: '#141e14',
+  border: '#1a281a', borderHi: '#274027',
+  green: '#3dff7a', greenLo: 'rgba(61,255,122,0.07)',
+  greenGlow: 'rgba(61,255,122,0.15)',
+  amber: '#f5a623', red: '#ff5252', blue: '#4db8ff',
+  purple: '#b48eff',
+  text: '#dff0df', muted: '#5a8f5a', faint: '#2e4a2e',
+};
 
-// Try very hard to find the entry id, no matter what the backend called it.
+const css = {
+  page: { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: "'Inter', system-ui, sans-serif" },
+  card: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 20, position: 'relative', overflow: 'hidden' },
+  cardHi: { background: T.cardHi, border: `1px solid ${T.borderHi}`, borderRadius: 12, padding: 20, position: 'relative', overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' },
+  sectionTitle: { fontFamily: "'Rajdhani', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: T.green, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 },
+  input: { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, outline: 'none', boxSizing: 'border-box' },
+  select: { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%233dff7a\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%', paddingRight: 32, boxSizing: 'border-box', cursor: 'pointer' },
+  label: { display: 'block', fontSize: 11, color: T.muted, marginBottom: 5, letterSpacing: 0.5 },
+  btnPrimary: { fontFamily: "'Rajdhani', sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#000', background: T.green, border: 'none', borderRadius: 7, padding: '11px 24px', cursor: 'pointer', boxShadow: '0 0 20px rgba(61,255,122,0.2)', transition: 'all 0.2s' },
+  btnGhost: { fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 500, color: T.muted, background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 7, padding: '8px 16px', cursor: 'pointer', transition: 'all 0.2s' },
+  btnAmber: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#000', background: T.amber, border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
+  btnPurple: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#000', background: T.purple, border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
+  btnRed: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#fff', background: 'rgba(255,82,82,0.15)', border: '1px solid rgba(255,82,82,0.3)', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
+};
+
+// ── Helpers ────────────────────────────────────────────────
 function extractEntryId(data) {
   if (!data) return null;
-  const candidates = [
-    data?.trainingEntry?.id,
-    data?.trainer_entry_id,
-    data?.entryId,
-    data?.entry_id,
-    data?.entry?.id,
-    data?.id,
-    data?.trainerId,
-    data?.trainer_id
-  ];
-  return candidates.find(Boolean) || null;
+  return [data?.trainingEntry?.id, data?.trainer_entry_id, data?.entryId, data?.entry_id, data?.entry?.id, data?.id].find(Boolean) || null;
 }
 
-// Try to coerce various payload shapes into the one the UI expects.
-function normalizeComparisonPayload(raw) {
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+const fmtDeg = (v) => isNum(v) ? `${Number(v).toFixed(1)}°` : '—';
+const fmtSec = (v) => isNum(v) ? `${Number(v).toFixed(2)}s` : '—';
+const fmtKpa = (v) => isNum(v) ? `${Number(v).toFixed(0)} kPa` : '—';
+const fmtPsi = (v) => isNum(v) ? `${Number(v).toFixed(1)} psi` : '—';
+const fmtPlain = (v) => (isNum(v) ? String(Number(v).toFixed(1)) : (v ?? '—'));
+const withSign = (v, digits = 2, unit = '') => {
+  if (!isNum(v)) return '—';
+  return (v > 0 ? `+${v.toFixed(digits)}` : v.toFixed(digits)) + (unit ? ` ${unit}` : '');
+};
+const deltaColor = (key, val) => {
+  if (!isNum(val)) return T.muted;
+  const lowerBetter = ['t_0_60_change','t_40_100_change','t_60_130_change','KR_max_change','KR_event_change','varSTFT_change','varLTFT_change'];
+  const higherBetter = ['sparkMaxWOT_change'];
+  if (lowerBetter.includes(key)) return val < 0 ? T.green : val > 0 ? T.red : T.muted;
+  if (higherBetter.includes(key)) return val > 0 ? T.green : val < 0 ? T.red : T.muted;
+  return T.muted;
+};
+
+function normalizeComparison(raw) {
   if (!raw || typeof raw !== 'object') return null;
-
-  // Some backends may send lowercase or alternative keys.
-  const src = { ...raw };
-
-  const knockBefore = src.before?.KR || src.before?.knock || src.before?.kr || {};
-  const knockAfter  = src.after?.KR  || src.after?.knock  || src.after?.kr  || {};
-  const knockDelta  = src.deltas     || src.delta         || {};
-
-  const timesBefore = src.before?.times || src.before?.accel || {};
-  const timesAfter  = src.after?.times  || src.after?.accel  || {};
-  const timesDelta  = src.deltas        || {};
-
-  const wotBefore   = src.before?.WOT || src.before?.wot || {};
-  const wotAfter    = src.after?.WOT  || src.after?.wot  || {};
-  const wotDelta    = src.deltas       || {};
-
-  const varBeforeST = src.before?.varSTFT ?? src.before?.stftVar ?? src.before?.stft_var;
-  const varBeforeLT = src.before?.varLTFT ?? src.before?.ltftVar ?? src.before?.ltft_var;
-  const varAfterST  = src.after?.varSTFT  ?? src.after?.stftVar  ?? src.after?.stft_var;
-  const varAfterLT  = src.after?.varLTFT  ?? src.after?.ltftVar  ?? src.after?.ltft_var;
-
-  const toNum = (v) => (typeof v === 'string' ? Number(v) : v);
-  const safeN = (v) => (Number.isFinite(toNum(v)) ? Number(v) : null);
-
-  const out = {
-    before: {
-      KR: {
-        maxKR: safeN(knockBefore.maxKR ?? knockBefore.max ?? knockBefore.max_krr),
-        krEvents: safeN(knockBefore.krEvents ?? knockBefore.events ?? knockBefore.count),
-      },
-      times: {
-        zeroToSixty: safeN(timesBefore.zeroToSixty ?? timesBefore.t_0_60 ?? timesBefore['0_60']),
-        fortyToHundred: safeN(timesBefore.fortyToHundred ?? timesBefore.t_40_100 ?? timesBefore['40_100']),
-        sixtyToOneThirty: safeN(timesBefore.sixtyToOneThirty ?? timesBefore.t_60_130 ?? timesBefore['60_130']),
-      },
-      WOT: {
-        sparkMaxWOT: safeN(wotBefore.sparkMaxWOT ?? wotBefore.spark_max ?? wotBefore.peakSpark),
-        mapMinWOT: safeN(wotBefore.mapMinWOT ?? wotBefore.map_min),
-        mapMaxWOT: safeN(wotBefore.mapMaxWOT ?? wotBefore.map_max),
-      },
-      varSTFT: safeN(varBeforeST),
-      varLTFT: safeN(varBeforeLT),
-    },
-    after: {
-      KR: {
-        maxKR: safeN(knockAfter.maxKR ?? knockAfter.max ?? knockAfter.max_krr),
-        krEvents: safeN(knockAfter.krEvents ?? knockAfter.events ?? knockAfter.count),
-      },
-      times: {
-        zeroToSixty: safeN(timesAfter.zeroToSixty ?? timesAfter.t_0_60 ?? timesAfter['0_60']),
-        fortyToHundred: safeN(timesAfter.fortyToHundred ?? timesAfter.t_40_100 ?? timesAfter['40_100']),
-        sixtyToOneThirty: safeN(timesAfter.sixtyToOneThirty ?? timesAfter.t_60_130 ?? timesAfter['60_130']),
-      },
-      WOT: {
-        sparkMaxWOT: safeN(wotAfter.sparkMaxWOT ?? wotAfter.spark_max ?? wotAfter.peakSpark),
-        mapMinWOT: safeN(wotAfter.mapMinWOT ?? wotAfter.map_min),
-        mapMaxWOT: safeN(wotAfter.mapMaxWOT ?? wotAfter.map_max),
-      },
-      varSTFT: safeN(varAfterST),
-      varLTFT: safeN(varAfterLT),
-    },
-    deltas: {
-      KR_max_change: safeN(knockDelta.KR_max_change ?? knockDelta.maxKR_change ?? knockDelta.dKRmax),
-      KR_event_change: safeN(knockDelta.KR_event_change ?? knockDelta.krEvents_change ?? knockDelta.dKRevents),
-      t_0_60_change: safeN(timesDelta.t_0_60_change ?? timesDelta.zeroToSixty_change ?? timesDelta.d0_60),
-      t_40_100_change: safeN(timesDelta.t_40_100_change ?? timesDelta.fortyToHundred_change ?? timesDelta.d40_100),
-      t_60_130_change: safeN(timesDelta.t_60_130_change ?? timesDelta.sixtyToOneThirty_change ?? timesDelta.d60_130),
-      sparkMaxWOT_change: safeN(wotDelta.sparkMaxWOT_change ?? wotDelta.spark_max_change ?? wotDelta.dSparkWOT),
-      mapMinWOT_change: safeN(wotDelta.mapMinWOT_change ?? wotDelta.map_min_change ?? wotDelta.dMapMin),
-      mapMaxWOT_change: safeN(wotDelta.mapMaxWOT_change ?? wotDelta.map_max_change ?? wotDelta.dMapMax),
-      varSTFT_change: safeN(src?.deltas?.varSTFT_change ?? src?.deltas?.stftVar_change),
-      varLTFT_change: safeN(src?.deltas?.varLTFT_change ?? src?.deltas?.ltftVar_change),
-    }
+  const safeN = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const kb = raw.before?.KR || raw.before?.knock || {};
+  const ka = raw.after?.KR  || raw.after?.knock  || {};
+  const tb = raw.before?.times || {};
+  const ta = raw.after?.times  || {};
+  const wb = raw.before?.WOT  || {};
+  const wa = raw.after?.WOT   || {};
+  const d  = raw.deltas || {};
+  return {
+    before: { KR: { maxKR: safeN(kb.maxKR), krEvents: safeN(kb.krEvents) }, times: { zeroToSixty: safeN(tb.zeroToSixty), fortyToHundred: safeN(tb.fortyToHundred), sixtyToOneThirty: safeN(tb.sixtyToOneThirty) }, WOT: { sparkMaxWOT: safeN(wb.sparkMaxWOT), mapMinWOT: safeN(wb.mapMinWOT), mapMaxWOT: safeN(wb.mapMaxWOT) }, varSTFT: safeN(raw.before?.varSTFT), varLTFT: safeN(raw.before?.varLTFT) },
+    after:  { KR: { maxKR: safeN(ka.maxKR), krEvents: safeN(ka.krEvents) }, times: { zeroToSixty: safeN(ta.zeroToSixty), fortyToHundred: safeN(ta.fortyToHundred), sixtyToOneThirty: safeN(ta.sixtyToOneThirty) }, WOT: { sparkMaxWOT: safeN(wa.sparkMaxWOT), mapMinWOT: safeN(wa.mapMinWOT), mapMaxWOT: safeN(wa.mapMaxWOT) }, varSTFT: safeN(raw.after?.varSTFT), varLTFT: safeN(raw.after?.varLTFT) },
+    deltas: { KR_max_change: safeN(d.KR_max_change), KR_event_change: safeN(d.KR_event_change), t_0_60_change: safeN(d.t_0_60_change), t_40_100_change: safeN(d.t_40_100_change), t_60_130_change: safeN(d.t_60_130_change), sparkMaxWOT_change: safeN(d.sparkMaxWOT_change), mapMinWOT_change: safeN(d.mapMinWOT_change), mapMaxWOT_change: safeN(d.mapMaxWOT_change), varSTFT_change: safeN(d.varSTFT_change), varLTFT_change: safeN(d.varLTFT_change) }
   };
-
-  return out;
 }
 
-/* ----------------- Component ----------------- */
+// ── Sub-components ─────────────────────────────────────────
+function MetricRow({ label, before, after, delta, deltaKey }) {
+  const dColor = deltaColor(deltaKey, delta);
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, padding: '7px 0', borderBottom: `1px solid ${T.border}`, alignItems: 'center' }}>
+      <span style={{ fontSize: 12, color: T.muted }}>{label}</span>
+      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right' }}>{before}</span>
+      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right' }}>{after}</span>
+      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right', color: dColor, fontWeight: 600 }}>{delta !== '—' && delta !== undefined ? delta : '—'}</span>
+    </div>
+  );
+}
 
-const TrainerMode = () => {
-  const [form, setForm] = useState({
-    vin: '', calid: '', transCalid: '', transModel: '',
-    year: '', model: '', engine: '', injectors: '', map: '',
-    throttle: '', power: '', trans: '', tire: '', gear: '',
-    fuel: '', cam: '', neural: ''
-  });
+function UploadZone({ label, sublabel, file, onChange, id, color = T.green }) {
+  return (
+    <div>
+      <label style={{ ...css.label, color, fontSize: 12, fontWeight: 600, letterSpacing: 0.8 }}>{label}</label>
+      <label htmlFor={id} style={{
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '13px 16px', borderRadius: 8,
+        border: file ? `1.5px solid ${color}33` : `1.5px dashed ${T.borderHi}`,
+        background: file ? `${color}08` : 'transparent',
+        cursor: 'pointer', transition: 'all 0.2s',
+        color: file ? T.text : T.muted, fontSize: 13,
+      }}>
+        <span style={{ fontSize: 16 }}>📂</span>
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+          {file ? file.name : `Choose HP Tuners CSV…`}
+        </span>
+        {file && <span style={{ color, flexShrink: 0, fontSize: 12, fontWeight: 700 }}>✓</span>}
+      </label>
+      <input id={id} type="file" accept=".csv" onChange={onChange} style={{ display: 'none' }}/>
+      {sublabel && <p style={{ fontSize: 11, color: T.faint, margin: '4px 0 0' }}>{sublabel}</p>}
+    </div>
+  );
+}
 
+function ChatBubble({ role, content }) {
+  const isAI = role === 'assistant';
+  return (
+    <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexDirection: isAI ? 'row' : 'row-reverse' }}>
+      <div style={{ width: 28, height: 28, borderRadius: '50%', background: isAI ? T.greenLo : 'rgba(77,184,255,0.1)', border: `1px solid ${isAI ? T.borderHi : 'rgba(77,184,255,0.2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
+        {isAI ? '🤖' : '👤'}
+      </div>
+      <div style={{ maxWidth: '82%' }}>
+        <div style={{ fontSize: 10, color: T.muted, marginBottom: 4, textAlign: isAI ? 'left' : 'right', letterSpacing: 0.5, textTransform: 'uppercase', fontWeight: 600 }}>
+          {isAI ? 'Satera AI' : 'You'}
+        </div>
+        <div style={{
+          background: isAI ? T.card : 'rgba(77,184,255,0.06)',
+          border: `1px solid ${isAI ? T.border : 'rgba(77,184,255,0.15)'}`,
+          borderRadius: isAI ? '4px 12px 12px 12px' : '12px 4px 12px 12px',
+          padding: '10px 14px', fontSize: 13, lineHeight: 1.65,
+          color: T.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+        }}>
+          {content}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StepIndicator({ steps, current }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
+      {steps.map((s, i) => (
+        <React.Fragment key={i}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <div style={{
+              width: 30, height: 30, borderRadius: '50%',
+              background: i < current ? T.green : i === current ? T.greenLo : 'transparent',
+              border: `2px solid ${i <= current ? T.green : T.border}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 12, fontWeight: 700, color: i < current ? '#000' : i === current ? T.green : T.muted,
+              transition: 'all 0.3s',
+            }}>
+              {i < current ? '✓' : i + 1}
+            </div>
+            <span style={{ fontSize: 10, color: i <= current ? T.green : T.muted, letterSpacing: 0.5, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{s}</span>
+          </div>
+          {i < steps.length - 1 && (
+            <div style={{ flex: 1, height: 2, background: i < current ? T.green : T.border, margin: '0 6px', marginBottom: 18, transition: 'background 0.3s' }}/>
+          )}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// ── Main Component ─────────────────────────────────────────
+const dropdownOptions = {
+  year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
+  model: ['Charger', 'Challenger', '300', 'Durango', 'Ram 1500', 'Ram 2500', 'Jeep Grand Cherokee'],
+  engine: ['5.7L Pre-Eagle', '5.7L Eagle', '6.1L SRT', '6.4L (392)', '6.2L Hellcat', '6.2L Redeye', '6.2L Demon', '6.2L Jailbreak'],
+  injectors: ['Stock', 'ID850x', 'ID1050x', 'ID1300x', 'ID1700x', 'Custom'],
+  map: ['Stock (1 Bar)', '2 Bar', '3 Bar', '4 Bar', 'Custom'],
+  throttle: ['Stock', '87mm', '92mm', '95mm', '102mm', '105mm', 'Custom'],
+  power: ['N/A (Naturally Aspirated)', 'Centrifugal Supercharger', 'PD Blower (Whipple/Magnuson)', 'Twin Turbo', 'Single Turbo', 'Nitrous', 'Custom'],
+  trans: ['TR6060 (6-speed Manual)', 'NAG1/WA580 (5-speed Auto)', '8HP70 (8-speed Auto)', '8HP90 (8-speed Auto)'],
+  tire: ['26"','27"','28"','29"','30"','31"','32"','33"'],
+  gear: ['3.06','3.09','3.23','3.55','3.73','3.90','4.10'],
+  fuel: ['91 Octane', '93 Octane', 'E30', 'E50', 'E85', 'Race Gas'],
+  cam: ['Stock', 'Aftermarket'],
+  neural: ['Enabled', 'Disabled'],
+};
+
+export default function TrainerMode() {
+  const [form, setForm] = useState({ vin:'', calid:'', year:'', model:'', engine:'', injectors:'', map:'', throttle:'', power:'', trans:'', tire:'', gear:'', fuel:'', cam:'', neural:'' });
   const [beforeLog, setBeforeLog] = useState(null);
-  const [afterLog, setAfterLog] = useState(null);
+  const [afterLog,  setAfterLog]  = useState(null);
+  const [step, setStep]           = useState(0); // 0=setup, 1=analyzing, 2=results, 3=saved
 
-  const [status, setStatus] = useState('');
-  const [aiSummary, setAiSummary] = useState('');
-  const [conversationId, setConversationId] = useState(null);
+  const [aiSummary, setAiSummary]   = useState('');
   const [comparison, setComparison] = useState(null);
-
-  const [customFields, setCustomFields] = useState({});
-  const [notes, setNotes] = useState('');
-
-  const [trainingEntry, setTrainingEntry] = useState(null);
+  const [conversationId, setConversationId] = useState(null);
   const [trainerEntryId, setTrainerEntryId] = useState(null);
 
-  const [chat, setChat] = useState([
-    { role: 'assistant', content: 'Upload BEFORE and AFTER logs (CSV), click Upload/Analyze, then chat about the results.' }
-  ]);
+  const [chat, setChat]     = useState([{ role:'assistant', content:'Upload your before and after tune logs, fill in the vehicle details, and click Analyze. I will compare both logs and give you a full breakdown of what changed.' }]);
   const [message, setMessage] = useState('');
+  const [notes, setNotes]     = useState('');
 
-  const [busy, setBusy] = useState(false);
-  const [toast, setToast] = useState('');
+  const [loading, setLoading]         = useState(false);
+  const [chatLoading, setChatLoading] = useState(false);
+  const [status, setStatus]           = useState('');
+  const [toast, setToast]             = useState({ text:'', type:'ok' });
   const [examplesTotal, setExamplesTotal] = useState(null);
 
-  /* ---------- formatting for numbers ---------- */
-  const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-  const fmtDeg = (v) => isNum(v) ? `${Number(v).toFixed(1)}°` : '—';
-  const fmtSec = (v) => isNum(v) ? `${Number(v).toFixed(2)} s` : '—';
-  const fmtKpa = (v) => isNum(v) ? `${Number(v).toFixed(0)} kPa` : '—';
-  const fmtPlain = (v) => (isNum(v) ? String(v) : (v ?? '—'));
-  const withSign = (v, digits = 2, unit = '') => {
-    if (!isNum(v)) return '—';
-    const s = (v > 0 ? `+${v.toFixed(digits)}` : v.toFixed(digits));
-    return unit ? `${s} ${unit}` : s;
-  };
-  const deltaColor = (key, val) => {
-    if (!isNum(val)) return '';
-    const lowerIsBetter = [
-      't_0_60_change','t_40_100_change','t_60_130_change',
-      'KR_max_change','KR_event_change','varSTFT_change','varLTFT_change',
-      'mapMinWOT_change','mapMaxWOT_change',
-    ];
-    const higherIsBetter = ['sparkMaxWOT_change'];
-    const good = lowerIsBetter.includes(key) ? (val < 0)
-               : higherIsBetter.includes(key) ? (val > 0)
-               : null;
-    return good == null ? '' : (good ? '#39e58c' : '#ff6b6b');
-  };
+  const chatEndRef = useRef(null);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chat]);
 
-  const dropdownOptions = {
-    year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
-    model: ['Charger', 'Challenger', '300', 'Durango', 'Ram'],
-    engine: ['5.7L Pre-Eagle', '5.7L Eagle', '6.1L', '6.4L (392)', '6.2L HC', '6.2L HC HO'],
-    injectors: ['Stock', 'ID1050x', 'ID1300x'],
-    map: ['1 Bar OEM', '2 Bar', '3 Bar'],
-    throttle: ['Stock', '87mm', '95mm', '105mm'],
-    power: ['N/A', 'Centrifugal', 'PD Blower', 'Turbo', 'Nitrous'],
-    trans: ['Manual', '5-Speed Auto', '8-Speed Auto'],
-    tire: ['26','27','28','29','30','31','32','33'],
-    gear: ['3.06','3.09','3.23','3.55','3.73','3.90','4.10'],
-    fuel: ['91', '93', 'E85'],
-    cam: ['Yes', 'No'],
-    neural: ['Enabled', 'Disabled']
-  };
+  const showToast = (text, type = 'ok') => { setToast({ text, type }); setTimeout(() => setToast({ text:'', type:'ok' }), 6000); };
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setForm(prev => ({ ...prev, [name]: value }));
-  };
-
-  const handleCustomChange = (name, value) => {
-    setCustomFields(prev => ({ ...prev, [name]: value }));
-    setForm(prev => ({ ...prev, [name]: value }));
-  };
+  const handleChange = (e) => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
 
   const handleVCMPaste = (e) => {
     const text = e.target.value;
-    const vinMatch = text.match(/VIN:\s*(\w{17})/);
-    const modelLine = text.split('\n').find(line => /\d{4}\s+Dodge/i.test(line));
+    const vinMatch  = text.match(/VIN:\s*(\w{17})/);
+    const modelLine = text.split('\n').find(l => /\d{4}\s+Dodge/i.test(l));
     const osMatches = text.match(/OS:\s*(\w+)/g);
-    const transModelMatch = text.match(/Hardware:\s*(ZF\w+)/i);
-    const extracted = {
-      vin: vinMatch?.[1] || '',
-      year: modelLine?.match(/(20\d{2})/)?.[1] || '',
-      model: modelLine?.includes('Charger') ? 'Charger' : modelLine?.includes('Challenger') ? 'Challenger' : '',
-      engine: modelLine?.includes('6.4') ? '6.4L (392)' : '',
-      calid: osMatches?.[0]?.split(':')[1]?.trim() || '',
-      transCalid: osMatches?.[1]?.split(':')[1]?.trim() || '',
-      transModel: transModelMatch?.[1] || ''
-    };
-    setForm(prev => ({ ...prev, ...extracted }));
+    setForm(p => ({
+      ...p,
+      vin:   vinMatch?.[1] || p.vin,
+      year:  modelLine?.match(/(20\d{2})/)?.[1] || p.year,
+      model: modelLine?.includes('Charger') ? 'Charger' : modelLine?.includes('Challenger') ? 'Challenger' : p.model,
+      engine:modelLine?.includes('6.4') ? '6.4L (392)' : modelLine?.includes('6.2') ? '6.2L Hellcat' : p.engine,
+      calid: osMatches?.[0]?.split(':')[1]?.trim() || p.calid,
+    }));
   };
 
-  // If upload didn’t return an id, create one now using VIN/CALID/meta
-  const ensureTrainerEntry = async (meta) => {
+  // ── Analyze ──────────────────────────────────────────────
+  const handleAnalyze = async () => {
+    if (!beforeLog || !afterLog) { showToast('Please upload both Before and After CSV logs.', 'err'); return; }
+    setLoading(true);
+    setStep(1);
+    setStatus('Uploading and analyzing logs…');
     try {
-      const res = await axios.post(`${API_BASE}/trainer/new-entry`, { meta });
-      const id = extractEntryId(res.data);
-      if (id) {
-        setTrainerEntryId(id);
-        setTrainingEntry({ id });
-        return id;
-      }
-    } catch (e) {
-      console.error('ensureTrainerEntry error:', e);
-    }
-    return null;
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setStatus('⏳ Uploading & analyzing…');
-    setToast('');
-
-    if (!beforeLog || !afterLog) {
-      setStatus('❌ Please upload BOTH before and after CSV logs.');
-      return;
-    }
-
-    try {
-      const meta = { ...form };
       const fd = new FormData();
       fd.append('beforeLog', beforeLog);
-      fd.append('afterLog', afterLog);
-      fd.append('meta', JSON.stringify(meta));
-      fd.append('feedback', notes || '');
+      fd.append('afterLog',  afterLog);
+      fd.append('meta', JSON.stringify(form));
 
       const res = await axios.post(`${API_BASE}/trainer-ai`, fd);
       const data = res.data || {};
 
-      // Summary text
       setAiSummary(data.aiSummary || '');
-
-      // Normalize metrics so UI always renders
-      const normalized = normalizeComparisonPayload(
-        data.comparison || data.metrics || data.analysis || null
-      );
-      setComparison(normalized);
-
-      // Conversation & entry ids
+      setComparison(normalizeComparison(data.comparison || data.metrics || null));
       setConversationId(data.conversationId || data.conversation_id || null);
 
-      let id = extractEntryId(data);
-      if (!id) {
-        // last resort: create a new entry now
-        id = await ensureTrainerEntry(meta);
-      }
-      if (id) {
-        setTrainerEntryId(id);
-        setTrainingEntry(data.trainingEntry || { id });
-      }
+      const id = extractEntryId(data);
+      if (id) setTrainerEntryId(id);
 
-      setChat([{ role: 'assistant', content: data.aiSummary || 'Analysis complete.' }]);
-      setStatus(id ? `✅ Done. Entry: ${id}` : '✅ Done (no entry id returned).');
-      if (!id) {
-        setToast('Heads up: No entry id returned from /trainer-ai. Created one via /trainer/new-entry if possible.');
-      }
+      setChat([{ role:'assistant', content: data.aiSummary || 'Analysis complete.' }]);
+      setStep(2);
+      setStatus('');
+      showToast('Analysis complete — review the summary and metrics below.', 'ok');
     } catch (err) {
-      console.error('❌ Upload error:', err);
-      setStatus('❌ Upload failed.');
-      setToast(`❌ ${err?.response?.data?.error || err.message || 'Upload failed'}`);
+      setStep(0);
+      setStatus('');
+      showToast(`Analysis failed: ${err?.response?.data?.error || err.message}`, 'err');
+    } finally {
+      setLoading(false);
     }
   };
 
+  // ── Chat ─────────────────────────────────────────────────
   const sendChat = async () => {
-    if (!conversationId) {
-      alert('No conversation yet. Please upload/analyze logs first.');
-      return;
-    }
+    if (!conversationId) { showToast('Run an analysis first.', 'err'); return; }
     if (!message.trim()) return;
-
-    const userMsg = { role: 'user', content: message.trim() };
-    setChat(prev => [...prev, userMsg]);
+    const userMsg = { role:'user', content: message.trim() };
+    setChat(p => [...p, userMsg]);
     setMessage('');
-
+    setChatLoading(true);
     try {
-      const res = await axios.post(`${API_BASE}/trainer-chat`, {
-        conversationId,
-        message: userMsg.content
-      });
-      setChat(prev => [...prev, { role: 'assistant', content: res.data.reply || 'No response.' }]);
+      const res = await axios.post(`${API_BASE}/trainer-chat`, { conversationId, message: userMsg.content });
+      setChat(p => [...p, { role:'assistant', content: res.data.reply || 'No response.' }]);
     } catch (err) {
-      console.error('❌ Chat error:', err);
-      setChat(prev => [...prev, { role: 'assistant', content: `Chat failed: ${err.message}` }]);
+      setChat(p => [...p, { role:'assistant', content: `Chat error: ${err.message}` }]);
+    } finally {
+      setChatLoading(false);
     }
   };
 
-  // Build (user, assistant) pairs for training append
+  // ── Training pairs ────────────────────────────────────────
   const chatPairs = useMemo(() => {
     const pairs = [];
     for (let i = 0; i < chat.length; i++) {
       if (chat[i].role === 'user') {
-        const user = chat[i].content || '';
-        let assistant = '';
+        const user = chat[i].content;
         for (let j = i + 1; j < chat.length; j++) {
           if (chat[j].role === 'assistant') {
-            assistant = chat[j].content || '';
+            pairs.push({ system: TRAINING_SYSTEM_MSG, user, assistant: chat[j].content });
             break;
           }
-        }
-        if (user && assistant) {
-          pairs.push({ system: TRAINING_SYSTEM_MSG, user, assistant, notes: '' });
         }
       }
     }
     return pairs;
   }, [chat]);
 
-  const saveChatAsTraining = async () => {
+  const saveTraining = async () => {
+    if (!trainerEntryId) { showToast('No entry ID — run analysis first.', 'err'); return; }
+    if (!chatPairs.length) { showToast('No chat pairs to save yet — have a conversation first.', 'err'); return; }
     try {
-      setBusy(true);
-      setToast('');
-
-      const id = trainerEntryId || trainingEntry?.id || null;
-      if (!id) {
-        setToast('No trainer_entry_id. Upload logs first to create an entry.');
-        return;
-      }
-      if (!chatPairs.length) {
-        setToast('No (user→assistant) pairs found. Send a message and get a reply first.');
-        return;
-      }
-
-      const res = await axios.post(`${API_BASE}/trainer/save-chat`, {
-        trainer_entry_id: id,
-        chatPairs,
-        notes
-      });
-
-      const j = res.data || {};
-      if (!j.ok) throw new Error(j.error || 'Save chat failed');
-      setToast(`Saved ${j.added} example(s) to entry ${j.trainer_entry_id}. Total in entry: ${j.total_examples_for_entry}`);
-    } catch (e) {
-      setToast(`❌ ${e.message || e}`);
-    } finally {
-      setBusy(false);
-    }
+      const res = await axios.post(`${API_BASE}/trainer/save-chat`, { trainer_entry_id: trainerEntryId, chatPairs, notes });
+      const j = res.data;
+      if (!j.ok) throw new Error(j.error);
+      showToast(`Saved ${j.added} example(s). Total in session: ${j.total_examples_for_entry}`, 'ok');
+    } catch (e) { showToast(`Save failed: ${e.message}`, 'err'); }
   };
 
-  const finalizeAppendJsonl = async () => {
+  const finalizeTraining = async () => {
+    if (!trainerEntryId) { showToast('No entry ID — run analysis first.', 'err'); return; }
     try {
-      setBusy(true);
-      setToast('');
-
-      const id = trainerEntryId || trainingEntry?.id || null;
-      if (!id) {
-        setToast('No trainer_entry_id. Upload logs first to create an entry.');
-        return;
-      }
-
-      const res = await axios.post(`${API_BASE}/trainer/finalize`, {
-        trainer_entry_id: id,
-        appendToJsonl: true
-      });
-      const j = res.data || {};
-      if (!j.ok) throw new Error(j.error || 'Finalize failed');
-      setExamplesTotal(j.totalExamplesInFile ?? null);
-      setToast(
-        `Appended ${j.appended} example(s) → ${j.jsonlPath}. ` +
-        `Total in file: ${j.totalExamplesInFile}` +
-        `${(j.totalExamplesInFile ?? 0) < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}`
-      );
-    } catch (e) {
-      setToast(`❌ ${e.message || e}`);
-    } finally {
-      setBusy(false);
-    }
+      const res = await axios.post(`${API_BASE}/trainer/finalize`, { trainer_entry_id: trainerEntryId, appendToJsonl: true });
+      const j = res.data;
+      if (!j.ok) throw new Error(j.error);
+      setExamplesTotal(j.totalExamplesInFile);
+      setStep(3);
+      showToast(`Committed ${j.appended} example(s) to training dataset. Total: ${j.totalExamplesInFile}${j.totalExamplesInFile < 10 ? ' (need ≥10 for fine-tune)' : ' ✅'}`, 'ok');
+    } catch (e) { showToast(`Finalize failed: ${e.message}`, 'err'); }
   };
 
-  /* ----------------- UI micro-components ----------------- */
-
-  const Row = ({ label, value, color }) => (
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: '1fr auto',
-      gap: 12,
-      alignItems: 'baseline',
-      padding: '6px 0',
-      borderBottom: '1px dashed rgba(255,255,255,0.06)'
-    }}>
-      <div style={{ opacity: .85 }}>{label}</div>
-      <div style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', color }}>{value}</div>
-    </div>
-  );
-
-  const BeforeAfterCard = ({ title, data }) => {
-    const KR = data?.KR || {};
-    const T = data?.times || {};
-    const W = data?.WOT || {};
-    return (
-      <div style={{ background:'#202020', padding:12, borderRadius:8, boxShadow:'0 0 0 1px rgba(0,255,136,0.08) inset' }}>
-        <h3 style={{ marginTop:0, color:'#adff2f' }}>{title}</h3>
-        <Row label="Max KR" value={fmtDeg(KR?.maxKR)} />
-        <Row label="KR Events" value={fmtPlain(KR?.krEvents)} />
-        <Row label="0–60" value={fmtSec(T?.zeroToSixty)} />
-        <Row label="40–100" value={fmtSec(T?.fortyToHundred)} />
-        <Row label="60–130" value={fmtSec(T?.sixtyToOneThirty)} />
-        <Row label="Peak Spark @WOT" value={fmtDeg(W?.sparkMaxWOT)} />
-        <Row label="MAP min @WOT" value={fmtKpa(W?.mapMinWOT)} />
-        <Row label="MAP max @WOT" value={fmtKpa(W?.mapMaxWOT)} />
-        <Row label="STFT Var" value={fmtPlain(data?.varSTFT)} />
-        <Row label="LTFT Var" value={fmtPlain(data?.varLTFT)} />
-      </div>
-    );
+  const startFineTune = async () => {
+    try {
+      const res = await axios.post(`${API_BASE}/fine-tune-now`);
+      showToast(`Fine-tune job started! Job ID: ${res.data.job?.id}`, 'ok');
+    } catch (e) { showToast(`Fine-tune failed: ${e?.response?.data?.error || e.message}`, 'err'); }
   };
 
-  const DeltasCard = ({ deltas }) => {
-    const d = deltas || {};
-    const paint = (key, label, v, digits, unit) => (
-      <Row label={label} value={withSign(v, digits, unit)} color={deltaColor(key, v)} />
-    );
-    return (
-      <div style={{ background:'#202020', padding:12, borderRadius:8, boxShadow:'0 0 0 1px rgba(0,255,136,0.08) inset' }}>
-        <h3 style={{ marginTop:0, color:'#adff2f' }}>Deltas</h3>
-        {paint('KR_max_change','Δ Max KR', d.KR_max_change, 1, '°')}
-        {paint('KR_event_change','Δ KR Events', d.KR_event_change, 0, '')}
-        {paint('t_0_60_change','Δ 0–60', d.t_0_60_change, 2, 's')}
-        {paint('t_40_100_change','Δ 40–100', d.t_40_100_change, 2, 's')}
-        {paint('t_60_130_change','Δ 60–130', d.t_60_130_change, 2, 's')}
-        {paint('sparkMaxWOT_change','Δ Peak Spark @WOT', d.sparkMaxWOT_change, 1, '°')}
-        {paint('mapMinWOT_change','Δ MAP min @WOT', d.mapMinWOT_change, 0, 'kPa')}
-        {paint('mapMaxWOT_change','Δ MAP max @WOT', d.mapMaxWOT_change, 0, 'kPa')}
-        {paint('varSTFT_change','Δ STFT Var', d.varSTFT_change, 2, '')}
-        {paint('varLTFT_change','Δ LTFT Var', d.varLTFT_change, 2, '')}
-      </div>
-    );
-  };
-
-  /* ----------------- Render ----------------- */
+  // ── Render ────────────────────────────────────────────────
+  const c = comparison;
+  const steps = ['Vehicle Setup', 'Analysis', 'Review & Train', 'Complete'];
 
   return (
-    <div style={{ padding: '30px', backgroundColor: '#111', color: '#adff2f', minHeight: '100vh', fontFamily: 'Arial, sans-serif' }}>
-      <h1 style={{ fontSize: '2rem', marginBottom: '20px' }}>Trainer Mode — Log Only</h1>
+    <div style={css.page}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
+        * { box-sizing: border-box; }
+        select option { background: #111811; }
+        input[type=file] { display: none; }
+        .st-input:focus { border-color: rgba(61,255,122,0.3) !important; box-shadow: 0 0 0 3px rgba(61,255,122,0.06); }
+        .st-btn-primary:hover { box-shadow: 0 0 30px rgba(61,255,122,0.4); transform: translateY(-1px); }
+        .st-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: #274027; border-radius: 3px; }
+        @keyframes fadeInUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+        .analyzing { animation: pulse 1.5s ease-in-out infinite; }
+      `}</style>
 
-      <div style={{ marginBottom: '20px' }}>
-        <label>Paste VCM Info</label>
-        <textarea
-          onBlur={handleVCMPaste}
-          placeholder="Paste copied VCM Editor info here"
-          rows="4"
-          style={{ width: '100%', padding: '10px', borderRadius: '4px', background: '#222', color: '#fff' }}
-        />
-      </div>
-
-      <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-        {['vin','calid','transCalid','transModel'].map((n) => (
-          <div key={n} style={{ marginBottom: '12px' }}>
-            <label>{({vin:'VIN',calid:'Calibration ID',transCalid:'Transmission Cal ID',transModel:'Transmission Model'})[n]}</label>
-            <input
-              name={n}
-              value={form[n]}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
-            />
+      {/* ── HEADER ── */}
+      <header style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'0 32px', height:68, background:'rgba(9,12,9,0.95)', borderBottom:`1px solid ${T.borderHi}`, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(12px)' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12, fontFamily:"'Rajdhani',sans-serif", fontSize:22, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:T.green }}>
+          <div style={{ width:34, height:34, border:`1.5px solid ${T.green}`, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center' }}>
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/><path d="M7 9l3 3 5-5" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           </div>
-        ))}
+          Satera Tuning
+          <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, fontWeight:400, color:T.muted, textTransform:'none', letterSpacing:0 }}>Trainer Mode</span>
+          <span style={{ fontSize:9, fontWeight:600, letterSpacing:1.5, textTransform:'uppercase', color:T.faint, background:T.greenLo, border:`1px solid rgba(61,255,122,0.1)`, borderRadius:4, padding:'2px 7px' }}>INTERNAL</span>
+        </div>
+        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
+          <Link to="/ai-review" style={{ ...css.btnGhost, textDecoration:'none', display:'inline-block' }}>AI Review</Link>
+          <Link to="/log-comparison" style={{ ...css.btnGhost, textDecoration:'none', display:'inline-block' }}>Log Comparison</Link>
+        </div>
+      </header>
 
-        {/* Dropdowns */}
-        {[
-          ['Year','year',dropdownOptions.year],
-          ['Model','model',dropdownOptions.model],
-          ['Engine','engine',dropdownOptions.engine],
-          ['Injectors','injectors',dropdownOptions.injectors],
-          ['MAP Sensor','map',dropdownOptions.map],
-          ['Throttle Body','throttle',dropdownOptions.throttle],
-          ['Power Adder','power',dropdownOptions.power],
-          ['Transmission','trans',dropdownOptions.trans],
-          ['Tire Height (inches)','tire',dropdownOptions.tire],
-          ['Rear Gear Ratio','gear',dropdownOptions.gear],
-          ['Fuel Type','fuel',dropdownOptions.fuel],
-          ['Aftermarket Camshaft Installed?','cam',dropdownOptions.cam],
-          ['Neural Network Status','neural',dropdownOptions.neural],
-        ].map(([label,name,opts]) => (
-          <div key={name} style={{ marginBottom: '12px' }}>
-            <label>{label}</label>
-            <select
-              name={name}
-              value={form[name]}
-              onChange={handleChange}
-              style={{ width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
-            >
-              <option value="">Select...</option>
-              {opts.concat('Custom').map(opt => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-            </select>
-            {form[name] === 'Custom' && (
-              <input
-                placeholder={`Enter custom ${label.toLowerCase()}`}
-                value={customFields[name] || ''}
-                onChange={e => handleCustomChange(name, e.target.value)}
-                style={{ marginTop: '8px', width: '100%', padding: '8px', borderRadius: '4px', background: '#333', color: '#fff' }}
+      <div style={{ padding:'28px 32px', maxWidth:1400, margin:'0 auto' }}>
+
+        {/* ── Page title + steps ── */}
+        <div style={{ marginBottom:28 }}>
+          <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:32, fontWeight:700, letterSpacing:1, margin:'0 0 6px', color:T.text }}>
+            Tune Comparison Trainer
+          </h1>
+          <p style={{ fontSize:13, color:T.muted, margin:'0 0 24px', lineHeight:1.6 }}>
+            Upload a before and after tune log for the same vehicle. The AI compares the two, identifies what changed, and learns from your corrections — building toward automated tune generation over time.
+          </p>
+          <StepIndicator steps={steps} current={step}/>
+        </div>
+
+        {/* ── Toast notification ── */}
+        {toast.text && (
+          <div style={{ padding:'12px 18px', borderRadius:8, marginBottom:20, fontSize:13, lineHeight:1.5, background: toast.type === 'err' ? 'rgba(255,82,82,0.08)' : 'rgba(61,255,122,0.06)', border:`1px solid ${toast.type === 'err' ? 'rgba(255,82,82,0.25)' : 'rgba(61,255,122,0.2)'}`, color: toast.type === 'err' ? T.red : T.green, animation:'fadeInUp 0.3s ease' }}>
+            {toast.text}
+          </div>
+        )}
+
+        <div style={{ display:'grid', gridTemplateColumns:'380px 1fr', gap:20, alignItems:'start' }}>
+
+          {/* ── LEFT: Setup panel ── */}
+          <div style={{ display:'grid', gap:16 }}>
+
+            {/* VCM paste */}
+            <div style={css.card}>
+              <p style={css.sectionTitle}>Quick Fill from VCM Editor</p>
+              <label style={css.label}>Paste VCM Editor info block (optional — auto-fills fields below)</label>
+              <textarea
+                onBlur={handleVCMPaste}
+                placeholder="Copy and paste from VCM Editor's vehicle info screen…"
+                rows={4}
+                style={{ ...css.input, resize:'vertical', lineHeight:1.5 }}
               />
-            )}
-          </div>
-        ))}
+            </div>
 
-        {/* Logs */}
-        <div>
-          <label>Before Log (CSV)</label>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={e => setBeforeLog(e.target.files[0])}
-            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }}
-          />
-        </div>
-
-        <div>
-          <label>After Log (CSV)</label>
-          <input
-            type="file"
-            accept=".csv"
-            onChange={e => setAfterLog(e.target.files[0])}
-            style={{ width: '100%', padding: '10px', background: '#333', color: '#fff', borderRadius: '4px' }}
-          />
-        </div>
-
-        <div style={{ gridColumn: '1 / -1' }}>
-          <button
-            type="submit"
-            style={{ backgroundColor: '#00ff88', color: '#000', padding: '12px 20px', border: 'none', borderRadius: '4px', cursor: 'pointer' }}
-          >
-            Upload / Analyze
-          </button>
-        </div>
-      </form>
-
-      {/* AI summary */}
-      {aiSummary && (
-        <div
-          style={{
-            marginTop: '2rem',
-            padding: '1.5rem',
-            backgroundColor: '#111',
-            borderRadius: '12px',
-            boxShadow: '0 0 15px rgba(0,255,0,0.3)',
-            color: '#00FF90',
-            fontFamily: 'monospace',
-            lineHeight: 1.6,
-            whiteSpace: 'pre-wrap'
-          }}
-        >
-          <h2 style={{ color: '#00FF90', marginBottom: '1rem' }}>📘 AI Summary</h2>
-          {aiSummary}
-        </div>
-      )}
-
-      {/* Before vs After Metrics */}
-      {comparison && (
-        <div style={{ marginTop: '2rem', background:'#1a1a1a', padding:'16px', borderRadius:'10px' }}>
-          <h2 style={{ color:'#00FF90', marginBottom: '10px' }}>Before vs After — Key Metrics</h2>
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:16 }}>
-            <BeforeAfterCard title="Before" data={comparison.before} />
-            <BeforeAfterCard title="After" data={comparison.after} />
-            <DeltasCard deltas={comparison.deltas} />
-          </div>
-        </div>
-      )}
-
-      {/* Trainer Chat */}
-      <div style={{ marginTop: '2rem', background:'#1a1a1a', padding:'16px', borderRadius:'10px' }}>
-        <h2 style={{ color:'#00FF90', marginBottom: '10px' }}>Trainer Chat</h2>
-        <div style={{ maxHeight: 340, overflowY: 'auto', padding: '10px', background: '#181818', borderRadius: 8 }}>
-          {chat.map((m, i) => (
-            <div key={i} style={{ marginBottom: 12 }}>
-              <div style={{ fontSize:12, opacity:.7 }}>{m.role === 'assistant' ? 'Satera' : 'You'}</div>
-              <div style={{ background: m.role === 'assistant' ? '#0b2' : '#333', color:'#fff', padding:'8px 10px', borderRadius:8, whiteSpace:'pre-wrap' }}>
-                {m.content}
+            {/* Vehicle info */}
+            <div style={css.card}>
+              <p style={css.sectionTitle}>Vehicle Details</p>
+              <div style={{ display:'grid', gap:10 }}>
+                {/* VIN + CALID */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>VIN</label><input name="vin" value={form.vin} onChange={handleChange} placeholder="1B3..." style={css.input}/></div>
+                  <div><label style={css.label}>Calibration ID</label><input name="calid" value={form.calid} onChange={handleChange} placeholder="OS Cal ID" style={css.input}/></div>
+                </div>
+                {/* Year + Model */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div>
+                    <label style={css.label}>Year</label>
+                    <select name="year" value={form.year} onChange={handleChange} style={css.select}>
+                      <option value="">Select…</option>{dropdownOptions.year.map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={css.label}>Model</label>
+                    <select name="model" value={form.model} onChange={handleChange} style={css.select}>
+                      <option value="">Select…</option>{dropdownOptions.model.map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {/* Engine */}
+                <div><label style={css.label}>Engine</label><select name="engine" value={form.engine} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.engine.map(o=><option key={o}>{o}</option>)}</select></div>
+                {/* Fuel + Power */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>Fuel</label><select name="fuel" value={form.fuel} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.fuel.map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={css.label}>Power Adder</label><select name="power" value={form.power} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.power.map(o=><option key={o}>{o}</option>)}</select></div>
+                </div>
+                {/* Trans + Injectors */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>Transmission</label><select name="trans" value={form.trans} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.trans.map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={css.label}>Injectors</label><select name="injectors" value={form.injectors} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.injectors.map(o=><option key={o}>{o}</option>)}</select></div>
+                </div>
+                {/* MAP + Throttle */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>MAP Sensor</label><select name="map" value={form.map} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.map.map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={css.label}>Throttle Body</label><select name="throttle" value={form.throttle} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.throttle.map(o=><option key={o}>{o}</option>)}</select></div>
+                </div>
+                {/* Gear + Tire */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>Rear Gear</label><select name="gear" value={form.gear} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.gear.map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={css.label}>Tire Height</label><select name="tire" value={form.tire} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.tire.map(o=><option key={o}>{o}</option>)}</select></div>
+                </div>
+                {/* Cam + Neural */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                  <div><label style={css.label}>Aftermarket Cam</label><select name="cam" value={form.cam} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.cam.map(o=><option key={o}>{o}</option>)}</select></div>
+                  <div><label style={css.label}>Neural Network</label><select name="neural" value={form.neural} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.neural.map(o=><option key={o}>{o}</option>)}</select></div>
+                </div>
               </div>
             </div>
-          ))}
-        </div>
-        <div style={{ display:'flex', gap:8, marginTop:10 }}>
-          <input
-            value={message}
-            onChange={e => setMessage(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') sendChat(); }}
-            placeholder="Ask about KR, WOT timing, trims, misfires…"
-            style={{ flex:1, padding:'10px', borderRadius:6, background:'#222', color:'#fff', border:'1px solid #333' }}
-          />
-          <button onClick={sendChat} style={{ background:'#00ff88', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}>
-            Send
-          </button>
-        </div>
 
-        {/* Trainer save/finalize controls */}
-        <div style={{ display:'flex', gap:10, marginTop:14, flexWrap:'wrap' }}>
-          <button
-            disabled={busy}
-            onClick={saveChatAsTraining}
-            style={{ background:'#66ffcc', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}
-          >
-            Save Chat as Training
-          </button>
-          <button
-            disabled={busy}
-            onClick={finalizeAppendJsonl}
-            style={{ background:'#a78bfa', color:'#000', border:'none', borderRadius:6, padding:'10px 16px', cursor:'pointer' }}
-          >
-            Finalize & Append JSONL
-          </button>
-        </div>
+            {/* Log uploads */}
+            <div style={css.cardHi}>
+              <p style={css.sectionTitle}>Log Files</p>
+              <div style={{ display:'grid', gap:12 }}>
+                <UploadZone label="Before Log (CSV) — Stock / Pre-Tune" sublabel="The baseline — stock or before modifications" file={beforeLog} onChange={e=>setBeforeLog(e.target.files[0])} id="beforeInput" color={T.blue}/>
+                <UploadZone label="After Log (CSV) — Tuned / Modified" sublabel="The result — after tune and/or modifications" file={afterLog} onChange={e=>setAfterLog(e.target.files[0])} id="afterInput" color={T.green}/>
+              </div>
+              <button
+                onClick={handleAnalyze}
+                disabled={loading || !beforeLog || !afterLog}
+                className="st-btn-primary"
+                style={{ ...css.btnPrimary, width:'100%', marginTop:16, opacity: (loading||!beforeLog||!afterLog) ? 0.4 : 1 }}
+              >
+                {loading ? (
+                  <span className="analyzing">⚡ Analyzing Logs…</span>
+                ) : '⚡ Analyze & Compare'}
+              </button>
+              {status && <p style={{ fontSize:12, color:T.muted, margin:'10px 0 0', textAlign:'center' }}>{status}</p>}
+            </div>
 
-        {(trainerEntryId || trainingEntry?.id) && (
-          <div style={{ marginTop:8, fontSize:12, opacity:.8 }}>
-            trainer_entry_id: <code>{trainerEntryId || trainingEntry?.id}</code>
+            {/* Training counter */}
+            {examplesTotal !== null && (
+              <div style={{ ...css.card, textAlign:'center', animation:'fadeInUp 0.4s ease' }}>
+                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:T.muted, marginBottom:8 }}>Training Dataset</div>
+                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:48, fontWeight:700, color: examplesTotal >= 10 ? T.green : T.amber, lineHeight:1 }}>{examplesTotal}</div>
+                <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>examples collected</div>
+                <div style={{ fontSize:11, color: examplesTotal >= 10 ? T.green : T.amber, marginTop:6 }}>
+                  {examplesTotal >= 10 ? '✅ Ready for fine-tuning' : `Need ${10 - examplesTotal} more for fine-tune`}
+                </div>
+                {examplesTotal >= 10 && (
+                  <button onClick={startFineTune} style={{ ...css.btnPurple, marginTop:14, width:'100%' }}>
+                    🤖 Start Fine-Tune Job
+                  </button>
+                )}
+              </div>
+            )}
           </div>
-        )}
 
-        {examplesTotal !== null && (
-          <div style={{ marginTop:6, fontSize:12, opacity:.85 }}>
-            Examples in JSONL: <b>{examplesTotal}</b> {examplesTotal < 10 ? ' (need ≥ 10 for fine-tune)' : ' ✅'}
-          </div>
-        )}
+          {/* ── RIGHT: Results panel ── */}
+          <div style={{ display:'grid', gap:16 }}>
 
-        {toast && (
-          <div style={{ marginTop:10, background:'#111', border:'1px solid #2a2a2a', borderRadius:8, padding:'8px 10px', color:'#e0ffe8' }}>
-            {toast}
+            {/* Placeholder when no results */}
+            {!aiSummary && (
+              <div style={{ ...css.card, minHeight:300, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:12, color:T.muted }}>
+                <div style={{ fontSize:40 }}>📊</div>
+                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:600, letterSpacing:1 }}>No Analysis Yet</div>
+                <div style={{ fontSize:13, textAlign:'center', maxWidth:340, lineHeight:1.6 }}>
+                  Fill in vehicle details, upload your before and after logs, then click Analyze to see the full comparison.
+                </div>
+              </div>
+            )}
+
+            {/* AI Summary */}
+            {aiSummary && (
+              <div style={{ ...css.cardHi, animation:'fadeInUp 0.4s ease' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
+                  <span style={{ fontSize:20 }}>🧠</span>
+                  <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>AI Comparison Summary</span>
+                </div>
+                <div style={{ fontSize:14, lineHeight:1.8, color:T.text, whiteSpace:'pre-wrap' }}>
+                  {aiSummary}
+                </div>
+              </div>
+            )}
+
+            {/* Metrics comparison table */}
+            {c && (
+              <div style={{ ...css.card, animation:'fadeInUp 0.5s ease' }}>
+                <p style={css.sectionTitle}>Before vs After — Key Metrics</p>
+
+                {/* Column headers */}
+                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:8, padding:'6px 0 10px', borderBottom:`2px solid ${T.borderHi}`, marginBottom:4 }}>
+                  <span style={{ fontSize:11, color:T.muted, fontWeight:600, letterSpacing:0.8 }}>METRIC</span>
+                  <span style={{ fontSize:11, color:T.blue, fontWeight:700, letterSpacing:0.8, textAlign:'right' }}>BEFORE</span>
+                  <span style={{ fontSize:11, color:T.green, fontWeight:700, letterSpacing:0.8, textAlign:'right' }}>AFTER</span>
+                  <span style={{ fontSize:11, color:T.muted, fontWeight:600, letterSpacing:0.8, textAlign:'right' }}>DELTA</span>
+                </div>
+
+                {/* Knock section */}
+                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Knock Retard</div>
+                <MetricRow label="Max KR" before={fmtDeg(c.before.KR.maxKR)} after={fmtDeg(c.after.KR.maxKR)} delta={withSign(c.deltas.KR_max_change,1,'°')} deltaKey="KR_max_change"/>
+                <MetricRow label="KR Events" before={fmtPlain(c.before.KR.krEvents)} after={fmtPlain(c.after.KR.krEvents)} delta={withSign(c.deltas.KR_event_change,0)} deltaKey="KR_event_change"/>
+
+                {/* Timing */}
+                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>WOT Timing</div>
+                <MetricRow label="Peak Spark @WOT" before={fmtDeg(c.before.WOT.sparkMaxWOT)} after={fmtDeg(c.after.WOT.sparkMaxWOT)} delta={withSign(c.deltas.sparkMaxWOT_change,1,'°')} deltaKey="sparkMaxWOT_change"/>
+                <MetricRow label="MAP min @WOT" before={fmtKpa(c.before.WOT.mapMinWOT)} after={fmtKpa(c.after.WOT.mapMinWOT)} delta={withSign(c.deltas.mapMinWOT_change,0,'kPa')} deltaKey="mapMinWOT_change"/>
+                <MetricRow label="MAP max @WOT" before={fmtKpa(c.before.WOT.mapMaxWOT)} after={fmtKpa(c.after.WOT.mapMaxWOT)} delta={withSign(c.deltas.mapMaxWOT_change,0,'kPa')} deltaKey="mapMaxWOT_change"/>
+
+                {/* Acceleration */}
+                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Acceleration Times</div>
+                <MetricRow label="0–60 mph" before={fmtSec(c.before.times.zeroToSixty)} after={fmtSec(c.after.times.zeroToSixty)} delta={withSign(c.deltas.t_0_60_change,2,'s')} deltaKey="t_0_60_change"/>
+                <MetricRow label="40–100 mph" before={fmtSec(c.before.times.fortyToHundred)} after={fmtSec(c.after.times.fortyToHundred)} delta={withSign(c.deltas.t_40_100_change,2,'s')} deltaKey="t_40_100_change"/>
+                <MetricRow label="60–130 mph" before={fmtSec(c.before.times.sixtyToOneThirty)} after={fmtSec(c.after.times.sixtyToOneThirty)} delta={withSign(c.deltas.t_60_130_change,2,'s')} deltaKey="t_60_130_change"/>
+
+                {/* Fuel trims */}
+                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Fuel Trims</div>
+                <MetricRow label="STFT Variance" before={fmtPlain(c.before.varSTFT)} after={fmtPlain(c.after.varSTFT)} delta={withSign(c.deltas.varSTFT_change,2)} deltaKey="varSTFT_change"/>
+                <MetricRow label="LTFT Variance" before={fmtPlain(c.before.varLTFT)} after={fmtPlain(c.after.varLTFT)} delta={withSign(c.deltas.varLTFT_change,2)} deltaKey="varLTFT_change"/>
+
+                {/* Delta legend */}
+                <div style={{ display:'flex', gap:16, marginTop:14, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
+                  <span style={{ fontSize:11, color:T.muted }}>Delta color key:</span>
+                  <span style={{ fontSize:11, color:T.green }}>● Improvement</span>
+                  <span style={{ fontSize:11, color:T.red }}>● Worse</span>
+                  <span style={{ fontSize:11, color:T.muted }}>● No change</span>
+                </div>
+              </div>
+            )}
+
+            {/* Chat window */}
+            {step >= 2 && (
+              <div style={{ ...css.card, animation:'fadeInUp 0.6s ease' }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
+                  <p style={{ ...css.sectionTitle, margin:0 }}>Trainer Chat</p>
+                  <span style={{ fontSize:11, color:T.muted }}>Correct, question, or add context to the AI assessment</span>
+                </div>
+
+                {/* Chat messages */}
+                <div style={{ maxHeight:380, overflowY:'auto', padding:'4px 0', marginBottom:12 }}>
+                  {chat.map((m,i) => <ChatBubble key={i} role={m.role} content={m.content}/>)}
+                  {chatLoading && (
+                    <div style={{ display:'flex', gap:10, marginBottom:14 }}>
+                      <div style={{ width:28, height:28, borderRadius:'50%', background:T.greenLo, border:`1px solid ${T.borderHi}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13 }}>🤖</div>
+                      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:'4px 12px 12px 12px', padding:'10px 14px', color:T.muted, fontSize:13 }}>
+                        <span className="analyzing">Thinking…</span>
+                      </div>
+                    </div>
+                  )}
+                  <div ref={chatEndRef}/>
+                </div>
+
+                {/* Chat input */}
+                <div style={{ display:'flex', gap:8 }}>
+                  <input
+                    value={message}
+                    onChange={e=>setMessage(e.target.value)}
+                    onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey) sendChat(); }}
+                    placeholder="Ask about knock, timing, fuel trims, boost… or correct anything the AI got wrong"
+                    style={{ ...css.input, flex:1 }}
+                    disabled={chatLoading}
+                  />
+                  <button onClick={sendChat} disabled={chatLoading || !message.trim()} style={{ ...css.btnPrimary, padding:'9px 18px', flexShrink:0, opacity: (!message.trim()||chatLoading) ? 0.4 : 1 }}>
+                    Send
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Training controls */}
+            {step >= 2 && (
+              <div style={{ ...css.card, animation:'fadeInUp 0.7s ease' }}>
+                <p style={css.sectionTitle}>Save to Training Dataset</p>
+                <p style={{ fontSize:13, color:T.muted, margin:'0 0 14px', lineHeight:1.6 }}>
+                  Once you've reviewed the AI summary and had a chat to correct anything, save this session as training data. Over time this builds the dataset used to fine-tune the model to sound and think like you.
+                </p>
+
+                <div>
+                  <label style={css.label}>Session Notes (optional — describe what this vehicle/tune represents)</label>
+                  <textarea
+                    value={notes}
+                    onChange={e=>setNotes(e.target.value)}
+                    placeholder="e.g. 2019 Hellcat, stock to Stage 2 Whipple swap, E85 conversion, ID1050x injectors..."
+                    rows={3}
+                    style={{ ...css.input, resize:'vertical', lineHeight:1.5, marginBottom:14 }}
+                  />
+                </div>
+
+                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
+                  <button onClick={saveTraining} style={css.btnAmber}>
+                    💾 Save Chat as Training
+                  </button>
+                  <button onClick={finalizeTraining} style={css.btnPrimary}>
+                    ✅ Finalize & Commit to Dataset
+                  </button>
+                </div>
+
+                {trainerEntryId && (
+                  <p style={{ fontSize:11, color:T.faint, margin:'10px 0 0' }}>
+                    Session ID: <code style={{ color:T.muted }}>{trainerEntryId}</code>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
-        )}
+        </div>
       </div>
-
-      {/* Feedback + Fine-tune */}
-      {(trainingEntry?.id || trainerEntryId) && (
-        <div style={{ marginTop: '2rem' }}>
-          <label>📝 Trainer Notes:</label>
-          <textarea
-            rows="4"
-            value={notes}
-            onChange={e => setNotes(e.target.value)}
-            placeholder="Leave feedback or explanation for this correction..."
-            style={{ width: '100%', marginTop: '10px', padding: '12px', backgroundColor: '#222', color: '#fff', borderRadius: '6px' }}
-          />
-          <button
-            onClick={async () => {
-              try {
-                await axios.post(`${API_BASE}/update-feedback`, {
-                  id: trainingEntry?.id || trainerEntryId,
-                  feedback: notes
-                });
-                alert('✅ Feedback submitted!');
-              } catch (err) {
-                console.error('❌ Feedback submit failed:', err);
-                alert('❌ Feedback failed to submit.');
-              }
-            }}
-            style={{
-              marginTop: '10px',
-              backgroundColor: '#ffaa00',
-              padding: '10px 16px',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              color: '#000'
-            }}
-          >
-            💬 Submit Feedback
-          </button>
-        </div>
-      )}
-
-      <div style={{ marginTop: '1rem' }}>
-        <button
-          onClick={async () => {
-            try {
-              const res = await axios.post(`${API_BASE}/fine-tune-now`);
-              alert(`✅ Fine-tune started. Job ID: ${res.data.job.id}`);
-            } catch (err) {
-              console.error('❌ Fine-tune failed:', err);
-              alert('❌ Fine-tune failed.');
-            }
-          }}
-          style={{
-            backgroundColor: '#ff00cc',
-            padding: '10px 16px',
-            border: 'none',
-            borderRadius: '6px',
-            cursor: 'pointer',
-            color: '#000'
-          }}
-        >
-          🤖 Fine-Tune GPT-4 Now
-        </button>
-      </div>
-
-      <pre style={{ marginTop: '20px', background: '#222', padding: '20px', color: '#adff2f', borderRadius: '6px' }}>{status}</pre>
     </div>
   );
-};
-
-export default TrainerMode;
+}
