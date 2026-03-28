@@ -459,7 +459,7 @@ function formatChecklist(parsed, headers) {
     if (count > 0) misfireReport.push('Cylinder ' + cyl + ': ' + count.toFixed(0) + ' misfires');
   });
   if (misfireReport.length) {
-    summary.push('WARN: Misfires were detected in this log — ' + misfireReport.join(', ') + '. Misfires mean one or more cylinders are not firing correctly. This can be caused by spark plugs, ignition coils, fuel delivery issues, or a tune that is too aggressive.');
+    summary.push('WARN: Misfires were detected in this log — ' + misfireReport.join(', ') + '. Misfires mean one or more cylinders are not firing correctly. This is typically caused by spark plugs, ignition coils, or fuel delivery issues.');
   } else {
     summary.push('OK: No misfires detected.');
   }
