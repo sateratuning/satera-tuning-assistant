@@ -550,8 +550,9 @@ export default function LogComparison() {
     : { display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 16 };
 
   return (
-    <div style={css.page}>
+    <div style={css.page} className="st-page">
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
         @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
         @keyframes fadeIn  { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
         select option { background: #111811; }
@@ -572,20 +573,22 @@ export default function LogComparison() {
       `}</style>
 
       {/* ── HEADER ─────────────────────────────────────── */}
-      <header style={css.header}>
-        <div style={css.logo}>
-          <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
-            <circle cx="11" cy="11" r="10" stroke={T.green} strokeWidth="1.5"/>
-            <path d="M7 11 L10 14 L15 8" stroke={T.green} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
+      <header className="st-header">
+        <div className="st-logo">
+          <div className="st-logo-icon">
+            <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
+              <circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/>
+              <path d="M7 11 L10 14 L15 8" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </div>
           Satera Tuning
-          <span style={{ fontSize: 11, fontWeight: 400, color: T.muted }}>Log Comparison</span>
-          <span style={{ fontSize: 10, color: T.greenDim, background: T.greenLo, border: `1px solid ${T.faint}`, borderRadius: 4, padding: '1px 6px' }}>BETA</span>
+          <span className="st-logo-sub">Log Comparison</span>
+          <span className="st-beta">Beta</span>
         </div>
 
         <div style={css.headerRight}>
-          <Link to="/ai-review" style={css.btnNav}>AI Log Review →</Link>
-          <button style={css.btnGhost} onClick={() => setShowFeedback(true)}>Report a Bug</button>
+          <Link to="/ai-review" className="st-btn-nav">AI Log Review →</Link>
+          <button className='st-btn-ghost' onClick={() => setShowFeedback(true)}>Report a Bug</button>
 
           {!user ? (
             <>
@@ -633,10 +636,39 @@ export default function LogComparison() {
 
       <div style={css.shell}>
 
+        {/* ── HOW IT WORKS ── */}
+        <div className="st-how-it-works" style={{ marginBottom: 16 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
+            <span style={{ fontSize:14 }}>🏁</span>
+            <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:600, letterSpacing:2, textTransform:'uppercase', color:'#3dff7a' }}>How It Works</span>
+          </div>
+          <div className="st-how-it-works-steps">
+            <div className="st-step">
+              <div className="st-step-num">1</div>
+              <div className="st-step-text"><strong>Upload Log 1</strong>HP Tuners CSV — triggers AI review automatically</div>
+            </div>
+            <span className="st-step-arrow">›</span>
+            <div className="st-step">
+              <div className="st-step-num">2</div>
+              <div className="st-step-text"><strong>Pick Interval</strong>Choose 0-60, 40-100, or 60-130 mph</div>
+            </div>
+            <span className="st-step-arrow">›</span>
+            <div className="st-step">
+              <div className="st-step-num">3</div>
+              <div className="st-step-text"><strong>Generate Graph</strong>Compare logs or overlay a leaderboard run</div>
+            </div>
+            <span className="st-step-arrow">›</span>
+            <div className="st-step">
+              <div className="st-step-num">4</div>
+              <div className="st-step-text"><strong>Submit Your Time</strong>Sign in and add your run to the leaderboard</div>
+            </div>
+          </div>
+        </div>
+
         {/* ── UPLOAD CONTROLS ─────────────────────────── */}
         <div style={{ ...css.cardHighlight, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-            <p style={{ ...css.sectionTitle, margin: 0 }}>Upload & Compare</p>
+            <p className='st-section-title' style={{ margin:0 }}>Upload & Compare</p>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 12, color: T.muted }}>Interval:</span>
               {['0-60', '40-100', '60-130'].map(iv => (
@@ -706,7 +738,7 @@ export default function LogComparison() {
         {/* ── VEHICLE BAR (horizontal, full width) ────── */}
         <div style={{ ...css.card, marginBottom: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
-            <p style={{ ...css.sectionTitle, margin: 0 }}>Vehicle Details</p>
+            <p className='st-section-title' style={{ margin:0 }}>Vehicle Details</p>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
               <button onClick={submitToLeaderboard} disabled={submitting} style={{ ...css.btnPrimary, padding: '8px 18px' }}>
                 {submitting ? 'Submitting…' : '🏆 Submit to Leaderboard'}
@@ -763,7 +795,7 @@ export default function LogComparison() {
 
             {/* Speed graph */}
             <div style={css.card}>
-              <p style={css.sectionTitle}>Speed vs Time — {interval} mph</p>
+              <p className='st-section-title'>Speed vs Time — {interval} mph</p>
               {graphData ? (
                 <>
                   <div style={{ height: 280 }}>
@@ -798,7 +830,7 @@ export default function LogComparison() {
             {/* AI Review panel */}
             <div style={css.card}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
-                <p style={{ ...css.sectionTitle, margin: 0 }}>AI Log Review — Log 1</p>
+                <p className='st-section-title' style={{ margin:0 }}>AI Log Review — Log 1</p>
                 <button
                   onClick={() => log1File && runLogReview(log1File)}
                   disabled={!log1File || reviewLoading}
@@ -870,19 +902,19 @@ export default function LogComparison() {
                   <div style={{ display:'grid', gap:10, marginTop:4 }}>
                     {criticals.length > 0 && (
                       <div style={{ background:'rgba(255,82,82,0.06)', border:'1px solid rgba(255,82,82,0.2)', borderRadius:8, padding:12 }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:'#ff5252', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>⚠ Needs Immediate Attention</div>
+                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#ff5252', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>⚠ Needs Immediate Attention</div>
                         {criticals.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
                     {warns.length > 0 && (
                       <div style={{ background:'rgba(245,166,35,0.04)', border:'1px solid rgba(245,166,35,0.15)', borderRadius:8, padding:12 }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:'#f5a623', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>Attention Needed</div>
+                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#f5a623', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Attention Needed</div>
                         {warns.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
                     {stats.length > 0 && (
                       <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:'#6b9f6b', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>Performance Data</div>
+                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Performance Data</div>
                         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
                           {stats.map((l,i) => {
                             const parts = l.body.split(':');
@@ -904,7 +936,7 @@ export default function LogComparison() {
                     )}
                     {oks.length > 0 && (
                       <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
-                        <div style={{ fontSize:11, fontWeight:700, color:'#3dff7a', letterSpacing:1, textTransform:'uppercase', marginBottom:8 }}>All Clear</div>
+                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>All Clear</div>
                         {oks.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
@@ -921,19 +953,19 @@ export default function LogComparison() {
               {!reviewLoading && (reviewAiParts.summary || reviewAiParts.action) && (
                 <div style={{ display:'grid', gap:10, marginTop:4 }}>
                   {reviewAiParts.summary && (
-                    <div style={{ background:'#141e14', border:'1px solid #2e472e', borderRadius:8, padding:16 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                    <div className='st-ai-card st-ai-card-summary'>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
                         <span style={{ fontSize:16 }}>🧠</span>
-                        <span style={{ fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:0.3 }}>Summary</span>
+                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:14, fontWeight:700, color:'#3dff7a', letterSpacing:1.5, textTransform:'uppercase' }}>Summary</span>
                       </div>
                       <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.summary}</p>
                     </div>
                   )}
                   {reviewAiParts.action && (
-                    <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:16 }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
+                    <div className='st-ai-card st-ai-card-action'>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
                         <span style={{ fontSize:16 }}>🔧</span>
-                        <span style={{ fontSize:12, fontWeight:700, color:'#4db8ff', letterSpacing:0.3 }}>What This Means For You</span>
+                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:14, fontWeight:700, color:'#4db8ff', letterSpacing:1.5, textTransform:'uppercase' }}>What This Means For You</span>
                       </div>
                       <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.action}</p>
                     </div>
@@ -947,7 +979,7 @@ export default function LogComparison() {
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
             <div style={css.card}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14, gap: 8 }}>
-                <p style={{ ...css.sectionTitle, margin: 0 }}>Leaderboard — {interval}</p>
+                <p className='st-section-title' style={{ margin:0 }}>Leaderboard — {interval}</p>
                 <button onClick={fetchLeaderboard} disabled={loadingLB} style={{ ...css.btnGhost, fontSize: 12 }}>
                   {loadingLB ? '⏳' : '↻ Refresh'}
                 </button>
