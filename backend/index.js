@@ -226,20 +226,12 @@ function detectPullGear({ rpm, mph, tireIn, rear }) {
 // =====================================================
 function formatChecklist(parsed, headers) {
   const summary = [];
-  const safeMax = (arr) => arr.length ? Math.max(...arr) : undefined;
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
   const hasCol = (name) => headers.includes(name);
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
+  const PSI_PER_KPA = 0.1450377377;
+  const defaultBaroKpa = 101.325;
 
-  // ── Knock ──────────────────────────────────────────────
-  const knockCol = getColumn('Total Knock Retard').map(v => Math.abs(v));
-  const peakKnock = safeMax(knockCol);
-  if (peakKnock !== undefined) {
-    summary.push(peakKnock > 0 ? `⚠️ Knock detected: up to ${peakKnock.toFixed(1)}°` : '✅ No knock detected.');
-  } else {
-    summary.push('ℹ️ Knock column not found.');
-  }
-
-  // ── WOT gating ─────────────────────────────────────────
   const accelName    = 'Accelerator Position D (SAE)';
   const throttleName = 'Throttle Position (SAE)';
   const timingName   = 'Timing Advance (SAE)';
@@ -248,177 +240,211 @@ function formatChecklist(parsed, headers) {
   const timeName     = 'Offset';
   const speedName    = 'Vehicle Speed (SAE)';
 
+  // ── WOT gating ────────────────────────────────────────
   let wotRows = [];
   if (hasCol(accelName)) {
     wotRows = parsed.filter(r => {
       const pedalOK = Number.isFinite(r[accelName]) && r[accelName] > 86;
-      const tpsOK = !hasCol(throttleName) || (Number.isFinite(r[throttleName]) && r[throttleName] > 86);
+      const tpsOK   = !hasCol(throttleName) || (Number.isFinite(r[throttleName]) && r[throttleName] > 86);
       return pedalOK && tpsOK;
     });
   }
 
+  // ── Knock ─────────────────────────────────────────────
+  const baroName = ['Barometric Pressure (SAE)', 'Baro Pressure (SAE)', 'Ambient Pressure (SAE)'].find(hasCol);
+  const getBoostPsi = (r) => {
+    const mapKpa = r[mapName];
+    if (!Number.isFinite(mapKpa)) return null;
+    const baroKpa = baroName && Number.isFinite(r[baroName]) ? r[baroName] : defaultBaroKpa;
+    const psi = (mapKpa - baroKpa) * PSI_PER_KPA;
+    return psi > 0 ? psi : 0;
+  };
+
+  const knockEvents = parsed
+    .map(r => ({ retard: Math.abs(r['Total Knock Retard'] || 0), rpm: r[rpmName], boost: getBoostPsi(r) }))
+    .filter(r => Number.isFinite(r.retard) && r.retard > 0);
+
+  if (!hasCol('Total Knock Retard')) {
+    summary.push('INFO: Knock column not found in this log.');
+  } else if (!knockEvents.length) {
+    summary.push('OK: No knock detected — timing looks clean throughout the pull.');
+  } else {
+    const peak = knockEvents.reduce((a, b) => b.retard > a.retard ? b : a);
+    const pk       = peak.retard;
+    const rpmStr   = Number.isFinite(peak.rpm)   ? ' around ' + Math.round(peak.rpm / 100) * 100 + ' RPM'   : '';
+    const boostStr = peak.boost !== null && peak.boost > 0 ? ' with approximately ' + peak.boost.toFixed(1) + ' psi of boost' : '';
+
+    if (pk <= 2) {
+      summary.push('WARN: I am seeing a small amount of knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is relatively minor but worth keeping an eye on. The ECU is pulling timing to protect the engine, which is normal, but we want to minimize this as much as possible.');
+    } else if (pk <= 5) {
+      summary.push('WARN: I am seeing moderate knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. The ECU is actively pulling timing to protect the engine. This level of knock needs to be addressed — continued hard driving like this can cause engine damage over time.');
+    } else {
+      summary.push('CRITICAL: I am seeing significant knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is a serious concern. The engine is knocking hard and the ECU is pulling large amounts of timing to compensate. Do NOT continue making hard pulls until this is resolved — damage can happen quickly at this level.');
+    }
+  }
+
   if (wotRows.length) {
-    // Peak timing @ RPM
-    const peakTimingRow = wotRows.reduce((best, r) => ((r[timingName] ?? -Infinity) > (best[timingName] ?? -Infinity) ? r : best), wotRows[0]);
+    // ── Peak timing ──────────────────────────────────────
+    const peakTimingRow = wotRows.reduce((best, r) => ((r[timingName] || -Infinity) > (best[timingName] || -Infinity) ? r : best), wotRows[0]);
     const peakTiming = peakTimingRow[timingName];
     const rpmAtPeak  = peakTimingRow[rpmName];
     if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak)) {
-      summary.push(`📈 Peak timing (WOT): ${peakTiming.toFixed(1)}° @ ${rpmAtPeak.toFixed(0)} RPM`);
-    } else {
-      summary.push('ℹ️ Could not determine peak timing under WOT.');
+      summary.push('STAT: Peak timing advance (WOT): ' + peakTiming.toFixed(1) + ' degrees @ ' + Math.round(rpmAtPeak) + ' RPM');
     }
 
-    // ── Boost ───────────────────────────────────────────
-    const PSI_PER_KPA = 0.1450377377;
-    const baroName = ['Barometric Pressure (SAE)', 'Baro Pressure (SAE)', 'Ambient Pressure (SAE)'].find(hasCol);
-    const defaultBaroKpa = 101.325;
+    // ── Boost ────────────────────────────────────────────
     const wotBoostPsi = [], wotRpm = [];
     for (const r of wotRows) {
-      const mapKpa = r[mapName];
-      if (!Number.isFinite(mapKpa)) continue;
-      const baroKpa = baroName && Number.isFinite(r[baroName]) ? r[baroName] : defaultBaroKpa;
-      wotBoostPsi.push(Math.max(0, (mapKpa - baroKpa) * PSI_PER_KPA));
+      const b = getBoostPsi(r);
+      if (b === null) continue;
+      wotBoostPsi.push(b);
       wotRpm.push(Number.isFinite(r[rpmName]) ? r[rpmName] : NaN);
     }
     if (wotBoostPsi.length) {
-      let peakBoostPsi = -Infinity, peakIdx = -1;
-      for (let i = 0; i < wotBoostPsi.length; i++) { if (wotBoostPsi[i] > peakBoostPsi) { peakBoostPsi = wotBoostPsi[i]; peakIdx = i; } }
+      let peakBoost = -Infinity, peakIdx = -1;
+      for (let i = 0; i < wotBoostPsi.length; i++) { if (wotBoostPsi[i] > peakBoost) { peakBoost = wotBoostPsi[i]; peakIdx = i; } }
       const peakBoostRpm = Number.isFinite(wotRpm[peakIdx]) ? Math.round(wotRpm[peakIdx]) : null;
       const avgBoost = wotBoostPsi.reduce((a, b) => a + b, 0) / wotBoostPsi.length;
       let highestRpm = -Infinity, highestRpmIdx = -1;
       for (let i = 0; i < wotRpm.length; i++) { if (Number.isFinite(wotRpm[i]) && wotRpm[i] > highestRpm) { highestRpm = wotRpm[i]; highestRpmIdx = i; } }
-      summary.push(`🌀 Peak Boost (WOT): ${peakBoostPsi.toFixed(2)} psi${peakBoostRpm ? ` @ ${peakBoostRpm} RPM` : ''}`);
-      summary.push(`📊 Average Boost (WOT): ${avgBoost.toFixed(2)} psi`);
-      if (highestRpmIdx !== -1) summary.push(`🎯 Boost @ highest RPM (${Math.round(highestRpm)} RPM): ${wotBoostPsi[highestRpmIdx].toFixed(2)} psi`);
+      summary.push('STAT: Peak boost (WOT): ' + peakBoost.toFixed(2) + ' psi' + (peakBoostRpm ? ' @ ' + peakBoostRpm + ' RPM' : ''));
+      summary.push('STAT: Average boost (WOT): ' + avgBoost.toFixed(2) + ' psi');
+      if (highestRpmIdx !== -1) summary.push('STAT: Boost at highest RPM (' + Math.round(highestRpm) + ' RPM): ' + wotBoostPsi[highestRpmIdx].toFixed(2) + ' psi');
     } else {
-      summary.push('ℹ️ Boost (PSI) could not be computed in WOT window.');
+      summary.push('INFO: Boost (PSI) could not be computed in WOT window.');
     }
 
-    // ── Fuel Pressure (Actual vs Desired) ──────────────
-    // HP Tuners uses these column names — check both common variants
-    const fuelActualCandidates = [
-      'Fuel Rail Pressure',           // confirmed HP Tuners column name
-      'Fuel Rail Pressure (Actual)',
-      'Fuel Pressure (Actual)',
-      'Fuel Rail Pressure Actual',
-      'Fuel Pressure Actual',
-      'Fuel Pressure',
-    ];
-    const fuelDesiredCandidates = [
-      'Desired Fuel Pressure',        // confirmed HP Tuners column name
-      'Fuel Rail Pressure (Desired)',
-      'Fuel Pressure (Desired)',
-      'Fuel Rail Pressure Desired',
-      'Fuel Pressure Desired',
-      'Desired Fuel Rail Pressure',
-    ];
-
-    // Case-insensitive match — handles any capitalization HP Tuners uses
+    // ── Fuel Pressure ────────────────────────────────────
+    const fuelActualCandidates  = ['Fuel Rail Pressure', 'Fuel Rail Pressure (Actual)', 'Fuel Pressure (Actual)', 'Fuel Pressure Actual', 'Fuel Pressure'];
+    const fuelDesiredCandidates = ['Desired Fuel Pressure', 'Fuel Rail Pressure (Desired)', 'Fuel Pressure (Desired)', 'Fuel Rail Pressure Desired', 'Desired Fuel Rail Pressure'];
     const lowerHeaders = headers.map(h => h.toLowerCase().trim());
-    const findColCI = (candidates) => {
-      for (const c of candidates) {
-        const idx = lowerHeaders.indexOf(c.toLowerCase().trim());
-        if (idx !== -1) return headers[idx];
-      }
-      return undefined;
-    };
+    const findColCI = (candidates) => { for (const c of candidates) { const idx = lowerHeaders.indexOf(c.toLowerCase().trim()); if (idx !== -1) return headers[idx]; } return undefined; };
     const fuelActualCol  = findColCI(fuelActualCandidates);
     const fuelDesiredCol = findColCI(fuelDesiredCandidates);
 
     if (fuelActualCol && fuelDesiredCol) {
-      // Evaluate during WOT only for meaningful rail pressure data
       let maxDropPct = 0, maxDropActual = 0, maxDropDesired = 0;
       const dropSamples = [];
-
       for (const r of wotRows) {
-        const actual  = r[fuelActualCol];
-        const desired = r[fuelDesiredCol];
+        const actual = r[fuelActualCol], desired = r[fuelDesiredCol];
         if (!Number.isFinite(actual) || !Number.isFinite(desired) || desired <= 0) continue;
         const dropPct = ((desired - actual) / desired) * 100;
-        if (dropPct > maxDropPct) {
-          maxDropPct     = dropPct;
-          maxDropActual  = actual;
-          maxDropDesired = desired;
-        }
+        if (dropPct > maxDropPct) { maxDropPct = dropPct; maxDropActual = actual; maxDropDesired = desired; }
         if (dropPct > 10) dropSamples.push(dropPct);
       }
-
-      if (maxDropPct === 0 && dropSamples.length === 0) {
-        summary.push('ℹ️ Fuel pressure columns found but no valid WOT paired readings.');
-      } else if (dropSamples.length > 0) {
-        summary.push(
-          `⚠️ Fuel pressure drop detected: actual fell ${maxDropPct.toFixed(1)}% below desired` +
-          ` (${maxDropActual.toFixed(1)} vs ${maxDropDesired.toFixed(1)} psi) —` +
-          ` ${dropSamples.length} sample${dropSamples.length > 1 ? 's' : ''} exceeded 10% threshold.` +
-          ` Check fuel pump, regulator, and filter.`
-        );
+      if (dropSamples.length > 0) {
+        summary.push('CRITICAL: Fuel pressure is dropping under load — the actual pressure fell as low as ' + maxDropActual.toFixed(1) + ' psi against a target of ' + maxDropDesired.toFixed(1) + ' psi, a drop of ' + maxDropPct.toFixed(1) + '%. When fuel pressure drops like this it means the engine is not getting the fuel it needs, which can cause a dangerous lean condition. This needs to be addressed before any more hard pulls — possible causes include a tired fuel pump, undersized injectors, or a fuel delivery restriction.');
+      } else if (maxDropPct > 0) {
+        summary.push('OK: Fuel pressure is holding steady under load (max deviation ' + maxDropPct.toFixed(1) + '% — within acceptable range).');
       } else {
-        summary.push(
-          `✅ Fuel pressure stable (max ${maxDropPct.toFixed(1)}% deviation — within 10% threshold).`
-        );
+        summary.push('INFO: Fuel pressure columns found but no valid WOT paired readings to compare.');
       }
     } else if (fuelActualCol && !fuelDesiredCol) {
-      // Only actual is logged — report range without comparison
       const fuelVals = wotRows.map(r => r[fuelActualCol]).filter(Number.isFinite);
       if (fuelVals.length) {
         const minF = Math.min(...fuelVals), maxF = Math.max(...fuelVals);
-        summary.push(`ℹ️ Fuel pressure (actual only, WOT): ${minF.toFixed(1)}–${maxF.toFixed(1)} psi — desired column not found, cannot compare.`);
+        summary.push('INFO: Fuel pressure (actual, WOT): ' + minF.toFixed(1) + '-' + maxF.toFixed(1) + ' psi — no desired pressure column found to compare against.');
       }
     }
-    // If neither column exists we stay silent — not all vehicles log fuel pressure
+
+    // ── Injector Duty Cycle ──────────────────────────────
+    // IDC = (pulse width ms / cycle period ms) * 100
+    // Cycle period = 2 * 60000 / RPM  (4-stroke: one injection per 2 revolutions)
+    const injCols = [1,2,3,4,5,6,7,8].map(n => 'Injector Pulse Width Cyl ' + n).filter(hasCol);
+    if (injCols.length > 0) {
+      let maxIDC = 0, maxIDC_rpm = null, maxIDC_boost = null;
+      for (const r of wotRows) {
+        const rpm = r[rpmName];
+        if (!Number.isFinite(rpm) || rpm <= 0) continue;
+        const cyclePeriodMs = (2 * 60000) / rpm;
+        for (const col of injCols) {
+          const pw = r[col];
+          if (!Number.isFinite(pw) || pw <= 0) continue;
+          const idc = (pw / cyclePeriodMs) * 100;
+          if (idc > maxIDC) {
+            maxIDC       = idc;
+            maxIDC_rpm   = rpm;
+            maxIDC_boost = getBoostPsi(r);
+          }
+        }
+      }
+      if (maxIDC > 0) {
+        const rpmStr   = maxIDC_rpm   ? ' @ ' + Math.round(maxIDC_rpm / 100) * 100 + ' RPM' : '';
+        const boostStr = maxIDC_boost !== null && maxIDC_boost > 0 ? ' (' + maxIDC_boost.toFixed(1) + ' psi boost)' : '';
+        let idcMsg;
+        if (maxIDC >= 90) {
+          idcMsg = 'CRITICAL: Injector duty cycle hit ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. The injectors are essentially maxed out — at this level there is no headroom left and the engine is at serious risk of running lean. Larger injectors are needed immediately.';
+        } else if (maxIDC >= 80) {
+          idcMsg = 'WARN: Injector duty cycle reached ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. This is getting into the danger zone. Most injectors should not run above 80-85% for extended periods. If you are planning to add more power, larger injectors will be required.';
+        } else if (maxIDC >= 70) {
+          idcMsg = 'WARN: Injector duty cycle is at ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. This is elevated but manageable at current power levels. Keep this in mind if you are planning future upgrades — headroom is getting tight.';
+        } else {
+          idcMsg = 'OK: Max injector duty cycle is ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + ' — injectors have plenty of headroom at current power levels.';
+        }
+        summary.push(idcMsg);
+      }
+    }
 
   } else {
-    summary.push('ℹ️ No true WOT conditions found (pedal & TPS).');
+    summary.push('INFO: No full-throttle conditions found in this log — most checks require WOT data.');
   }
 
-  // ── Knock sensor volts ─────────────────────────────────
+  // ── Knock sensor volts ───────────────────────────────
   ['Knock Sensor 1', 'Knock Sensor 2'].forEach(sensor => {
     const volts = getColumn(sensor);
-    if (!volts.length) { summary.push(`ℹ️ ${sensor} not found.`); return; }
+    if (!volts.length) return; // silent if not logged
     const peak = Math.max(...volts);
     summary.push(peak > 3.0
-      ? `⚠️ ${sensor} exceeded 3.0V (Peak: ${peak.toFixed(2)}V)`
-      : `✅ ${sensor} within safe range (Peak: ${peak.toFixed(2)}V)`
+      ? 'WARN: ' + sensor + ' peaked at ' + peak.toFixed(2) + 'V (above 3.0V threshold) — indicates active knock activity.'
+      : 'OK: ' + sensor + ' within safe range (peak ' + peak.toFixed(2) + 'V).'
     );
   });
 
-  // ── Fuel trims ─────────────────────────────────────────
+  // ── Fuel trims ───────────────────────────────────────
   const lt1 = getColumn('Long Term Fuel Trim Bank 1 (SAE)');
   const lt2 = getColumn('Long Term Fuel Trim Bank 2 (SAE)');
   const st1 = getColumn('Short Term Fuel Trim Bank 1 (SAE)');
   const st2 = getColumn('Short Term Fuel Trim Bank 2 (SAE)');
-  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
 
   if (lt1.length && lt2.length) {
     const variance = lt1.map((v, i) => Number.isFinite(lt2[i]) ? Math.abs(v - lt2[i]) : undefined).filter(Number.isFinite);
-    summary.push(variance.some(v => v > 10) ? '⚠️ Fuel trim variance > 10% between banks.' : '✅ Fuel trim variance within 10%.');
-  } else {
-    summary.push('ℹ️ One or both LTFT columns missing; variance check skipped.');
+    if (variance.some(v => v > 10)) {
+      summary.push('WARN: There is a significant fuel trim imbalance between the two banks. This can point to a vacuum leak, a faulty O2 sensor, or an injector issue on one side of the engine.');
+    } else {
+      summary.push('OK: Fuel trims are balanced between both banks.');
+    }
   }
   if (st1.length && lt1.length) {
     const a1 = avg(st1.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt1[i]) ? lt1[i] : 0)).filter(Number.isFinite));
-    if (a1 !== undefined) summary.push(`📊 Avg fuel correction (Bank 1): ${a1.toFixed(1)}%`);
+    if (a1 !== undefined) summary.push('STAT: Average fuel correction (Bank 1): ' + a1.toFixed(1) + '%');
   }
   if (st2.length && lt2.length) {
     const a2 = avg(st2.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt2[i]) ? lt2[i] : 0)).filter(Number.isFinite));
-    if (a2 !== undefined) summary.push(`📊 Avg fuel correction (Bank 2): ${a2.toFixed(1)}%`);
+    if (a2 !== undefined) summary.push('STAT: Average fuel correction (Bank 2): ' + a2.toFixed(1) + '%');
   }
 
-  // ── Oil pressure ───────────────────────────────────────
+  // ── Oil pressure ─────────────────────────────────────
   const oilCol = getColumn('Engine Oil Pressure');
   if (oilCol.length) {
     const oilRows = parsed.filter(r => Number.isFinite(r[rpmName]) && r[rpmName] > 500);
     const oilLow  = oilRows.some(r => Number.isFinite(r['Engine Oil Pressure']) && r['Engine Oil Pressure'] < 20);
-    summary.push(oilLow ? '⚠️ Oil pressure dropped below 20 psi.' : '✅ Oil pressure within safe range.');
+    summary.push(oilLow
+      ? 'CRITICAL: Oil pressure dropped below 20 psi while the engine was running. This is dangerous and needs immediate attention — low oil pressure can cause serious internal engine damage very quickly.'
+      : 'OK: Oil pressure stayed within a safe range throughout the log.'
+    );
   }
 
-  // ── Coolant temp ───────────────────────────────────────
+  // ── Coolant temp ─────────────────────────────────────
   const ect = getColumn('Engine Coolant Temp (SAE)');
   if (ect.length) {
-    summary.push(ect.some(v => v > 230) ? '⚠️ Coolant temp exceeded 230°F.' : '✅ Coolant temp within safe limits.');
+    const maxEct = Math.max(...ect);
+    summary.push(maxEct > 230
+      ? 'WARN: Coolant temperature reached ' + maxEct.toFixed(0) + ' degrees F. The engine is running hot — check your cooling system and make sure coolant levels are good.'
+      : 'OK: Coolant temperature stayed within a safe range (max ' + maxEct.toFixed(0) + ' degrees F).'
+    );
   }
 
-  // ── Misfires ───────────────────────────────────────────
+  // ── Misfires ─────────────────────────────────────────
   const misfireReport = [];
   Object.keys(parsed[0] || {}).forEach(key => {
     if (!key.includes('Misfire Current Cylinder')) return;
@@ -430,15 +456,18 @@ function formatChecklist(parsed, headers) {
       const diff = values[i] - values[i - 1];
       if (Number.isFinite(diff) && diff > 0 && diff < 1000) count += diff;
     }
-    if (count > 0) misfireReport.push(`- Cylinder ${cyl}: ${count.toFixed(0)} misfires`);
+    if (count > 0) misfireReport.push('Cylinder ' + cyl + ': ' + count.toFixed(0) + ' misfires');
   });
-  summary.push(misfireReport.length ? `🚨 Misfires detected:\n${misfireReport.join('\n')}` : '✅ No misfires detected.');
+  if (misfireReport.length) {
+    summary.push('WARN: Misfires were detected in this log — ' + misfireReport.join(', ') + '. Misfires mean one or more cylinders are not firing correctly. This can be caused by spark plugs, ignition coils, fuel delivery issues, or a tune that is too aggressive.');
+  } else {
+    summary.push('OK: No misfires detected.');
+  }
 
-  // ── Acceleration timers ────────────────────────────────
+  // ── Acceleration timers ───────────────────────────────
   const speed = getColumn(speedName);
   const time  = getColumn(timeName);
   const accel = getColumn(accelName);
-
   const findAllIntervals = (start, end) => {
     const times = []; let startTime = null;
     for (let i = 0; i < speed.length; i++) {
@@ -464,9 +493,9 @@ function formatChecklist(parsed, headers) {
   const z60  = best(findAllZeroToSixty());
   const f100 = best(findAllIntervals(40, 100));
   const s130 = best(findAllIntervals(60, 130));
-  if (z60)  summary.push(`🚦 Best 0–60 mph: ${Number(z60).toFixed(2)}s`);
-  if (f100) summary.push(`🚀 Best 40–100 mph: ${Number(f100).toFixed(2)}s`);
-  if (s130) summary.push(`🚀 Best 60–130 mph: ${Number(s130).toFixed(2)}s`);
+  if (z60)  summary.push('STAT: Best 0-60 mph: ' + Number(z60).toFixed(2) + 's');
+  if (f100) summary.push('STAT: Best 40-100 mph: ' + Number(f100).toFixed(2) + 's');
+  if (s130) summary.push('STAT: Best 60-130 mph: ' + Number(s130).toFixed(2) + 's');
 
   return summary.join('\n');
 }
