@@ -284,6 +284,17 @@ const CHECK_STYLE = {
 };
 function CheckRow({ type, body }) {
   const s = CHECK_STYLE[type] || CHECK_STYLE.info;
+  // Split "Subject — description" or "Subject: description" into headline + detail
+  const dashIdx = body.indexOf(' — ');
+  const colonIdx = body.indexOf('. ');
+  let headline = null, detail = body;
+  if (dashIdx !== -1 && dashIdx < 80) {
+    headline = body.slice(0, dashIdx).trim();
+    detail   = body.slice(dashIdx + 3).trim();
+  } else if (colonIdx !== -1 && colonIdx < 80 && (type === 'critical' || type === 'warn')) {
+    headline = body.slice(0, colonIdx + 1).trim();
+    detail   = body.slice(colonIdx + 2).trim();
+  }
   return (
     <div style={{
       display: 'flex', gap: 10, padding: '9px 12px',
@@ -295,10 +306,16 @@ function CheckRow({ type, body }) {
       <div style={{ flex: 1 }}>
         <span style={{
           fontSize: 10, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase',
-          color: s.color, display: 'block', marginBottom: 2, opacity: 0.9,
+          color: s.color, display: 'block', marginBottom: 4, opacity: 0.9,
         }}>{s.label}</span>
+        {headline && (
+          <span style={{
+            fontSize: 14, fontWeight: 700, color: s.color,
+            display: 'block', marginBottom: 5, lineHeight: 1.4,
+          }}>{headline}</span>
+        )}
         <span style={{ fontSize: 13, lineHeight: 1.6, color: '#dff0df', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
-          {body}
+          {detail}
         </span>
       </div>
     </div>
@@ -481,7 +498,8 @@ export default function MainApp() {
       let dynoJSON = null;
       try { if (dynoPart) dynoJSON = JSON.parse(dynoPart); } catch {}
 
-      const combined = (quickChecks||'').trim() + (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
+      
+      const combined = (quickChecks||'').trim();
       setAiResult(combined || 'No AI assessment returned.');
       setLeftText((quickChecks||'').trim());
       setAiText((aiPart||'').trim());
@@ -847,10 +865,16 @@ export default function MainApp() {
                           const parts = l.body.split(':');
                           const label = parts[0]?.trim();
                           const value = parts.slice(1).join(':').trim();
+                          const isTimer = /0.60|40.100|60.130/i.test(label);
                           return (
-                            <div key={i} style={{ background:'#0e160e', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px' }}>
-                              <div style={{ fontSize:11, color:T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:4 }}>{label}</div>
-                              <div style={{ fontSize:16, fontWeight:700, color:'#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                            <div key={i} style={{
+                              background: isTimer ? 'rgba(61,255,122,0.06)' : '#0e160e',
+                              border: isTimer ? `1px solid rgba(61,255,122,0.25)` : `1px solid ${T.border}`,
+                              borderRadius:8, padding:'10px 14px',
+                              gridColumn: isTimer ? 'span 1' : 'span 1',
+                            }}>
+                              <div style={{ fontSize:11, color: isTimer ? T.green : T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:4, fontWeight: isTimer ? 700 : 400 }}>{label}</div>
+                              <div style={{ fontSize: isTimer ? 22 : 16, fontWeight:700, color: isTimer ? T.green : '#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
                             </div>
                           );
                         })}
@@ -939,28 +963,36 @@ export default function MainApp() {
               </div>
             )}
 
-            {/* AI Assessment — split into Summary + What This Means For You */}
+            {/* AI Assessment — two clean cards, no INFO segmentation */}
             {!loading && aiText && (() => {
-              const summaryMatch = aiText.match(/Summary\s*([\s\S]*?)(?=What This Means For You|$)/i);
-              const actionMatch  = aiText.match(/What This Means For You\s*([\s\S]*?)$/i);
-              const summaryText  = summaryMatch ? summaryMatch[1].trim() : aiText.trim();
-              const actionText   = actionMatch  ? actionMatch[1].trim()  : null;
+              // Strip any "AI Review:" prefix the backend might prepend
+              const cleaned = aiText.replace(/^AI Review:\s*/i, '').trim();
+              // Split on "What This Means For You" heading
+              const summaryMatch = cleaned.match(/^(?:Summary\s*[:\n]?\s*)?([\s\S]*?)(?=What This Means For You|$)/i);
+              const actionMatch  = cleaned.match(/What This Means For You\s*[:\n]?\s*([\s\S]+?)$/i);
+              // Strip the word "Summary" if it appears as a standalone first line
+              let summaryText = summaryMatch ? summaryMatch[1].trim() : cleaned;
+              summaryText = summaryText.replace(/^Summary\s*[:\n]?\s*/i, '').trim();
+              const actionText = actionMatch ? actionMatch[1].trim() : null;
+              if (!summaryText && !actionText) return null;
               return (
                 <div style={{ display:'grid', gap:12, animation:'fadeIn 0.55s ease' }}>
-                  <div style={{ background:T.card, border:`1px solid ${T.borderHi}`, borderRadius:10, padding:20 }}>
-                    <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-                      <div style={{ width:36, height:36, borderRadius:8, background:'rgba(61,255,122,0.1)', border:`1px solid rgba(61,255,122,0.2)`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🧠</div>
-                      <p style={{ ...css.sectionTitle, margin:0 }}>AI Summary</p>
+                  {summaryText && (
+                    <div style={{ background:T.card, border:`1px solid ${T.borderHi}`, borderRadius:10, padding:20 }}>
+                      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
+                        <span style={{ fontSize:20 }}>🧠</span>
+                        <span style={{ fontSize:14, fontWeight:700, color:T.green, letterSpacing:0.3 }}>Summary</span>
+                      </div>
+                      <p style={{ fontSize:14, lineHeight:1.8, color:T.text, margin:0 }}>{summaryText}</p>
                     </div>
-                    <p style={{ fontSize:14, lineHeight:1.75, color:T.text, margin:0 }}>{summaryText}</p>
-                  </div>
+                  )}
                   {actionText && (
                     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:20 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
-                        <div style={{ width:36, height:36, borderRadius:8, background:'rgba(77,184,255,0.1)', border:`1px solid rgba(77,184,255,0.2)`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>🔧</div>
-                        <p style={{ ...css.sectionTitle, color:'#4db8ff', margin:0 }}>What This Means For You</p>
+                        <span style={{ fontSize:20 }}>🔧</span>
+                        <span style={{ fontSize:14, fontWeight:700, color:'#4db8ff', letterSpacing:0.3 }}>What This Means For You</span>
                       </div>
-                      <p style={{ fontSize:14, lineHeight:1.75, color:T.text, margin:0 }}>{actionText}</p>
+                      <p style={{ fontSize:14, lineHeight:1.8, color:T.text, margin:0 }}>{actionText}</p>
                     </div>
                   )}
                 </div>
