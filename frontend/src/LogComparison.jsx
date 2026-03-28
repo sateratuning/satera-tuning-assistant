@@ -511,11 +511,8 @@ export default function LogComparison() {
   // ── Review text parser (reuse from MainApp style) ──────
   const reviewLines = useMemo(() => {
     if (!reviewText) return [];
-    const checklistOnly = reviewText.split(/
-
-AI Review:/i)[0].trim();
-    return checklistOnly.split('
-').map(l => l.trim()).filter(Boolean).map(line => {
+    const checklistOnly = reviewText.split('\n\nAI Review:')[0].trim();
+    return checklistOnly.split('\n').map(l => l.trim()).filter(Boolean).map(line => {
       let type = 'info', body = line;
       if (line.startsWith('CRITICAL:'))      { type = 'critical'; body = line.slice(9).trim(); }
       else if (line.startsWith('WARN:'))     { type = 'warn';     body = line.slice(5).trim(); }
