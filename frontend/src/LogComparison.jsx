@@ -318,7 +318,9 @@ export default function LogComparison() {
       const res = await fetch(`${API_BASE}/ai-review`, { method: 'POST', body: form });
       if (!res.ok) throw new Error(`Review failed (${res.status})`);
       const text = await res.text();
-      const [quickChecks, aiPart] = text.split('===SPLIT===');
+      // Strip the ===DYNO=== JSON payload the backend appends (not needed here)
+      const stripped = text.split('===DYNO===')[0];
+      const [quickChecks, aiPart] = stripped.split('===SPLIT===');
       const combined = (quickChecks||'').trim() + (aiPart ? `\n\nAI Review:\n${aiPart.trim()}` : '');
       setReviewText(combined || 'No output returned.');
     } catch (err) {
