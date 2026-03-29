@@ -100,7 +100,9 @@ RULES (always follow these):
 - Do NOT include bullet points, numbered lists, or sub-headings beyond the two sections above.
 - Do NOT mention "blocks", "Bank 1", "Bank 2" — say "the engine" or "both sides of the engine" instead.
 - Do NOT suggest injector upgrades if injectors are already aftermarket (ID1050x, ID1300x, etc.).
-- Do NOT mention boost or forced induction if Power Adder = N/A.
+- Do NOT mention boost or forced induction if Power Adder = N/A. A reading of 0.00 psi boost on an NA vehicle is completely normal and expected — never flag it as a concern.
+- NEVER mention boost, supercharger, turbo, or forced induction in any context if the vehicle is naturally aspirated (Power Adder = N/A). Do not reference boost readings at all for NA vehicles.
+- If boost reads 0.00 psi and the vehicle is NA, do not mention it. This is not a concern.
 - Do NOT recommend switching to 93 octane if fuel type is E85.
 - Respect transmission choice — torque management dips are normal, do not flag them as a problem.
 - If misfires detected, always mention spark plugs, coil packs, and injectors should be inspected.
