@@ -310,28 +310,24 @@ function formatChecklist(parsed, headers, isNA = false) {
       for (let i = 0; i < wotBoostPsi.length; i++) { if (wotBoostPsi[i] > peakBoost) { peakBoost = wotBoostPsi[i]; peakIdx = i; } }
       const peakBoostRpm = Number.isFinite(wotRpm[peakIdx]) ? Math.round(wotRpm[peakIdx]) : null;
       const avgBoost = wotBoostPsi.reduce((a, b) => a + b, 0) / wotBoostPsi.length;
-      // Skip boost reporting entirely if peak boost never exceeds 2 psi — almost certainly an NA vehicle
-      if (peakBoost < 2.0) {
-        // NA vehicle — suppress all boost output silently
-        wotBoostPsi.length = 0;
-      }
       let highestRpm = -Infinity, highestRpmIdx = -1;
       for (let i = 0; i < wotRpm.length; i++) { if (Number.isFinite(wotRpm[i]) && wotRpm[i] > highestRpm) { highestRpm = wotRpm[i]; highestRpmIdx = i; } }
-      if (wotBoostPsi.length) {
+
+      if (peakBoost >= 2.0) {
+        // Boosted vehicle — report all boost stats
         summary.push('STAT: Peak boost (WOT): ' + peakBoost.toFixed(2) + ' psi' + (peakBoostRpm ? ' @ ' + peakBoostRpm + ' RPM' : ''));
         summary.push('STAT: Average boost (WOT): ' + avgBoost.toFixed(2) + ' psi');
         if (highestRpmIdx !== -1) summary.push('STAT: Boost at highest RPM (' + Math.round(highestRpm) + ' RPM): ' + wotBoostPsi[highestRpmIdx].toFixed(2) + ' psi');
-        // Flag sudden boost drop under WOT (potential boost leak / bypass valve)
+        // Flag sudden boost drop under WOT
         if (wotBoostPsi.length > 5) {
-          const midBoost = wotBoostPsi[Math.floor(wotBoostPsi.length * 0.3)];
+          const midBoost  = wotBoostPsi[Math.floor(wotBoostPsi.length * 0.3)];
           const lateBoost = wotBoostPsi[Math.floor(wotBoostPsi.length * 0.8)];
           if (midBoost > 3 && lateBoost < midBoost * 0.7) {
             summary.push('WARN: Boost is dropping significantly under WOT — fell from ' + midBoost.toFixed(1) + ' psi to ' + lateBoost.toFixed(1) + ' psi during the pull. This could indicate a boost leak, failing bypass valve, or belt slip.');
           }
         }
       }
-    } else {
-      summary.push('INFO: Boost (PSI) could not be computed in WOT window.');
+      // If peakBoost < 2.0 — NA vehicle, suppress all boost output silently
     }} // end boost block
 
     // ── Fuel Pressure ────────────────────────────────────
