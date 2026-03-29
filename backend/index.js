@@ -294,10 +294,8 @@ function formatChecklist(parsed, headers, isNA = false) {
       summary.push('STAT: Peak timing advance (WOT): ' + peakTiming.toFixed(1) + ' degrees @ ' + Math.round(rpmAtPeak) + ' RPM');
     }
 
-    // ── Boost (only for forced induction vehicles) ──────
-    if (isNA) {
-      // NA vehicle — skip boost entirely, 0 psi is normal and expected
-    } else
+    // ── Boost ─────────────────────────────────────────────
+    // Always compute — suppress output only if peak stays under 2 psi (NA vehicle)
     { const wotBoostPsi = [], wotRpm = [];
     for (const r of wotRows) {
       const b = getBoostPsi(r);
