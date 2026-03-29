@@ -17,6 +17,7 @@ const processLog = require('./routes/processLog');
 const trainerAI = require('./routes/trainerAI');
 const overlayRoutes = require('./routes/overlay');
 const feedbackRoutes = require('./routes/feedback');
+const sparkAdvisor = require('./routes/sparkAdvisor');
 const { buildMessages } = require('./prompt');
 const sparkAdvisor = require('./routes/sparkAdvisor');
 
@@ -66,6 +67,7 @@ app.use('/', leaderboardRoutes);
 app.use('/', submitRunRoutes);
 app.use('/', processLog);
 app.use('/', trainerAI);
+app.use('/', sparkAdvisor);
 app.use('/', overlayRoutes);
 app.use(trainerChat);
 app.use("/api", trainerTrainer);
