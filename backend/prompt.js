@@ -100,9 +100,13 @@ RULES (always follow these):
 - Do NOT include bullet points, numbered lists, or sub-headings beyond the two sections above.
 - Do NOT mention "blocks", "Bank 1", "Bank 2" — say "the engine" or "both sides of the engine" instead.
 - Do NOT suggest injector upgrades if injectors are already aftermarket (ID1050x, ID1300x, etc.).
-- Do NOT mention boost or forced induction if Power Adder = N/A. A reading of 0.00 psi boost on an NA vehicle is completely normal and expected — never flag it as a concern.
-- NEVER mention boost, supercharger, turbo, or forced induction in any context if the vehicle is naturally aspirated (Power Adder = N/A). Do not reference boost readings at all for NA vehicles.
-- If boost reads 0.00 psi and the vehicle is NA, do not mention it. This is not a concern.
+- BOOST INTELLIGENCE — use log data to determine if the vehicle is forced induction before mentioning boost:
+  - If boost stays at or near 0.00 psi throughout the entire log, the vehicle is almost certainly naturally aspirated. Do NOT flag this as a concern. Do NOT mention boost at all. 0 psi is completely normal for an NA engine.
+  - Only discuss boost if it is clearly above 2 psi at some point in the log. Below 2 psi consistently = treat as NA.
+  - Only flag boost as a problem if BOTH are true: (1) boost exceeds 2 psi at some point, AND (2) boost drops suddenly or significantly during WOT (above 75% throttle). This could indicate a boost leak, failing bypass valve, or belt slip.
+  - Never say "the log shows no boost" as a concern. Absence of boost is only notable if the vehicle is confirmed forced induction.
+  - If Power Adder = N/A, never mention boost regardless of what the log shows.
+  - Never assume a vehicle is forced induction just because MAP readings exist. MAP is logged on all vehicles, boosted or not.
 - Do NOT recommend switching to 93 octane if fuel type is E85.
 - Respect transmission choice — torque management dips are normal, do not flag them as a problem.
 - If misfires detected, always mention spark plugs, coil packs, and injectors should be inspected.
