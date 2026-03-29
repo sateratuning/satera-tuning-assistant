@@ -226,7 +226,7 @@ function detectPullGear({ rpm, mph, tireIn, rear }) {
 // =====================================================
 // Checklist
 // =====================================================
-function formatChecklist(parsed, headers) {
+function formatChecklist(parsed, headers, isNA = false) {
   const summary = [];
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
   const hasCol = (name) => headers.includes(name);
@@ -294,8 +294,11 @@ function formatChecklist(parsed, headers) {
       summary.push('STAT: Peak timing advance (WOT): ' + peakTiming.toFixed(1) + ' degrees @ ' + Math.round(rpmAtPeak) + ' RPM');
     }
 
-    // ── Boost ────────────────────────────────────────────
-    const wotBoostPsi = [], wotRpm = [];
+    // ── Boost (only for forced induction vehicles) ──────
+    if (isNA) {
+      // NA vehicle — skip boost entirely, 0 psi is normal and expected
+    } else
+    { const wotBoostPsi = [], wotRpm = [];
     for (const r of wotRows) {
       const b = getBoostPsi(r);
       if (b === null) continue;
@@ -314,7 +317,7 @@ function formatChecklist(parsed, headers) {
       if (highestRpmIdx !== -1) summary.push('STAT: Boost at highest RPM (' + Math.round(highestRpm) + ' RPM): ' + wotBoostPsi[highestRpmIdx].toFixed(2) + ' psi');
     } else {
       summary.push('INFO: Boost (PSI) could not be computed in WOT window.');
-    }
+    }} // end boost block
 
     // ── Fuel Pressure ────────────────────────────────────
     const fuelActualCandidates  = ['Fuel Rail Pressure', 'Fuel Rail Pressure (Actual)', 'Fuel Pressure (Actual)', 'Fuel Pressure Actual', 'Fuel Pressure'];
@@ -597,7 +600,17 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     const content = fs.readFileSync(filePath, 'utf8');
     const { headers, parsed } = analyzeCsvContent(content);
 
-    const checklist = formatChecklist(parsed, headers);
+    // Parse vehicle meta from request
+    let vehicleMeta = {}, modsMeta = {};
+    try { vehicleMeta = req.body.vehicle ? JSON.parse(req.body.vehicle) : {}; } catch {}
+    try { modsMeta    = req.body.mods    ? JSON.parse(req.body.mods)    : {}; } catch {}
+    const meta = { ...vehicleMeta, ...modsMeta };
+
+    // Determine if vehicle is naturally aspirated
+    const powerAdder = String(meta.power_adder || meta.power || '').trim().toLowerCase();
+    const isNA = !powerAdder || powerAdder === 'n/a' || powerAdder === 'naturally aspirated' || powerAdder === '';
+
+    const checklist = formatChecklist(parsed, headers, isNA);
 
     const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
       rpm:     r['Engine RPM (SAE)'],
@@ -606,7 +619,7 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     }));
 
     const observations = checklist + '\n' + JSON.stringify(reduced.slice(0, 200), null, 2);
-    const messages = buildMessages({ meta: {}, observations });
+    const messages = buildMessages({ meta, observations });
 
     let finalReview = '';
     try {
