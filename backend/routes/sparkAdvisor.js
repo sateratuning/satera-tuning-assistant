@@ -240,7 +240,8 @@ Write a brief tuner's assessment (3-5 sentences) of these spark table changes. B
 }
 
 // ── Route ──────────────────────────────────────────────────
-router.post('/api/spark-advisor', express.json({ limit: '5mb' }), async (req, res) => {
+// Handle both /spark-advisor and /api/spark-advisor
+router.post(['/spark-advisor', '/api/spark-advisor'], express.json({ limit: '5mb' }), async (req, res) => {
   try {
     const { tableText, rpmAirBins, meta } = req.body || {};
 
