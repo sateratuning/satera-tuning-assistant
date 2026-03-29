@@ -1,881 +1,649 @@
-// frontend/src/TrainerMode.jsx
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import axios from 'axios';
-import { Link } from 'react-router-dom';
+// backend/index.js
+require('dotenv').config();
 
-const API_BASE = process.env.REACT_APP_API_BASE || '/api';
-const TRAINING_SYSTEM_MSG = 'You are Satera Tuning AI trainer. Learn from this before/after comparison to improve future tune assessments.';
+const fs = require('fs');
+const path = require('path');
+const express = require('express');
+const cors = require('cors');
+const multer = require('multer');
+const { OpenAI } = require('openai');
 
-// ── Design tokens (matches site theme) ────────────────────
-const T = {
-  bg: '#090c09', card: '#111811', cardHi: '#141e14',
-  border: '#1a281a', borderHi: '#274027',
-  green: '#3dff7a', greenLo: 'rgba(61,255,122,0.07)',
-  greenGlow: 'rgba(61,255,122,0.15)',
-  amber: '#f5a623', red: '#ff5252', blue: '#4db8ff',
-  purple: '#b48eff',
-  text: '#dff0df', muted: '#5a8f5a', faint: '#2e4a2e',
+const trainerChat = require("./routes/trainerChat");
+const trainerTrainer = require("./routes/trainerTrainer");
+const runDetail = require('./routes/runDetail');
+const submitRunRoutes = require('./routes/submitRun');
+const leaderboardRoutes = require('./routes/leaderboard');
+const processLog = require('./routes/processLog');
+const trainerAI = require('./routes/trainerAI');
+const overlayRoutes = require('./routes/overlay');
+const feedbackRoutes = require('./routes/feedback');
+const { buildMessages } = require('./prompt');
+const sparkAdvisor = require('./routes/sparkAdvisor');
+
+const dumpRole = (k) => {
+  try {
+    const [h, p] = String(k || '').split('.');
+    const payload = JSON.parse(Buffer.from((p || ''), 'base64url').toString('utf8'));
+    return { len: (k || '').length, role: payload?.role };
+  } catch { return { len: (k || '').length, role: 'unknown' }; }
+};
+console.log('SR check:', dumpRole(process.env.SUPABASE_SERVICE_ROLE_KEY));
+
+const app = express();
+const PORT = Number(process.env.PORT || 5000);
+
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({ dest: uploadsDir });
+
+const ALLOWED_ORIGINS = [
+  'https://app.sateratuning.com',
+  'http://localhost:3000',
+  'http://127.0.0.1:3000',
+];
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (ALLOWED_ORIGINS.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  res.header('Vary', 'Origin');
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') return res.sendStatus(200);
+  next();
+});
+
+app.use(express.json({ limit: '100mb' }));
+app.use(express.urlencoded({ extended: true, limit: '100mb' }));
+
+app.get(['/health', '/api/health'], (req, res) => {
+  res.status(200).json({ ok: true, service: 'Satera API', time: new Date().toISOString() });
+});
+
+app.use(feedbackRoutes);
+app.use('/', runDetail);
+app.use('/', leaderboardRoutes);
+app.use('/', submitRunRoutes);
+app.use('/', processLog);
+app.use('/', trainerAI);
+app.use('/', overlayRoutes);
+app.use(trainerChat);
+app.use("/api", trainerTrainer);
+app.use('/', sparkAdvisor);
+
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// =====================================================
+// Gear Catalog
+// =====================================================
+const TRANS_RATIOS = {
+  "8HP70/75":  { "1st": 4.71, "2nd": 3.14, "3rd": 2.10, "4th": 1.67, "5th": 1.29, "6th": 1.00, "7th": 0.84, "8th": 0.67 },
+  "8HP90/95":  { "1st": 4.71, "2nd": 3.14, "3rd": 2.10, "4th": 1.67, "5th": 1.29, "6th": 1.00, "7th": 0.84, "8th": 0.67 },
+  "TR6060":    { "1st": 2.97, "2nd": 2.07, "3rd": 1.43, "4th": 1.00, "5th": 0.84, "6th": 0.57 },
+  "NAG1/WA580":{ "1st": 3.59, "2nd": 2.19, "3rd": 1.41, "4th": 1.00, "5th": 0.83 },
 };
 
-const css = {
-  page: { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: "'Inter', system-ui, sans-serif" },
-  card: { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 20, position: 'relative', overflow: 'hidden' },
-  cardHi: { background: T.cardHi, border: `1px solid ${T.borderHi}`, borderRadius: 12, padding: 20, position: 'relative', overflow: 'hidden', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' },
-  sectionTitle: { fontFamily: "'Rajdhani', sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: T.green, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 },
-  input: { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontFamily: "'Inter', sans-serif", fontSize: 13, outline: 'none', boxSizing: 'border-box' },
-  select: { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%233dff7a\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%', paddingRight: 32, boxSizing: 'border-box', cursor: 'pointer' },
-  label: { display: 'block', fontSize: 11, color: T.muted, marginBottom: 5, letterSpacing: 0.5 },
-  btnPrimary: { fontFamily: "'Rajdhani', sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#000', background: T.green, border: 'none', borderRadius: 7, padding: '11px 24px', cursor: 'pointer', boxShadow: '0 0 20px rgba(61,255,122,0.2)', transition: 'all 0.2s' },
-  btnGhost: { fontFamily: "'Inter', sans-serif", fontSize: 12, fontWeight: 500, color: T.muted, background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 7, padding: '8px 16px', cursor: 'pointer', transition: 'all 0.2s' },
-  btnAmber: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#000', background: T.amber, border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
-  btnPurple: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#000', background: T.purple, border: 'none', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
-  btnRed: { fontFamily: "'Rajdhani', sans-serif", fontSize: 13, fontWeight: 700, letterSpacing: 0.8, textTransform: 'uppercase', color: '#fff', background: 'rgba(255,82,82,0.15)', border: '1px solid rgba(255,82,82,0.3)', borderRadius: 7, padding: '10px 20px', cursor: 'pointer' },
+app.get('/gear-catalog', (req, res) => res.json(TRANS_RATIOS));
+
+app.get('/ratios', (req, res) => {
+  const trans = String(req.query.trans || '').trim();
+  if (!trans) return res.json({ ok: true, transmissions: Object.keys(TRANS_RATIOS) });
+  const data = TRANS_RATIOS[trans];
+  if (!data) return res.status(404).json({ ok: false, error: 'Unknown transmission' });
+  const entries = Object.entries(data).sort((a, b) => {
+    const na = parseInt(a[0], 10), nb = parseInt(b[0], 10);
+    if (!isNaN(na) && !isNaN(nb)) return na - nb;
+    return a[0].localeCompare(b[0]);
+  });
+  res.json({ ok: true, transmission: trans, gears: entries.map(([label, ratio]) => ({ label, ratio })) });
+});
+
+// =====================================================
+// CSV Parsing + Helpers
+// =====================================================
+function analyzeCsvContent(content) {
+  const lines = content.split(/\r?\n/).map(l => l.trim());
+  if (!lines.length) throw new Error('CSV file empty');
+  const headerRowIndex = lines.findIndex(r => /(^|,)\s*offset\s*(,|$)/i.test(r));
+  if (headerRowIndex === -1) throw new Error('Could not locate header row');
+  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
+  // Skip units, blanks, and optional [Channel Data] label — find first numeric data row
+  let dataStart = headerRowIndex + 1;
+  while (dataStart < lines.length) {
+    const line = lines[dataStart].trim();
+    if (line && /^-?[0-9]/.test(line) && line.includes(",")) break;
+    dataStart++;
+  }
+  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(","));
+  const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
+  const parsed = dataRows.map(row => {
+    const values = row.split(',');
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = toNum(values[i]); });
+    return obj;
+  });
+  if (!parsed.length) throw new Error('No data rows found in CSV.');
+  return { headers, parsed };
+}
+
+const isNum = (v) => Number.isFinite(v);
+
+const movAvg = (arr, win = 5) => {
+  if (!arr || !arr.length) return [];
+  const half = Math.floor(win / 2);
+  return arr.map((_, i) => {
+    const s = Math.max(0, i - half), e = Math.min(arr.length - 1, i + half);
+    let sum = 0;
+    for (let k = s; k <= e; k++) sum += arr[k];
+    return sum / (e - s + 1);
+  });
 };
 
-// ── Helpers ────────────────────────────────────────────────
-function extractEntryId(data) {
-  if (!data) return null;
-  return [data?.trainingEntry?.id, data?.trainer_entry_id, data?.entryId, data?.entry_id, data?.entry?.id, data?.id].find(Boolean) || null;
-}
-
-const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
-const fmtDeg = (v) => isNum(v) ? `${Number(v).toFixed(1)}°` : '—';
-const fmtSec = (v) => isNum(v) ? `${Number(v).toFixed(2)}s` : '—';
-const fmtKpa = (v) => isNum(v) ? `${Number(v).toFixed(0)} kPa` : '—';
-const fmtPsi = (v) => isNum(v) ? `${Number(v).toFixed(1)} psi` : '—';
-const fmtPlain = (v) => (isNum(v) ? String(Number(v).toFixed(1)) : (v ?? '—'));
-const withSign = (v, digits = 2, unit = '') => {
-  if (!isNum(v)) return '—';
-  return (v > 0 ? `+${v.toFixed(digits)}` : v.toFixed(digits)) + (unit ? ` ${unit}` : '');
-};
-const deltaColor = (key, val) => {
-  if (!isNum(val)) return T.muted;
-  const lowerBetter = ['t_0_60_change','t_40_100_change','t_60_130_change','KR_max_change','KR_event_change','varSTFT_change','varLTFT_change'];
-  const higherBetter = ['sparkMaxWOT_change'];
-  if (lowerBetter.includes(key)) return val < 0 ? T.green : val > 0 ? T.red : T.muted;
-  if (higherBetter.includes(key)) return val > 0 ? T.green : val < 0 ? T.red : T.muted;
-  return T.muted;
+const zeroPhaseMovAvg = (arr, win = 5) => {
+  if (!arr || arr.length === 0) return [];
+  return movAvg([...movAvg(arr, win)].reverse(), win).reverse();
 };
 
-function normalizeComparison(raw) {
-  if (!raw || typeof raw !== 'object') return null;
-  const safeN = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
-  const kb = raw.before?.KR || raw.before?.knock || {};
-  const ka = raw.after?.KR  || raw.after?.knock  || {};
-  const tb = raw.before?.times || {};
-  const ta = raw.after?.times  || {};
-  const wb = raw.before?.WOT  || {};
-  const wa = raw.after?.WOT   || {};
-  const d  = raw.deltas || {};
-  return {
-    before: { KR: { maxKR: safeN(kb.maxKR), krEvents: safeN(kb.krEvents) }, times: { zeroToSixty: safeN(tb.zeroToSixty), fortyToHundred: safeN(tb.fortyToHundred), sixtyToOneThirty: safeN(tb.sixtyToOneThirty) }, WOT: { sparkMaxWOT: safeN(wb.sparkMaxWOT), mapMinWOT: safeN(wb.mapMinWOT), mapMaxWOT: safeN(wb.mapMaxWOT) }, varSTFT: safeN(raw.before?.varSTFT), varLTFT: safeN(raw.before?.varLTFT) },
-    after:  { KR: { maxKR: safeN(ka.maxKR), krEvents: safeN(ka.krEvents) }, times: { zeroToSixty: safeN(ta.zeroToSixty), fortyToHundred: safeN(ta.fortyToHundred), sixtyToOneThirty: safeN(ta.sixtyToOneThirty) }, WOT: { sparkMaxWOT: safeN(wa.sparkMaxWOT), mapMinWOT: safeN(wa.mapMinWOT), mapMaxWOT: safeN(wa.mapMaxWOT) }, varSTFT: safeN(raw.after?.varSTFT), varLTFT: safeN(raw.after?.varLTFT) },
-    deltas: { KR_max_change: safeN(d.KR_max_change), KR_event_change: safeN(d.KR_event_change), t_0_60_change: safeN(d.t_0_60_change), t_40_100_change: safeN(d.t_40_100_change), t_60_130_change: safeN(d.t_60_130_change), sparkMaxWOT_change: safeN(d.sparkMaxWOT_change), mapMinWOT_change: safeN(d.mapMinWOT_change), mapMaxWOT_change: safeN(d.mapMaxWOT_change), varSTFT_change: safeN(d.varSTFT_change), varLTFT_change: safeN(d.varLTFT_change) }
-  };
+function resampleUniform(T, Y, targetHz = 60) {
+  if (!T || !Y || T.length !== Y.length || T.length < 3) return { t: [], y: [] };
+  const t0 = T[0], tN = T[T.length - 1], dt = 1 / targetHz;
+  const N = Math.max(3, Math.floor((tN - t0) / dt));
+  const tU = new Array(N), yU = new Array(N);
+  let j = 1;
+  for (let i = 0; i < N; i++) {
+    const t = t0 + i * dt;
+    tU[i] = t;
+    while (j < T.length && T[j] < t) j++;
+    const aIdx = Math.max(0, j - 1), bIdx = Math.min(T.length - 1, j);
+    const Ta = T[aIdx], Tb = T[bIdx], Ya = Y[aIdx], Yb = Y[bIdx];
+    const f = (Tb - Ta) !== 0 ? Math.min(1, Math.max(0, (t - Ta) / (Tb - Ta))) : 0;
+    yU[i] = (isNum(Ya) && isNum(Yb)) ? (Ya + (Yb - Ya) * f) : NaN;
+  }
+  return { t: tU, y: yU };
 }
 
-// ── Sub-components ─────────────────────────────────────────
-function MetricRow({ label, before, after, delta, deltaKey }) {
-  const dColor = deltaColor(deltaKey, delta);
-  return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 1fr', gap: 8, padding: '7px 0', borderBottom: `1px solid ${T.border}`, alignItems: 'center' }}>
-      <span style={{ fontSize: 12, color: T.muted }}>{label}</span>
-      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right' }}>{before}</span>
-      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right' }}>{after}</span>
-      <span style={{ fontSize: 13, fontFamily: 'monospace', textAlign: 'right', color: dColor, fontWeight: 600 }}>{delta !== '—' && delta !== undefined ? delta : '—'}</span>
-    </div>
-  );
-}
-
-function UploadZone({ label, sublabel, file, onChange, id, color = T.green }) {
-  return (
-    <div>
-      <label style={{ ...css.label, color, fontSize: 12, fontWeight: 600, letterSpacing: 0.8 }}>{label}</label>
-      <label htmlFor={id} style={{
-        display: 'flex', alignItems: 'center', gap: 10,
-        padding: '13px 16px', borderRadius: 8,
-        border: file ? `1.5px solid ${color}33` : `1.5px dashed ${T.borderHi}`,
-        background: file ? `${color}08` : 'transparent',
-        cursor: 'pointer', transition: 'all 0.2s',
-        color: file ? T.text : T.muted, fontSize: 13,
-      }}>
-        <span style={{ fontSize: 16 }}>📂</span>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-          {file ? file.name : `Choose HP Tuners CSV…`}
-        </span>
-        {file && <span style={{ color, flexShrink: 0, fontSize: 12, fontWeight: 700 }}>✓</span>}
-      </label>
-      <input id={id} type="file" accept=".csv" onChange={onChange} style={{ display: 'none' }}/>
-      {sublabel && <p style={{ fontSize: 11, color: T.faint, margin: '4px 0 0' }}>{sublabel}</p>}
-    </div>
-  );
-}
-
-function ChatBubble({ role, content }) {
-  const isAI = role === 'assistant';
-  return (
-    <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexDirection: isAI ? 'row' : 'row-reverse' }}>
-      <div style={{ width: 28, height: 28, borderRadius: '50%', background: isAI ? T.greenLo : 'rgba(77,184,255,0.1)', border: `1px solid ${isAI ? T.borderHi : 'rgba(77,184,255,0.2)'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>
-        {isAI ? '🤖' : '👤'}
-      </div>
-      <div style={{ maxWidth: '82%' }}>
-        <div style={{ fontSize: 10, color: T.muted, marginBottom: 4, textAlign: isAI ? 'left' : 'right', letterSpacing: 0.5, textTransform: 'uppercase', fontWeight: 600 }}>
-          {isAI ? 'Satera AI' : 'You'}
-        </div>
-        <div style={{
-          background: isAI ? T.card : 'rgba(77,184,255,0.06)',
-          border: `1px solid ${isAI ? T.border : 'rgba(77,184,255,0.15)'}`,
-          borderRadius: isAI ? '4px 12px 12px 12px' : '12px 4px 12px 12px',
-          padding: '10px 14px', fontSize: 13, lineHeight: 1.65,
-          color: T.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-        }}>
-          {content}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function StepIndicator({ steps, current }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 0, marginBottom: 24 }}>
-      {steps.map((s, i) => (
-        <React.Fragment key={i}>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-            <div style={{
-              width: 30, height: 30, borderRadius: '50%',
-              background: i < current ? T.green : i === current ? T.greenLo : 'transparent',
-              border: `2px solid ${i <= current ? T.green : T.border}`,
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 12, fontWeight: 700, color: i < current ? '#000' : i === current ? T.green : T.muted,
-              transition: 'all 0.3s',
-            }}>
-              {i < current ? '✓' : i + 1}
-            </div>
-            <span style={{ fontSize: 10, color: i <= current ? T.green : T.muted, letterSpacing: 0.5, textTransform: 'uppercase', whiteSpace: 'nowrap' }}>{s}</span>
-          </div>
-          {i < steps.length - 1 && (
-            <div style={{ flex: 1, height: 2, background: i < current ? T.green : T.border, margin: '0 6px', marginBottom: 18, transition: 'background 0.3s' }}/>
-          )}
-        </React.Fragment>
-      ))}
-    </div>
-  );
-}
-
-
-// ── SparkAdvisor Component ─────────────────────────────────
-function SparkAdvisor({ rpmAirBins, meta }) {
-  const [tableText, setTableText]   = useState('');
-  const [result, setResult]         = useState(null);
-  const [loading, setLoading]       = useState(false);
-  const [error, setError]           = useState('');
-  const [showCells, setShowCells]   = useState(false);
-
-  const severityColor = (s) => ({
-    critical: T.red, severe: T.red, moderate: T.amber,
-    minor: '#ffd166', add: T.green, ok: T.muted, none: T.faint,
-  }[s] || T.muted);
-
-  const severityLabel = (s) => ({
-    critical: '🚨 CRITICAL', severe: '⚠️ Severe', moderate: '⚠️ Moderate',
-    minor: '⚡ Minor', add: '✅ Add timing', ok: '✅ OK', none: '— No data',
-  }[s] || s);
-
-  const handleAnalyze = async () => {
-    if (!tableText.trim()) { setError('Paste your WOT spark table first.'); return; }
-    if (!rpmAirBins || !rpmAirBins.length) { setError('No log data available — run a log analysis first.'); return; }
-    setLoading(true); setError(''); setResult(null);
-    try {
-      const res = await axios.post(`${API_BASE}/spark-advisor`, { tableText, rpmAirBins, meta });
-      if (!res.data.ok) throw new Error(res.data.error);
-      setResult(res.data);
-    } catch (e) {
-      setError(e?.response?.data?.error || e.message || 'Analysis failed.');
-    } finally { setLoading(false); }
-  };
-
-  const downloadCSV = (csv, filename) => {
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href = url; a.download = filename; a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  return (
-    <div style={{ ...css.card, animation:'fadeInUp 0.65s ease', border:`1px solid ${T.borderHi}` }}>
-      {/* Header */}
-      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:6 }}>
-        <span style={{ fontSize:20 }}>⚡</span>
-        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>WOT Spark Table Advisor</span>
-        <span style={{ fontSize:10, color:T.faint, background:'rgba(61,255,122,0.06)', border:`1px solid rgba(61,255,122,0.1)`, borderRadius:4, padding:'2px 8px', letterSpacing:1 }}>BETA</span>
-      </div>
-      <p style={{ fontSize:13, color:T.muted, margin:'0 0 16px', lineHeight:1.6 }}>
-        Paste your current WOT spark table from HP Tuners (copy the table cells including headers). The AI will cross-reference the log data and recommend cell-by-cell adjustments based on detected knock retard.
-      </p>
-
-      {/* How to copy from HP Tuners */}
-      <div style={{ background:'rgba(61,255,122,0.04)', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px', marginBottom:14, fontSize:12, color:T.muted, lineHeight:1.7 }}>
-        <strong style={{ color:T.green, display:'block', marginBottom:4 }}>How to copy from HP Tuners:</strong>
-        VCM Editor → Engine → Spark → WOT Spark Table → right-click anywhere in the table →
-        <strong style={{ color:T.text }}> "Copy with Axis"</strong> → paste below.
-        This captures the RPM column headers and airmass row headers in the correct format.
-        Do <strong style={{ color:T.text }}>not</strong> use plain Ctrl+C — it won't include the axis labels.
-      </div>
-
-      {/* Table paste area */}
-      <label style={css.label}>Current WOT Spark Table (paste from HP Tuners)</label>
-      <textarea
-        value={tableText}
-        onChange={e => setTableText(e.target.value)}
-        placeholder={"Airmass\\RPM,800,1200,1600,2000,2400,2800,3200,3600,4000,4400,4800,5200,5600,6000\n0.20,12,14,16,18,20,22,24,26,26,26,24,22,20,18\n0.25,12,14,16,18,20,22,24,26,26,26,24,22,20,18\n..."}
-        rows={8}
-        style={{ ...css.input, resize:'vertical', fontFamily:'monospace', fontSize:12, lineHeight:1.5, marginBottom:12 }}
-        spellCheck={false}
-      />
-
-      {error && (
-        <div style={{ padding:'10px 14px', borderRadius:7, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13, marginBottom:12 }}>
-          {error}
-        </div>
-      )}
-
-      <button
-        onClick={handleAnalyze}
-        disabled={loading || !tableText.trim()}
-        style={{ ...css.btnPrimary, opacity: (loading||!tableText.trim()) ? 0.4 : 1, marginBottom: result ? 20 : 0 }}
-      >
-        {loading ? '⏳ Analyzing…' : '⚡ Analyze & Recommend Adjustments'}
-      </button>
-
-      {/* Results */}
-      {result && (
-        <div style={{ animation:'fadeInUp 0.3s ease' }}>
-
-          {/* Stats bar */}
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(110px,1fr))', gap:8, marginBottom:16 }}>
-            {[
-              { label:'Total Cells', value: result.stats.totalCells, color: T.muted },
-              { label:'Critical/Severe', value: result.stats.critical + result.stats.severe, color: result.stats.critical + result.stats.severe > 0 ? T.red : T.muted },
-              { label:'Moderate', value: result.stats.moderate, color: result.stats.moderate > 0 ? T.amber : T.muted },
-              { label:'Minor', value: result.stats.minor, color: result.stats.minor > 0 ? '#ffd166' : T.muted },
-              { label:'Timing Added', value: result.stats.additions, color: T.green },
-              { label:'No Change', value: result.stats.noChange, color: T.muted },
-            ].map((s,i) => (
-              <div key={i} style={{ background:'rgba(0,0,0,0.25)', border:`1px solid ${T.border}`, borderRadius:7, padding:'8px 12px', textAlign:'center' }}>
-                <div style={{ fontSize:10, color:T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:3 }}>{s.label}</div>
-                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:22, fontWeight:700, color:s.color }}>{s.value}</div>
-              </div>
-            ))}
-          </div>
-
-          {/* AI narrative */}
-          {result.narrative && (
-            <div style={{ background:'rgba(61,255,122,0.04)', border:`1px solid rgba(61,255,122,0.15)`, borderRadius:8, padding:16, marginBottom:16, position:'relative', overflow:'hidden' }}>
-              <div style={{ position:'absolute', top:0, left:0, right:0, height:1, background:'linear-gradient(90deg, transparent, rgba(61,255,122,0.3), transparent)' }}/>
-              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:10 }}>
-                <span style={{ fontSize:16 }}>🧠</span>
-                <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>AI Assessment</span>
-              </div>
-              <p style={{ fontSize:13, lineHeight:1.75, color:T.text, margin:0 }}>{result.narrative}</p>
-            </div>
-          )}
-
-          {/* Safety disclaimer */}
-          <div style={{ background:'rgba(245,166,35,0.06)', border:'1px solid rgba(245,166,35,0.2)', borderRadius:8, padding:'10px 14px', marginBottom:16, fontSize:12, color:T.amber, lineHeight:1.6 }}>
-            ⚠️ <strong>Tuner review required:</strong> These are AI-generated recommendations based on log data only. Always review every cell before applying. Do not flash to a customer vehicle without verification. Maximum single-pass reduction is {3}°.
-          </div>
-
-          {/* Dimension warning */}
-          {result.warnings?.length > 0 && (
-            <div style={{ padding:'10px 14px', borderRadius:7, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:12, marginBottom:14 }}>
-              {result.warnings.map((w,i) => <div key={i}>⚠️ {w}</div>)}
-            </div>
-          )}
-          {result.tableShape && (
-            <div style={{ fontSize:12, color: result.tableShape.is17x17 ? T.green : T.amber, marginBottom:14, display:'flex', alignItems:'center', gap:6 }}>
-              {result.tableShape.is17x17 ? '✅' : '⚠️'} Table dimensions: {result.tableShape.rows} airmass rows × {result.tableShape.cols} RPM columns
-              {result.tableShape.is17x17 ? ' — 17×17 confirmed ✓' : ' — expected 17×17'}
-            </div>
-          )}
-
-          {/* Download options */}
-          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12, marginBottom:16 }}>
-            {/* Paste-ready — primary action */}
-            <div style={{ background:'rgba(61,255,122,0.05)', border:`1px solid rgba(61,255,122,0.2)`, borderRadius:8, padding:14 }}>
-              <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase', marginBottom:6 }}>
-                Paste Into HP Tuners
-              </div>
-              <p style={{ fontSize:11, color:T.muted, margin:'0 0 10px', lineHeight:1.5 }}>
-                Select all 17×17 cells in HP Tuners → right-click → Paste. Values only, no headers.
-              </p>
-              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                <button onClick={() => { navigator.clipboard.writeText(result.adjustedPasteReady); }} style={{ ...css.btnPrimary, padding:'8px 14px', fontSize:12 }}>
-                  📋 Copy Adjusted to Clipboard
-                </button>
-                <button onClick={() => downloadCSV(result.adjustedPasteReady, `spark_paste_adjusted_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
-                  ⬇ Download
-                </button>
-              </div>
-            </div>
-
-            {/* Copy with Axis — reference */}
-            <div style={{ background:'rgba(77,184,255,0.04)', border:`1px solid rgba(77,184,255,0.15)`, borderRadius:8, padding:14 }}>
-              <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:T.blue, letterSpacing:1.5, textTransform:'uppercase', marginBottom:6 }}>
-                Save for Reference
-              </div>
-              <p style={{ fontSize:11, color:T.muted, margin:'0 0 10px', lineHeight:1.5 }}>
-                Full table with axis headers — same format as "Copy with Axis" from HP Tuners.
-              </p>
-              <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                <button onClick={() => downloadCSV(result.adjustedCopyWithAxis, `spark_adjusted_with_axis_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
-                  ⬇ Adjusted (with axis)
-                </button>
-                <button onClick={() => downloadCSV(result.originalCopyWithAxis, `spark_original_with_axis_${Date.now()}.txt`)} style={{ ...css.btnGhost, fontSize:11 }}>
-                  ⬇ Original (with axis)
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* How to paste instructions */}
-          <div style={{ background:'rgba(61,255,122,0.03)', border:`1px solid ${T.border}`, borderRadius:8, padding:'10px 14px', marginBottom:14, fontSize:12, color:T.muted, lineHeight:1.7 }}>
-            <strong style={{ color:T.green, display:'block', marginBottom:4 }}>How to paste back into HP Tuners:</strong>
-            1. Click "Copy Adjusted to Clipboard" above<br/>
-            2. In HP Tuners VCM Editor, click the top-left cell of the WOT Spark table (airmass 0.35, RPM 512)<br/>
-            3. Hold Shift + click the bottom-right cell (airmass 1.00, RPM 7008) to select all 17×17 cells<br/>
-            4. Right-click → Paste (or Ctrl+V)<br/>
-            5. Review each changed cell before saving or flashing
-          </div>
-
-          <button onClick={() => setShowCells(s => !s)} style={{ ...css.btnGhost, marginBottom:16 }}>
-            {showCells ? '▲ Hide' : '▼ Show'} Cell-by-Cell Detail ({result.adjustments.filter(a => a.delta !== 0).length} changes)
-          </button>
-
-          {/* Cell detail table */}
-          {showCells && (
-            <div style={{ borderRadius:8, border:`1px solid ${T.border}`, overflow:'hidden', maxHeight:400, overflowY:'auto' }}>
-              <table style={{ width:'100%', borderCollapse:'collapse', tableLayout:'fixed', fontSize:12 }}>
-                <thead>
-                  <tr style={{ background:'#0d150d', position:'sticky', top:0 }}>
-                    {['RPM','Airmass','Current °','Adjusted °','Δ','Severity','Notes'].map((h,i) => (
-                      <th key={i} style={{ padding:'8px 10px', textAlign: i >= 2 && i <= 4 ? 'right' : 'left', color:T.muted, fontWeight:600, letterSpacing:0.8, textTransform:'uppercase', fontSize:10, borderBottom:`1px solid ${T.border}`, width:[70,70,70,75,55,90,'auto'][i] }}>
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {result.adjustments
-                    .filter(a => a.delta !== 0 || a.severity === 'critical' || a.severity === 'severe')
-                    .sort((a,b) => Math.abs(b.delta) - Math.abs(a.delta))
-                    .map((a,i) => (
-                    <tr key={i} style={{ background: i % 2 === 0 ? 'transparent' : 'rgba(255,255,255,0.01)' }}>
-                      <td style={{ padding:'7px 10px', color:T.muted, fontFamily:'monospace' }}>{a.rpm}</td>
-                      <td style={{ padding:'7px 10px', color:T.muted, fontFamily:'monospace' }}>{a.airmass}</td>
-                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace' }}>{a.current}°</td>
-                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace', color: a.adjusted < a.current ? T.amber : a.adjusted > a.current ? T.green : T.text }}>{a.adjusted}°</td>
-                      <td style={{ padding:'7px 10px', textAlign:'right', fontFamily:'monospace', fontWeight:700, color: a.delta < 0 ? T.amber : a.delta > 0 ? T.green : T.muted }}>{a.delta > 0 ? `+${a.delta}` : a.delta}°</td>
-                      <td style={{ padding:'7px 10px' }}>
-                        <span style={{ fontSize:10, fontWeight:700, color:severityColor(a.severity) }}>{severityLabel(a.severity)}</span>
-                      </td>
-                      <td style={{ padding:'7px 10px', fontSize:11, color:T.muted, lineHeight:1.4 }}>{a.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Main Component ─────────────────────────────────────────
-const dropdownOptions = {
-  year: Array.from({ length: 21 }, (_, i) => `${2005 + i}`),
-  model: ['Charger', 'Challenger', '300', 'Durango', 'Ram 1500', 'Ram 2500', 'Jeep Grand Cherokee'],
-  engine: ['5.7L Pre-Eagle', '5.7L Eagle', '6.1L SRT', '6.4L (392)', '6.2L Hellcat', '6.2L Redeye', '6.2L Demon', '6.2L Jailbreak'],
-  injectors: ['Stock', 'ID850x', 'ID1050x', 'ID1300x', 'ID1700x', 'Custom'],
-  map: ['Stock (1 Bar)', '2 Bar', '3 Bar', '4 Bar', 'Custom'],
-  throttle: ['Stock', '87mm', '92mm', '95mm', '102mm', '105mm', 'Custom'],
-  power: ['N/A (Naturally Aspirated)', 'Centrifugal Supercharger', 'PD Blower (Whipple/Magnuson)', 'Twin Turbo', 'Single Turbo', 'Nitrous', 'Custom'],
-  trans: ['TR6060 (6-speed Manual)', 'NAG1/WA580 (5-speed Auto)', '8HP70 (8-speed Auto)', '8HP90 (8-speed Auto)'],
-  tire: ['26"','27"','28"','29"','30"','31"','32"','33"'],
-  gear: ['3.06','3.09','3.23','3.55','3.73','3.90','4.10'],
-  fuel: ['91 Octane', '93 Octane', 'E30', 'E50', 'E85', 'Race Gas'],
-  cam: ['Stock', 'Aftermarket'],
-  neural: ['Enabled', 'Disabled'],
-};
-
-export default function TrainerMode() {
-  const [form, setForm] = useState({ vin:'', calid:'', year:'', model:'', engine:'', injectors:'', map:'', throttle:'', power:'', trans:'', tire:'', gear:'', fuel:'', cam:'', neural:'' });
-  const [beforeLog, setBeforeLog] = useState(null);
-  const [afterLog,  setAfterLog]  = useState(null);
-  const [step, setStep]           = useState(0); // 0=setup, 1=analyzing, 2=results, 3=saved
-
-  const [aiSummary, setAiSummary]   = useState('');
-  const [comparison, setComparison] = useState(null);
-  const [conversationId, setConversationId] = useState(null);
-  const [trainerEntryId, setTrainerEntryId] = useState(null);
-
-  const [chat, setChat]     = useState([{ role:'assistant', content:'Upload your before and after tune logs, fill in the vehicle details, and click Analyze. I will compare both logs and give you a full breakdown of what changed.' }]);
-  const [message, setMessage] = useState('');
-  const [notes, setNotes]     = useState('');
-
-  const [loading, setLoading]         = useState(false);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [status, setStatus]           = useState('');
-  const [toast, setToast]             = useState({ text:'', type:'ok' });
-  const [examplesTotal, setExamplesTotal] = useState(null);
-  const [rpmAirBins, setRpmAirBins]     = useState([]);
-
-  const chatEndRef = useRef(null);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [chat]);
-
-  const showToast = (text, type = 'ok') => { setToast({ text, type }); setTimeout(() => setToast({ text:'', type:'ok' }), 6000); };
-
-  const handleChange = (e) => setForm(p => ({ ...p, [e.target.name]: e.target.value }));
-
-  const handleVCMPaste = (e) => {
-    const text = e.target.value;
-    const vinMatch  = text.match(/VIN:\s*(\w{17})/);
-    const modelLine = text.split('\n').find(l => /\d{4}\s+Dodge/i.test(l));
-    const osMatches = text.match(/OS:\s*(\w+)/g);
-    setForm(p => ({
-      ...p,
-      vin:   vinMatch?.[1] || p.vin,
-      year:  modelLine?.match(/(20\d{2})/)?.[1] || p.year,
-      model: modelLine?.includes('Charger') ? 'Charger' : modelLine?.includes('Challenger') ? 'Challenger' : p.model,
-      engine:modelLine?.includes('6.4') ? '6.4L (392)' : modelLine?.includes('6.2') ? '6.2L Hellcat' : p.engine,
-      calid: osMatches?.[0]?.split(':')[1]?.trim() || p.calid,
-    }));
-  };
-
-  // ── Analyze ──────────────────────────────────────────────
-  const handleAnalyze = async () => {
-    if (!beforeLog || !afterLog) { showToast('Please upload both Before and After CSV logs.', 'err'); return; }
-    setLoading(true);
-    setStep(1);
-    setStatus('Uploading and analyzing logs…');
-    try {
-      const fd = new FormData();
-      fd.append('beforeLog', beforeLog);
-      fd.append('afterLog',  afterLog);
-      fd.append('meta', JSON.stringify(form));
-
-      const res = await axios.post(`${API_BASE}/trainer-ai`, fd);
-      const data = res.data || {};
-
-      setAiSummary(data.aiSummary || '');
-      setComparison(normalizeComparison(data.comparison || data.metrics || null));
-      setConversationId(data.conversationId || data.conversation_id || null);
-
-      const id = extractEntryId(data);
-      if (id) setTrainerEntryId(id);
-
-      setChat([{ role:'assistant', content: data.aiSummary || 'Analysis complete.' }]);
-      // Store rpmAirBins for spark advisor
-      const bins = data.logs?.rpmAirBins || data.extended?.after?.rpmAirBins || data.extended?.before?.rpmAirBins || [];
-      setRpmAirBins(bins);
-      setStep(2);
-      setStatus('');
-      showToast('Analysis complete — review the summary and metrics below.', 'ok');
-    } catch (err) {
-      setStep(0);
-      setStatus('');
-      showToast(`Analysis failed: ${err?.response?.data?.error || err.message}`, 'err');
-    } finally {
-      setLoading(false);
+function selectRpmSweep(time, rpm, mph, pedal = null) {
+  if (!rpm || !mph || rpm.length < 20 || mph.length !== rpm.length) return null;
+  const PEDAL_MIN = 80, MIN_MPH = 5, RATIO_TOL = 0.12, RPM_DIP = 75, MIN_LEN = 20;
+  const isWOT = (i) => { if (!pedal || pedal.length !== rpm.length) return true; const v = pedal[i]; return Number.isFinite(v) ? v >= PEDAL_MIN : true; };
+  const ratio = rpm.map((r, i) => { const v = mph[i]; if (!Number.isFinite(r) || !Number.isFinite(v) || v < MIN_MPH) return null; return r / Math.max(v, 1e-6); });
+  const okRise = (i) => Number.isFinite(rpm[i]) && Number.isFinite(rpm[i - 1]) && rpm[i] >= rpm[i - 1] - RPM_DIP;
+  const good = (i) => okRise(i) && isWOT(i) && ratio[i] !== null;
+  const coarse = []; let s = 1;
+  for (let i = 1; i < rpm.length; i++) { if (!good(i)) { if (i - 1 - s >= MIN_LEN) coarse.push([s, i - 1]); s = i; } }
+  if (rpm.length - 1 - s >= MIN_LEN) coarse.push([s, rpm.length - 1]);
+  if (!coarse.length) return null;
+  const keepWindows = [];
+  for (const [a, b] of coarse) {
+    let i = a;
+    while (i <= b) {
+      const start = i; let j = i; const medBuf = [];
+      while (j <= b && ratio[j] !== null) {
+        medBuf.push(ratio[j]);
+        const sorted = [...medBuf].sort((x, y) => x - y);
+        const med = sorted[Math.floor(sorted.length / 2)];
+        if (Math.abs(ratio[j] - med) / Math.max(med, 1e-6) > RATIO_TOL) break;
+        j++;
+      }
+      if (j - 1 - start + 1 >= MIN_LEN) keepWindows.push([start, j - 1]);
+      i = Math.max(start + 1, j);
     }
+  }
+  if (!keepWindows.length) return null;
+  keepWindows.sort((u, v) => (v[1] - v[0]) - (u[1] - u[0]));
+  let [i0, i1] = keepWindows[0];
+  const LOOSE = RATIO_TOL * 1.5;
+  let k = i0 - 1;
+  while (k > 0 && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k + 1] - RPM_DIP) { const med = (ratio[i0] + ratio[i1]) / 2; if (Math.abs(ratio[k] - med) / Math.max(med, 1e-6) > LOOSE) break; i0 = k; k--; }
+  k = i1 + 1;
+  while (k < rpm.length && isWOT(k) && mph[k] >= MIN_MPH && rpm[k] >= rpm[k - 1] - RPM_DIP) { const med = (ratio[i0] + ratio[i1]) / 2; if (Math.abs(ratio[k] - med) / Math.max(med, 1e-6) > LOOSE) break; i1 = k; k++; }
+  return [i0, i1];
+}
+
+function detectPullGear({ rpm, mph, tireIn, rear }) {
+  if (!rpm || !mph || rpm.length < 12) return { gear: null, confidence: 0 };
+  if (!isNum(tireIn) || tireIn <= 0 || !isNum(rear) || rear <= 0) return { gear: null, confidence: 0 };
+  const samples = [];
+  for (let i = 0; i < rpm.length; i++) {
+    const R = rpm[i], V = mph[i];
+    if (!isNum(R) || !isNum(V) || V < 5) continue;
+    const overall = (R * tireIn) / (V * 336);
+    if (!isNum(overall) || overall <= 0) continue;
+    const tg = overall / rear;
+    if (isNum(tg) && tg > 0.3 && tg < 6.5) samples.push(tg);
+  }
+  if (samples.length < 6) return { gear: null, confidence: 0 };
+  const sorted = [...samples].sort((a, b) => a - b);
+  const med = sorted[Math.floor(sorted.length / 2)];
+  const mad = [...sorted.map(v => Math.abs(v - med))].sort((a, b) => a - b)[Math.floor(sorted.length / 2)] || 0;
+  const kept = samples.filter(v => Math.abs(v - med) <= 3 * (mad || 0.01));
+  if (kept.length < 6) return { gear: null, confidence: 0 };
+  const mean = kept.reduce((a, c) => a + c, 0) / kept.length;
+  const std = Math.sqrt(kept.reduce((a, c) => a + Math.pow(c - mean, 2), 0) / kept.length);
+  return { gear: Math.round(kept.sort((a, b) => a - b)[Math.floor(kept.length / 2)] * 100) / 100, confidence: Math.max(0, Math.min(1, 1 - std / 0.10)) };
+}
+
+// =====================================================
+// Checklist
+// =====================================================
+function formatChecklist(parsed, headers) {
+  const summary = [];
+  const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
+  const hasCol = (name) => headers.includes(name);
+  const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
+  const PSI_PER_KPA = 0.1450377377;
+  const defaultBaroKpa = 101.325;
+
+  const accelName    = 'Accelerator Position D (SAE)';
+  const throttleName = 'Throttle Position (SAE)';
+  const timingName   = 'Timing Advance (SAE)';
+  const rpmName      = 'Engine RPM (SAE)';
+  const mapName      = 'Intake Manifold Absolute Pressure (SAE)';
+  const timeName     = 'Offset';
+  const speedName    = 'Vehicle Speed (SAE)';
+
+  // ── WOT gating ────────────────────────────────────────
+  let wotRows = [];
+  if (hasCol(accelName)) {
+    wotRows = parsed.filter(r => {
+      const pedalOK = Number.isFinite(r[accelName]) && r[accelName] > 86;
+      const tpsOK   = !hasCol(throttleName) || (Number.isFinite(r[throttleName]) && r[throttleName] > 86);
+      return pedalOK && tpsOK;
+    });
+  }
+
+  // ── Knock ─────────────────────────────────────────────
+  const baroName = ['Barometric Pressure (SAE)', 'Baro Pressure (SAE)', 'Ambient Pressure (SAE)'].find(hasCol);
+  const getBoostPsi = (r) => {
+    const mapKpa = r[mapName];
+    if (!Number.isFinite(mapKpa)) return null;
+    const baroKpa = baroName && Number.isFinite(r[baroName]) ? r[baroName] : defaultBaroKpa;
+    const psi = (mapKpa - baroKpa) * PSI_PER_KPA;
+    return psi > 0 ? psi : 0;
   };
 
-  // ── Chat ─────────────────────────────────────────────────
-  const sendChat = async () => {
-    if (!conversationId) { showToast('Run an analysis first.', 'err'); return; }
-    if (!message.trim()) return;
-    const userMsg = { role:'user', content: message.trim() };
-    setChat(p => [...p, userMsg]);
-    setMessage('');
-    setChatLoading(true);
-    try {
-      const res = await axios.post(`${API_BASE}/trainer-chat`, { conversationId, message: userMsg.content });
-      setChat(p => [...p, { role:'assistant', content: res.data.reply || 'No response.' }]);
-    } catch (err) {
-      setChat(p => [...p, { role:'assistant', content: `Chat error: ${err.message}` }]);
-    } finally {
-      setChatLoading(false);
+  const knockEvents = parsed
+    .map(r => ({ retard: Math.abs(r['Total Knock Retard'] || 0), rpm: r[rpmName], boost: getBoostPsi(r) }))
+    .filter(r => Number.isFinite(r.retard) && r.retard > 0);
+
+  if (!hasCol('Total Knock Retard')) {
+    summary.push('INFO: Knock column not found in this log.');
+  } else if (!knockEvents.length) {
+    summary.push('OK: No knock detected — timing looks clean throughout the pull.');
+  } else {
+    const peak = knockEvents.reduce((a, b) => b.retard > a.retard ? b : a);
+    const pk       = peak.retard;
+    const rpmStr   = Number.isFinite(peak.rpm)   ? ' around ' + Math.round(peak.rpm / 100) * 100 + ' RPM'   : '';
+    const boostStr = peak.boost !== null && peak.boost > 0 ? ' with approximately ' + peak.boost.toFixed(1) + ' psi of boost' : '';
+
+    if (pk <= 2) {
+      summary.push('WARN: I am seeing a small amount of knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is relatively minor but worth keeping an eye on. The ECU is pulling timing to protect the engine, which is normal, but we want to minimize this as much as possible.');
+    } else if (pk <= 5) {
+      summary.push('WARN: I am seeing moderate knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. The ECU is actively pulling timing to protect the engine. This level of knock needs to be addressed — continued hard driving like this can cause engine damage over time.');
+    } else {
+      summary.push('CRITICAL: I am seeing significant knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is a serious concern. The engine is knocking hard and the ECU is pulling large amounts of timing to compensate. Do NOT continue making hard pulls until this is resolved — damage can happen quickly at this level.');
     }
-  };
+  }
 
-  // ── Training pairs ────────────────────────────────────────
-  const chatPairs = useMemo(() => {
-    const pairs = [];
-    for (let i = 0; i < chat.length; i++) {
-      if (chat[i].role === 'user') {
-        const user = chat[i].content;
-        for (let j = i + 1; j < chat.length; j++) {
-          if (chat[j].role === 'assistant') {
-            pairs.push({ system: TRAINING_SYSTEM_MSG, user, assistant: chat[j].content });
-            break;
+  if (wotRows.length) {
+    // ── Peak timing ──────────────────────────────────────
+    const peakTimingRow = wotRows.reduce((best, r) => ((r[timingName] || -Infinity) > (best[timingName] || -Infinity) ? r : best), wotRows[0]);
+    const peakTiming = peakTimingRow[timingName];
+    const rpmAtPeak  = peakTimingRow[rpmName];
+    if (Number.isFinite(peakTiming) && Number.isFinite(rpmAtPeak)) {
+      summary.push('STAT: Peak timing advance (WOT): ' + peakTiming.toFixed(1) + ' degrees @ ' + Math.round(rpmAtPeak) + ' RPM');
+    }
+
+    // ── Boost ────────────────────────────────────────────
+    const wotBoostPsi = [], wotRpm = [];
+    for (const r of wotRows) {
+      const b = getBoostPsi(r);
+      if (b === null) continue;
+      wotBoostPsi.push(b);
+      wotRpm.push(Number.isFinite(r[rpmName]) ? r[rpmName] : NaN);
+    }
+    if (wotBoostPsi.length) {
+      let peakBoost = -Infinity, peakIdx = -1;
+      for (let i = 0; i < wotBoostPsi.length; i++) { if (wotBoostPsi[i] > peakBoost) { peakBoost = wotBoostPsi[i]; peakIdx = i; } }
+      const peakBoostRpm = Number.isFinite(wotRpm[peakIdx]) ? Math.round(wotRpm[peakIdx]) : null;
+      const avgBoost = wotBoostPsi.reduce((a, b) => a + b, 0) / wotBoostPsi.length;
+      let highestRpm = -Infinity, highestRpmIdx = -1;
+      for (let i = 0; i < wotRpm.length; i++) { if (Number.isFinite(wotRpm[i]) && wotRpm[i] > highestRpm) { highestRpm = wotRpm[i]; highestRpmIdx = i; } }
+      summary.push('STAT: Peak boost (WOT): ' + peakBoost.toFixed(2) + ' psi' + (peakBoostRpm ? ' @ ' + peakBoostRpm + ' RPM' : ''));
+      summary.push('STAT: Average boost (WOT): ' + avgBoost.toFixed(2) + ' psi');
+      if (highestRpmIdx !== -1) summary.push('STAT: Boost at highest RPM (' + Math.round(highestRpm) + ' RPM): ' + wotBoostPsi[highestRpmIdx].toFixed(2) + ' psi');
+    } else {
+      summary.push('INFO: Boost (PSI) could not be computed in WOT window.');
+    }
+
+    // ── Fuel Pressure ────────────────────────────────────
+    const fuelActualCandidates  = ['Fuel Rail Pressure', 'Fuel Rail Pressure (Actual)', 'Fuel Pressure (Actual)', 'Fuel Pressure Actual', 'Fuel Pressure'];
+    const fuelDesiredCandidates = ['Desired Fuel Pressure', 'Fuel Rail Pressure (Desired)', 'Fuel Pressure (Desired)', 'Fuel Rail Pressure Desired', 'Desired Fuel Rail Pressure'];
+    const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+    const findColCI = (candidates) => { for (const c of candidates) { const idx = lowerHeaders.indexOf(c.toLowerCase().trim()); if (idx !== -1) return headers[idx]; } return undefined; };
+    const fuelActualCol  = findColCI(fuelActualCandidates);
+    const fuelDesiredCol = findColCI(fuelDesiredCandidates);
+
+    if (fuelActualCol && fuelDesiredCol) {
+      let maxDropPct = 0, maxDropActual = 0, maxDropDesired = 0;
+      const dropSamples = [];
+      for (const r of wotRows) {
+        const actual = r[fuelActualCol], desired = r[fuelDesiredCol];
+        if (!Number.isFinite(actual) || !Number.isFinite(desired) || desired <= 0) continue;
+        const dropPct = ((desired - actual) / desired) * 100;
+        if (dropPct > maxDropPct) { maxDropPct = dropPct; maxDropActual = actual; maxDropDesired = desired; }
+        if (dropPct > 10) dropSamples.push(dropPct);
+      }
+      if (dropSamples.length > 0) {
+        summary.push('CRITICAL: Fuel pressure is dropping under load — the actual pressure fell as low as ' + maxDropActual.toFixed(1) + ' psi against a target of ' + maxDropDesired.toFixed(1) + ' psi, a drop of ' + maxDropPct.toFixed(1) + '%. When fuel pressure drops like this it means the engine is not getting the fuel it needs, which can cause a dangerous lean condition. This needs to be addressed before any more hard pulls — possible causes include a tired fuel pump, undersized injectors, or a fuel delivery restriction.');
+      } else if (maxDropPct > 0) {
+        summary.push('OK: Fuel pressure is holding steady under load (max deviation ' + maxDropPct.toFixed(1) + '% — within acceptable range).');
+      } else {
+        summary.push('INFO: Fuel pressure columns found but no valid WOT paired readings to compare.');
+      }
+    } else if (fuelActualCol && !fuelDesiredCol) {
+      const fuelVals = wotRows.map(r => r[fuelActualCol]).filter(Number.isFinite);
+      if (fuelVals.length) {
+        const minF = Math.min(...fuelVals), maxF = Math.max(...fuelVals);
+        summary.push('INFO: Fuel pressure (actual, WOT): ' + minF.toFixed(1) + '-' + maxF.toFixed(1) + ' psi — no desired pressure column found to compare against.');
+      }
+    }
+
+    // ── Injector Duty Cycle ──────────────────────────────
+    // IDC = (pulse width ms / cycle period ms) * 100
+    // Cycle period = 2 * 60000 / RPM  (4-stroke: one injection per 2 revolutions)
+    const injCols = [1,2,3,4,5,6,7,8].map(n => 'Injector Pulse Width Cyl ' + n).filter(hasCol);
+    if (injCols.length > 0) {
+      let maxIDC = 0, maxIDC_rpm = null, maxIDC_boost = null;
+      for (const r of wotRows) {
+        const rpm = r[rpmName];
+        if (!Number.isFinite(rpm) || rpm <= 0) continue;
+        const cyclePeriodMs = (2 * 60000) / rpm;
+        for (const col of injCols) {
+          const pw = r[col];
+          if (!Number.isFinite(pw) || pw <= 0) continue;
+          const idc = (pw / cyclePeriodMs) * 100;
+          if (idc > maxIDC) {
+            maxIDC       = idc;
+            maxIDC_rpm   = rpm;
+            maxIDC_boost = getBoostPsi(r);
           }
         }
       }
+      if (maxIDC > 0) {
+        const rpmStr   = maxIDC_rpm   ? ' @ ' + Math.round(maxIDC_rpm / 100) * 100 + ' RPM' : '';
+        const boostStr = maxIDC_boost !== null && maxIDC_boost > 0 ? ' (' + maxIDC_boost.toFixed(1) + ' psi boost)' : '';
+        let idcMsg;
+        if (maxIDC >= 90) {
+          idcMsg = 'CRITICAL: Injector duty cycle hit ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. The injectors are essentially maxed out — at this level there is no headroom left and the engine is at serious risk of running lean. Larger injectors are needed immediately.';
+        } else if (maxIDC >= 80) {
+          idcMsg = 'WARN: Injector duty cycle reached ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. This is getting into the danger zone. Most injectors should not run above 80-85% for extended periods. If you are planning to add more power, larger injectors will be required.';
+        } else if (maxIDC >= 70) {
+          idcMsg = 'WARN: Injector duty cycle is at ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + '. This is elevated but manageable at current power levels. Keep this in mind if you are planning future upgrades — headroom is getting tight.';
+        } else {
+          idcMsg = 'OK: Max injector duty cycle is ' + maxIDC.toFixed(1) + '%' + rpmStr + boostStr + ' — injectors have plenty of headroom at current power levels.';
+        }
+        summary.push(idcMsg);
+      }
     }
-    return pairs;
-  }, [chat]);
 
-  const saveTraining = async () => {
-    if (!trainerEntryId) { showToast('No entry ID — run analysis first.', 'err'); return; }
-    if (!chatPairs.length) { showToast('No chat pairs to save yet — have a conversation first.', 'err'); return; }
-    try {
-      const res = await axios.post(`${API_BASE}/trainer/save-chat`, { trainer_entry_id: trainerEntryId, chatPairs, notes });
-      const j = res.data;
-      if (!j.ok) throw new Error(j.error);
-      showToast(`Saved ${j.added} example(s). Total in session: ${j.total_examples_for_entry}`, 'ok');
-    } catch (e) { showToast(`Save failed: ${e.message}`, 'err'); }
+  } else {
+    summary.push('INFO: No full-throttle conditions found in this log — most checks require WOT data.');
+  }
+
+  // ── Knock sensor volts ───────────────────────────────
+  ['Knock Sensor 1', 'Knock Sensor 2'].forEach(sensor => {
+    const volts = getColumn(sensor);
+    if (!volts.length) return; // silent if not logged
+    const peak = Math.max(...volts);
+    summary.push(peak > 3.0
+      ? 'WARN: ' + sensor + ' peaked at ' + peak.toFixed(2) + 'V (above 3.0V threshold) — indicates active knock activity.'
+      : 'OK: ' + sensor + ' within safe range (peak ' + peak.toFixed(2) + 'V).'
+    );
+  });
+
+  // ── Fuel trims ───────────────────────────────────────
+  const lt1 = getColumn('Long Term Fuel Trim Bank 1 (SAE)');
+  const lt2 = getColumn('Long Term Fuel Trim Bank 2 (SAE)');
+  const st1 = getColumn('Short Term Fuel Trim Bank 1 (SAE)');
+  const st2 = getColumn('Short Term Fuel Trim Bank 2 (SAE)');
+
+  if (lt1.length && lt2.length) {
+    const variance = lt1.map((v, i) => Number.isFinite(lt2[i]) ? Math.abs(v - lt2[i]) : undefined).filter(Number.isFinite);
+    if (variance.some(v => v > 10)) {
+      summary.push('WARN: There is a significant fuel trim imbalance between the two banks. This can point to a vacuum leak, a faulty O2 sensor, or an injector issue on one side of the engine.');
+    } else {
+      summary.push('OK: Fuel trims are balanced between both banks.');
+    }
+  }
+  if (st1.length && lt1.length) {
+    const a1 = avg(st1.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt1[i]) ? lt1[i] : 0)).filter(Number.isFinite));
+    if (a1 !== undefined) summary.push('STAT: Average fuel correction (Bank 1): ' + a1.toFixed(1) + '%');
+  }
+  if (st2.length && lt2.length) {
+    const a2 = avg(st2.map((v, i) => (Number.isFinite(v) ? v : 0) + (Number.isFinite(lt2[i]) ? lt2[i] : 0)).filter(Number.isFinite));
+    if (a2 !== undefined) summary.push('STAT: Average fuel correction (Bank 2): ' + a2.toFixed(1) + '%');
+  }
+
+  // ── Oil pressure ─────────────────────────────────────
+  const oilCol = getColumn('Engine Oil Pressure');
+  if (oilCol.length) {
+    const oilRows = parsed.filter(r => Number.isFinite(r[rpmName]) && r[rpmName] > 500);
+    const oilLow  = oilRows.some(r => Number.isFinite(r['Engine Oil Pressure']) && r['Engine Oil Pressure'] < 20);
+    summary.push(oilLow
+      ? 'CRITICAL: Oil pressure dropped below 20 psi while the engine was running. This is dangerous and needs immediate attention — low oil pressure can cause serious internal engine damage very quickly.'
+      : 'OK: Oil pressure stayed within a safe range throughout the log.'
+    );
+  }
+
+  // ── Coolant temp ─────────────────────────────────────
+  const ect = getColumn('Engine Coolant Temp (SAE)');
+  if (ect.length) {
+    const maxEct = Math.max(...ect);
+    summary.push(maxEct > 230
+      ? 'WARN: Coolant temperature reached ' + maxEct.toFixed(0) + ' degrees F. The engine is running hot — check your cooling system and make sure coolant levels are good.'
+      : 'OK: Coolant temperature stayed within a safe range (max ' + maxEct.toFixed(0) + ' degrees F).'
+    );
+  }
+
+  // ── Misfires ─────────────────────────────────────────
+  const misfireReport = [];
+  Object.keys(parsed[0] || {}).forEach(key => {
+    if (!key.includes('Misfire Current Cylinder')) return;
+    const cyl = key.split('#')[1] || '?';
+    const values = getColumn(key);
+    if (!values.length) return;
+    let count = 0;
+    for (let i = 1; i < values.length; i++) {
+      const diff = values[i] - values[i - 1];
+      if (Number.isFinite(diff) && diff > 0 && diff < 1000) count += diff;
+    }
+    if (count > 0) misfireReport.push('Cylinder ' + cyl + ': ' + count.toFixed(0) + ' misfires');
+  });
+  if (misfireReport.length) {
+    summary.push('WARN: Misfires were detected in this log — ' + misfireReport.join(', ') + '. Misfires mean one or more cylinders are not firing correctly. This is typically caused by spark plugs, ignition coils, or fuel delivery issues.');
+  } else {
+    summary.push('OK: No misfires detected.');
+  }
+
+  // ── Acceleration timers ───────────────────────────────
+  const speed = getColumn(speedName);
+  const time  = getColumn(timeName);
+  const accel = getColumn(accelName);
+  const findAllIntervals = (start, end) => {
+    const times = []; let startTime = null;
+    for (let i = 0; i < speed.length; i++) {
+      const s = speed[i], t = time[i], ap = accel[i];
+      if (!Number.isFinite(s) || !Number.isFinite(t) || !Number.isFinite(ap) || ap < 86) continue;
+      if (startTime === null && s >= start && s < end) startTime = t;
+      if (startTime !== null && s >= end) { times.push((t - startTime).toFixed(2)); startTime = null; }
+    }
+    return times;
   };
-
-  const finalizeTraining = async () => {
-    if (!trainerEntryId) { showToast('No entry ID — run analysis first.', 'err'); return; }
-    try {
-      const res = await axios.post(`${API_BASE}/trainer/finalize`, { trainer_entry_id: trainerEntryId, appendToJsonl: true });
-      const j = res.data;
-      if (!j.ok) throw new Error(j.error);
-      setExamplesTotal(j.totalExamplesInFile);
-      setStep(3);
-      showToast(`Committed ${j.appended} example(s) to training dataset. Total: ${j.totalExamplesInFile}${j.totalExamplesInFile < 10 ? ' (need ≥10 for fine-tune)' : ' ✅'}`, 'ok');
-    } catch (e) { showToast(`Finalize failed: ${e.message}`, 'err'); }
+  const findAllZeroToSixty = () => {
+    const times = []; let foundStop = false, startTime = null;
+    for (let i = 1; i < speed.length; i++) {
+      const s = speed[i], t = time[i], ap = accel[i];
+      if (!Number.isFinite(s) || !Number.isFinite(t) || !Number.isFinite(ap) || ap < 86) continue;
+      if (!foundStop && s < 1.5) foundStop = true;
+      if (foundStop && startTime === null && s > 1.5) startTime = t;
+      if (startTime !== null && s >= 60) { times.push((t - startTime).toFixed(2)); startTime = null; foundStop = false; }
+    }
+    return times;
   };
+  const best = (arr) => arr.length ? Math.min(...arr.map(Number)) : null;
+  const z60  = best(findAllZeroToSixty());
+  const f100 = best(findAllIntervals(40, 100));
+  const s130 = best(findAllIntervals(60, 130));
+  if (z60)  summary.push('STAT: Best 0-60 mph: ' + Number(z60).toFixed(2) + 's');
+  if (f100) summary.push('STAT: Best 40-100 mph: ' + Number(f100).toFixed(2) + 's');
+  if (s130) summary.push('STAT: Best 60-130 mph: ' + Number(s130).toFixed(2) + 's');
 
-  const startFineTune = async () => {
-    try {
-      const res = await axios.post(`${API_BASE}/fine-tune-now`);
-      showToast(`Fine-tune job started! Job ID: ${res.data.job?.id}`, 'ok');
-    } catch (e) { showToast(`Fine-tune failed: ${e?.response?.data?.error || e.message}`, 'err'); }
-  };
-
-  // ── Render ────────────────────────────────────────────────
-  const c = comparison;
-  const steps = ['Vehicle Setup', 'Analysis', 'Review & Train', 'Complete'];
-
-  return (
-    <div style={css.page}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
-        * { box-sizing: border-box; }
-        select option { background: #111811; }
-        input[type=file] { display: none; }
-        .st-input:focus { border-color: rgba(61,255,122,0.3) !important; box-shadow: 0 0 0 3px rgba(61,255,122,0.06); }
-        .st-btn-primary:hover { box-shadow: 0 0 30px rgba(61,255,122,0.4); transform: translateY(-1px); }
-        .st-btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
-        ::-webkit-scrollbar { width: 5px; } ::-webkit-scrollbar-thumb { background: #274027; border-radius: 3px; }
-        @keyframes fadeInUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
-        .analyzing { animation: pulse 1.5s ease-in-out infinite; }
-      `}</style>
-
-      {/* ── HEADER ── */}
-      <header style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'0 32px', height:68, background:'rgba(9,12,9,0.95)', borderBottom:`1px solid ${T.borderHi}`, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(12px)' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12, fontFamily:"'Rajdhani',sans-serif", fontSize:22, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:T.green }}>
-          <div style={{ width:34, height:34, border:`1.5px solid ${T.green}`, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center' }}>
-            <svg width="18" height="18" viewBox="0 0 22 22" fill="none"><circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/><path d="M7 9l3 3 5-5" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </div>
-          Satera Tuning
-          <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, fontWeight:400, color:T.muted, textTransform:'none', letterSpacing:0 }}>Trainer Mode</span>
-          <span style={{ fontSize:9, fontWeight:600, letterSpacing:1.5, textTransform:'uppercase', color:T.faint, background:T.greenLo, border:`1px solid rgba(61,255,122,0.1)`, borderRadius:4, padding:'2px 7px' }}>INTERNAL</span>
-        </div>
-        <div style={{ display:'flex', gap:10, alignItems:'center' }}>
-          <Link to="/ai-review" style={{ ...css.btnGhost, textDecoration:'none', display:'inline-block' }}>AI Review</Link>
-          <Link to="/log-comparison" style={{ ...css.btnGhost, textDecoration:'none', display:'inline-block' }}>Log Comparison</Link>
-        </div>
-      </header>
-
-      <div style={{ padding:'28px 32px', maxWidth:1400, margin:'0 auto' }}>
-
-        {/* ── Page title + steps ── */}
-        <div style={{ marginBottom:28 }}>
-          <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:32, fontWeight:700, letterSpacing:1, margin:'0 0 6px', color:T.text }}>
-            Tune Comparison Trainer
-          </h1>
-          <p style={{ fontSize:13, color:T.muted, margin:'0 0 24px', lineHeight:1.6 }}>
-            Upload a before and after tune log for the same vehicle. The AI compares the two, identifies what changed, and learns from your corrections — building toward automated tune generation over time.
-          </p>
-          <StepIndicator steps={steps} current={step}/>
-        </div>
-
-        {/* ── Toast notification ── */}
-        {toast.text && (
-          <div style={{ padding:'12px 18px', borderRadius:8, marginBottom:20, fontSize:13, lineHeight:1.5, background: toast.type === 'err' ? 'rgba(255,82,82,0.08)' : 'rgba(61,255,122,0.06)', border:`1px solid ${toast.type === 'err' ? 'rgba(255,82,82,0.25)' : 'rgba(61,255,122,0.2)'}`, color: toast.type === 'err' ? T.red : T.green, animation:'fadeInUp 0.3s ease' }}>
-            {toast.text}
-          </div>
-        )}
-
-        <div style={{ display:'grid', gridTemplateColumns:'380px 1fr', gap:20, alignItems:'start' }}>
-
-          {/* ── LEFT: Setup panel ── */}
-          <div style={{ display:'grid', gap:16 }}>
-
-            {/* VCM paste */}
-            <div style={css.card}>
-              <p style={css.sectionTitle}>Quick Fill from VCM Editor</p>
-              <label style={css.label}>Paste VCM Editor info block (optional — auto-fills fields below)</label>
-              <textarea
-                onBlur={handleVCMPaste}
-                placeholder="Copy and paste from VCM Editor's vehicle info screen…"
-                rows={4}
-                style={{ ...css.input, resize:'vertical', lineHeight:1.5 }}
-              />
-            </div>
-
-            {/* Vehicle info */}
-            <div style={css.card}>
-              <p style={css.sectionTitle}>Vehicle Details</p>
-              <div style={{ display:'grid', gap:10 }}>
-                {/* VIN + CALID */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>VIN</label><input name="vin" value={form.vin} onChange={handleChange} placeholder="1B3..." style={css.input}/></div>
-                  <div><label style={css.label}>Calibration ID</label><input name="calid" value={form.calid} onChange={handleChange} placeholder="OS Cal ID" style={css.input}/></div>
-                </div>
-                {/* Year + Model */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div>
-                    <label style={css.label}>Year</label>
-                    <select name="year" value={form.year} onChange={handleChange} style={css.select}>
-                      <option value="">Select…</option>{dropdownOptions.year.map(o=><option key={o}>{o}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label style={css.label}>Model</label>
-                    <select name="model" value={form.model} onChange={handleChange} style={css.select}>
-                      <option value="">Select…</option>{dropdownOptions.model.map(o=><option key={o}>{o}</option>)}
-                    </select>
-                  </div>
-                </div>
-                {/* Engine */}
-                <div><label style={css.label}>Engine</label><select name="engine" value={form.engine} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.engine.map(o=><option key={o}>{o}</option>)}</select></div>
-                {/* Fuel + Power */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>Fuel</label><select name="fuel" value={form.fuel} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.fuel.map(o=><option key={o}>{o}</option>)}</select></div>
-                  <div><label style={css.label}>Power Adder</label><select name="power" value={form.power} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.power.map(o=><option key={o}>{o}</option>)}</select></div>
-                </div>
-                {/* Trans + Injectors */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>Transmission</label><select name="trans" value={form.trans} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.trans.map(o=><option key={o}>{o}</option>)}</select></div>
-                  <div><label style={css.label}>Injectors</label><select name="injectors" value={form.injectors} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.injectors.map(o=><option key={o}>{o}</option>)}</select></div>
-                </div>
-                {/* MAP + Throttle */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>MAP Sensor</label><select name="map" value={form.map} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.map.map(o=><option key={o}>{o}</option>)}</select></div>
-                  <div><label style={css.label}>Throttle Body</label><select name="throttle" value={form.throttle} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.throttle.map(o=><option key={o}>{o}</option>)}</select></div>
-                </div>
-                {/* Gear + Tire */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>Rear Gear</label><select name="gear" value={form.gear} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.gear.map(o=><option key={o}>{o}</option>)}</select></div>
-                  <div><label style={css.label}>Tire Height</label><select name="tire" value={form.tire} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.tire.map(o=><option key={o}>{o}</option>)}</select></div>
-                </div>
-                {/* Cam + Neural */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                  <div><label style={css.label}>Aftermarket Cam</label><select name="cam" value={form.cam} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.cam.map(o=><option key={o}>{o}</option>)}</select></div>
-                  <div><label style={css.label}>Neural Network</label><select name="neural" value={form.neural} onChange={handleChange} style={css.select}><option value="">Select…</option>{dropdownOptions.neural.map(o=><option key={o}>{o}</option>)}</select></div>
-                </div>
-              </div>
-            </div>
-
-            {/* Log uploads */}
-            <div style={css.cardHi}>
-              <p style={css.sectionTitle}>Log Files</p>
-              <div style={{ display:'grid', gap:12 }}>
-                <UploadZone label="Before Log (CSV) — Stock / Pre-Tune" sublabel="The baseline — stock or before modifications" file={beforeLog} onChange={e=>setBeforeLog(e.target.files[0])} id="beforeInput" color={T.blue}/>
-                <UploadZone label="After Log (CSV) — Tuned / Modified" sublabel="The result — after tune and/or modifications" file={afterLog} onChange={e=>setAfterLog(e.target.files[0])} id="afterInput" color={T.green}/>
-              </div>
-              <button
-                onClick={handleAnalyze}
-                disabled={loading || !beforeLog || !afterLog}
-                className="st-btn-primary"
-                style={{ ...css.btnPrimary, width:'100%', marginTop:16, opacity: (loading||!beforeLog||!afterLog) ? 0.4 : 1 }}
-              >
-                {loading ? (
-                  <span className="analyzing">⚡ Analyzing Logs…</span>
-                ) : '⚡ Analyze & Compare'}
-              </button>
-              {status && <p style={{ fontSize:12, color:T.muted, margin:'10px 0 0', textAlign:'center' }}>{status}</p>}
-            </div>
-
-            {/* Training counter */}
-            {examplesTotal !== null && (
-              <div style={{ ...css.card, textAlign:'center', animation:'fadeInUp 0.4s ease' }}>
-                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:11, fontWeight:700, letterSpacing:2, textTransform:'uppercase', color:T.muted, marginBottom:8 }}>Training Dataset</div>
-                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:48, fontWeight:700, color: examplesTotal >= 10 ? T.green : T.amber, lineHeight:1 }}>{examplesTotal}</div>
-                <div style={{ fontSize:12, color:T.muted, marginTop:4 }}>examples collected</div>
-                <div style={{ fontSize:11, color: examplesTotal >= 10 ? T.green : T.amber, marginTop:6 }}>
-                  {examplesTotal >= 10 ? '✅ Ready for fine-tuning' : `Need ${10 - examplesTotal} more for fine-tune`}
-                </div>
-                {examplesTotal >= 10 && (
-                  <button onClick={startFineTune} style={{ ...css.btnPurple, marginTop:14, width:'100%' }}>
-                    🤖 Start Fine-Tune Job
-                  </button>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* ── RIGHT: Results panel ── */}
-          <div style={{ display:'grid', gap:16 }}>
-
-            {/* Placeholder when no results */}
-            {!aiSummary && (
-              <div style={{ ...css.card, minHeight:300, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', gap:12, color:T.muted }}>
-                <div style={{ fontSize:40 }}>📊</div>
-                <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:600, letterSpacing:1 }}>No Analysis Yet</div>
-                <div style={{ fontSize:13, textAlign:'center', maxWidth:340, lineHeight:1.6 }}>
-                  Fill in vehicle details, upload your before and after logs, then click Analyze to see the full comparison.
-                </div>
-              </div>
-            )}
-
-            {/* AI Summary */}
-            {aiSummary && (
-              <div style={{ ...css.cardHi, animation:'fadeInUp 0.4s ease' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
-                  <span style={{ fontSize:20 }}>🧠</span>
-                  <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>AI Comparison Summary</span>
-                </div>
-                <div style={{ fontSize:14, lineHeight:1.8, color:T.text, whiteSpace:'pre-wrap' }}>
-                  {aiSummary}
-                </div>
-              </div>
-            )}
-
-            {/* Metrics comparison table */}
-            {c && (
-              <div style={{ ...css.card, animation:'fadeInUp 0.5s ease' }}>
-                <p style={css.sectionTitle}>Before vs After — Key Metrics</p>
-
-                {/* Column headers */}
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:8, padding:'6px 0 10px', borderBottom:`2px solid ${T.borderHi}`, marginBottom:4 }}>
-                  <span style={{ fontSize:11, color:T.muted, fontWeight:600, letterSpacing:0.8 }}>METRIC</span>
-                  <span style={{ fontSize:11, color:T.blue, fontWeight:700, letterSpacing:0.8, textAlign:'right' }}>BEFORE</span>
-                  <span style={{ fontSize:11, color:T.green, fontWeight:700, letterSpacing:0.8, textAlign:'right' }}>AFTER</span>
-                  <span style={{ fontSize:11, color:T.muted, fontWeight:600, letterSpacing:0.8, textAlign:'right' }}>DELTA</span>
-                </div>
-
-                {/* Knock section */}
-                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Knock Retard</div>
-                <MetricRow label="Max KR" before={fmtDeg(c.before.KR.maxKR)} after={fmtDeg(c.after.KR.maxKR)} delta={withSign(c.deltas.KR_max_change,1,'°')} deltaKey="KR_max_change"/>
-                <MetricRow label="KR Events" before={fmtPlain(c.before.KR.krEvents)} after={fmtPlain(c.after.KR.krEvents)} delta={withSign(c.deltas.KR_event_change,0)} deltaKey="KR_event_change"/>
-
-                {/* Timing */}
-                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>WOT Timing</div>
-                <MetricRow label="Peak Spark @WOT" before={fmtDeg(c.before.WOT.sparkMaxWOT)} after={fmtDeg(c.after.WOT.sparkMaxWOT)} delta={withSign(c.deltas.sparkMaxWOT_change,1,'°')} deltaKey="sparkMaxWOT_change"/>
-                <MetricRow label="MAP min @WOT" before={fmtKpa(c.before.WOT.mapMinWOT)} after={fmtKpa(c.after.WOT.mapMinWOT)} delta={withSign(c.deltas.mapMinWOT_change,0,'kPa')} deltaKey="mapMinWOT_change"/>
-                <MetricRow label="MAP max @WOT" before={fmtKpa(c.before.WOT.mapMaxWOT)} after={fmtKpa(c.after.WOT.mapMaxWOT)} delta={withSign(c.deltas.mapMaxWOT_change,0,'kPa')} deltaKey="mapMaxWOT_change"/>
-
-                {/* Acceleration */}
-                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Acceleration Times</div>
-                <MetricRow label="0–60 mph" before={fmtSec(c.before.times.zeroToSixty)} after={fmtSec(c.after.times.zeroToSixty)} delta={withSign(c.deltas.t_0_60_change,2,'s')} deltaKey="t_0_60_change"/>
-                <MetricRow label="40–100 mph" before={fmtSec(c.before.times.fortyToHundred)} after={fmtSec(c.after.times.fortyToHundred)} delta={withSign(c.deltas.t_40_100_change,2,'s')} deltaKey="t_40_100_change"/>
-                <MetricRow label="60–130 mph" before={fmtSec(c.before.times.sixtyToOneThirty)} after={fmtSec(c.after.times.sixtyToOneThirty)} delta={withSign(c.deltas.t_60_130_change,2,'s')} deltaKey="t_60_130_change"/>
-
-                {/* Fuel trims */}
-                <div style={{ fontSize:10, color:T.muted, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', margin:'12px 0 6px' }}>Fuel Trims</div>
-                <MetricRow label="STFT Variance" before={fmtPlain(c.before.varSTFT)} after={fmtPlain(c.after.varSTFT)} delta={withSign(c.deltas.varSTFT_change,2)} deltaKey="varSTFT_change"/>
-                <MetricRow label="LTFT Variance" before={fmtPlain(c.before.varLTFT)} after={fmtPlain(c.after.varLTFT)} delta={withSign(c.deltas.varLTFT_change,2)} deltaKey="varLTFT_change"/>
-
-                {/* Delta legend */}
-                <div style={{ display:'flex', gap:16, marginTop:14, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-                  <span style={{ fontSize:11, color:T.muted }}>Delta color key:</span>
-                  <span style={{ fontSize:11, color:T.green }}>● Improvement</span>
-                  <span style={{ fontSize:11, color:T.red }}>● Worse</span>
-                  <span style={{ fontSize:11, color:T.muted }}>● No change</span>
-                </div>
-              </div>
-            )}
-
-            {/* Chat window */}
-            {step >= 2 && (
-              <div style={{ ...css.card, animation:'fadeInUp 0.6s ease' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:16 }}>
-                  <p style={{ ...css.sectionTitle, margin:0 }}>Trainer Chat</p>
-                  <span style={{ fontSize:11, color:T.muted }}>Correct, question, or add context to the AI assessment</span>
-                </div>
-
-                {/* Chat messages */}
-                <div style={{ maxHeight:380, overflowY:'auto', padding:'4px 0', marginBottom:12 }}>
-                  {chat.map((m,i) => <ChatBubble key={i} role={m.role} content={m.content}/>)}
-                  {chatLoading && (
-                    <div style={{ display:'flex', gap:10, marginBottom:14 }}>
-                      <div style={{ width:28, height:28, borderRadius:'50%', background:T.greenLo, border:`1px solid ${T.borderHi}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:13 }}>🤖</div>
-                      <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:'4px 12px 12px 12px', padding:'10px 14px', color:T.muted, fontSize:13 }}>
-                        <span className="analyzing">Thinking…</span>
-                      </div>
-                    </div>
-                  )}
-                  <div ref={chatEndRef}/>
-                </div>
-
-                {/* Chat input */}
-                <div style={{ display:'flex', gap:8 }}>
-                  <input
-                    value={message}
-                    onChange={e=>setMessage(e.target.value)}
-                    onKeyDown={e=>{ if(e.key==='Enter' && !e.shiftKey) sendChat(); }}
-                    placeholder="Ask about knock, timing, fuel trims, boost… or correct anything the AI got wrong"
-                    style={{ ...css.input, flex:1 }}
-                    disabled={chatLoading}
-                  />
-                  <button onClick={sendChat} disabled={chatLoading || !message.trim()} style={{ ...css.btnPrimary, padding:'9px 18px', flexShrink:0, opacity: (!message.trim()||chatLoading) ? 0.4 : 1 }}>
-                    Send
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ── SPARK TABLE ADVISOR ── */}
-            {step >= 2 && (
-              <SparkAdvisor rpmAirBins={rpmAirBins} meta={form} />
-            )}
-
-            {/* Training controls */}
-            {step >= 2 && (
-              <div style={{ ...css.card, animation:'fadeInUp 0.7s ease' }}>
-                <p style={css.sectionTitle}>Save to Training Dataset</p>
-                <p style={{ fontSize:13, color:T.muted, margin:'0 0 14px', lineHeight:1.6 }}>
-                  Once you've reviewed the AI summary and had a chat to correct anything, save this session as training data. Over time this builds the dataset used to fine-tune the model to sound and think like you.
-                </p>
-
-                <div>
-                  <label style={css.label}>Session Notes (optional — describe what this vehicle/tune represents)</label>
-                  <textarea
-                    value={notes}
-                    onChange={e=>setNotes(e.target.value)}
-                    placeholder="e.g. 2019 Hellcat, stock to Stage 2 Whipple swap, E85 conversion, ID1050x injectors..."
-                    rows={3}
-                    style={{ ...css.input, resize:'vertical', lineHeight:1.5, marginBottom:14 }}
-                  />
-                </div>
-
-                <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-                  <button onClick={saveTraining} style={css.btnAmber}>
-                    💾 Save Chat as Training
-                  </button>
-                  <button onClick={finalizeTraining} style={css.btnPrimary}>
-                    ✅ Finalize & Commit to Dataset
-                  </button>
-                </div>
-
-                {trainerEntryId && (
-                  <p style={{ fontSize:11, color:T.faint, margin:'10px 0 0' }}>
-                    Session ID: <code style={{ color:T.muted }}>{trainerEntryId}</code>
-                  </p>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+  return summary.join('\n');
 }
+
+// =====================================================
+// Backend dyno computation
+// =====================================================
+const K_DYNO      = 0.0001465;
+const REF_OVERALL = 1.29 * 3.09;
+const REF_TIRE_IN = 28.0;
+
+function buildDynoPayload(parsed, { mode = 'dyno', rear, tireIn, pullGear, trans }) {
+  try {
+    const T   = parsed.map(r => r['Offset']).filter(isNum);
+    const RPM = parsed.map(r => r['Engine RPM (SAE)']);
+    const MPH = parsed.map(r => r['Vehicle Speed (SAE)']);
+    const Ped = parsed.map(r => r['Accelerator Position D (SAE)']);
+    if (!RPM.some(isNum) || !MPH.some(isNum) || !T.some(isNum)) return { error: 'Missing RPM/MPH/Time columns' };
+
+    const sweep = selectRpmSweep(T, RPM, MPH, Ped);
+    if (!sweep) return { error: 'No single-gear WOT window detected' };
+    const [i0, i1] = sweep;
+
+    const time = T.slice(i0, i1 + 1).filter(isNum);
+    const rpm  = RPM.slice(i0, i1 + 1);
+    const mph  = MPH.slice(i0, i1 + 1);
+    const tire     = isNum(tireIn) && tireIn > 0 ? tireIn : REF_TIRE_IN;
+    const rearGear = isNum(rear) && rear > 0 ? rear : 3.09;
+
+    let usedPull = isNum(pullGear) ? pullGear : null;
+    let detectConf = 0;
+    if (!isNum(usedPull)) {
+      const det = detectPullGear({ rpm, mph, tireIn: tire, rear: rearGear });
+      usedPull = det.gear; detectConf = det.confidence || 0;
+      if (isNum(usedPull) && trans && TRANS_RATIOS[trans]) {
+        let nearest = null, dn = Infinity;
+        for (const [, ratio] of Object.entries(TRANS_RATIOS[trans])) { const d = Math.abs(ratio - usedPull); if (d < dn) { dn = d; nearest = ratio; } }
+        if (nearest && dn <= 0.06) usedPull = nearest;
+      }
+    }
+
+    const { t: Tu, y: RPMu } = resampleUniform(time, rpm, 60);
+    if (!RPMu.length) return { error: 'Resampling failed' };
+    const RPMs    = zeroPhaseMovAvg(RPMu, 7);
+    const dRPMdt  = RPMs.map((_, i, arr) => i === 0 || i === arr.length - 1 ? 0 : (arr[i + 1] - arr[i - 1]) * 30);
+    const dRPMdtS = zeroPhaseMovAvg(dRPMdt, 7);
+
+    let HP;
+    if (mode === 'track') {
+      const { y: MPHu } = resampleUniform(time, mph, 60);
+      const Vs  = zeroPhaseMovAvg(MPHu.map(v => v * 1.4666667), 5);
+      const As  = Vs.map((_, i, arr) => i === 0 || i === arr.length - 1 ? 0 : (arr[i + 1] - arr[i - 1]) * 30);
+      const Asm = zeroPhaseMovAvg(As, 5);
+      HP = Vs.map((v, i) => ((0 * Asm[i] * v) + (0.015 * 0 * v) + (0.5 * 0.00238 * 8.5 * v * v * v)) / 550);
+    } else {
+      const pull = isNum(usedPull) ? usedPull : 1.29;
+      const scale = Math.pow(REF_OVERALL / (pull * rearGear), 2) * Math.pow(REF_TIRE_IN / tire, 2);
+      HP = RPMs.map((r, i) => Math.max(0, K_DYNO * r * dRPMdtS[i] * scale));
+    }
+
+    const pts = [];
+    for (let i = 0; i < RPMs.length; i++) if (isNum(RPMs[i]) && RPMs[i] > 0 && isNum(HP[i])) pts.push({ x: RPMs[i], hp: HP[i] });
+    if (!pts.length) return { error: 'Insufficient dyno points' };
+    pts.sort((a, b) => a.x - b.x);
+
+    const bins = new Map();
+    for (const p of pts) { const key = Math.round(p.x / 100) * 100; const cur = bins.get(key); if (!cur) bins.set(key, { x: key, hp: [p.hp] }); else cur.hp.push(p.hp); }
+    const series = Array.from(bins.values()).map(b => ({ x: b.x, hp: b.hp.reduce((a, c) => a + c, 0) / b.hp.length })).sort((a, b) => a.x - b.x);
+
+    const X   = series.map(p => p.x);
+    const HPs = zeroPhaseMovAvg(series.map(p => p.hp), 9);
+    const TQ  = X.map((r, i) => r > 0 ? (HPs[i] * 5252) / r : null);
+
+    let iHP = 0; for (let i = 1; i < HPs.length; i++) if (HPs[i] > HPs[iHP]) iHP = i;
+    let iTQ = 0; for (let i = 1; i < TQ.length; i++) if (TQ[i] > TQ[iTQ]) iTQ = i;
+
+    return {
+      mode, xLabel: 'RPM', x: X, hp: HPs, tq: TQ,
+      peakHP: HPs.length ? { rpm: X[iHP], value: +HPs[iHP].toFixed(1) } : null,
+      peakTQ: TQ.length  ? { rpm: X[iTQ], value: +TQ[iTQ].toFixed(1)  } : null,
+      pullGearUsed: isNum(usedPull) ? +usedPull.toFixed(2) : null,
+      detectConf,
+    };
+  } catch (e) {
+    return { error: 'Dyno compute failed' };
+  }
+}
+
+// =====================================================
+// AI REVIEW endpoint
+// =====================================================
+app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res) => {
+  let filePath;
+  try {
+    if (!req.file) return res.status(400).send('No CSV file uploaded.');
+    filePath = req.file.path;
+    const content = fs.readFileSync(filePath, 'utf8');
+    const { headers, parsed } = analyzeCsvContent(content);
+
+    const checklist = formatChecklist(parsed, headers);
+
+    const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
+      rpm:     r['Engine RPM (SAE)'],
+      airmass: r['Cylinder Airmass'],
+      knock:   r['Total Knock Retard'],
+    }));
+
+    const observations = checklist + '\n' + JSON.stringify(reduced.slice(0, 200), null, 2);
+    const messages = buildMessages({ meta: {}, observations });
+
+    let finalReview = '';
+    try {
+      const completion = await openai.chat.completions.create({
+        model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+        temperature: 0.3,
+        messages,
+      });
+      finalReview = completion.choices?.[0]?.message?.content?.trim() || '';
+    } catch {
+      finalReview = 'Model unavailable. Showing checklist only.';
+    }
+
+    const mode     = (req.body.mode || 'dyno').toString();
+    const trans    = req.body.trans    ? String(req.body.trans)       : undefined;
+    const rear     = req.body.rear     ? parseFloat(req.body.rear)    : undefined;
+    const tireIn   = req.body.tile     ? parseFloat(req.body.tile)    : undefined; // note: FE sends 'tile' (typo kept for compat)
+    const pullGear = req.body.pullGear ? parseFloat(req.body.pullGear): undefined;
+
+    const dynoJSON = buildDynoPayload(parsed, { mode, rear, tireIn, pullGear, trans });
+
+    res.type('text/plain').send(
+      checklist + '\n===SPLIT===\n' + finalReview + '\n===DYNO===\n' + JSON.stringify(dynoJSON)
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Failed to analyze log.');
+  } finally {
+    if (filePath && fs.existsSync(filePath)) fs.unlinkSync(filePath);
+  }
+});
+
+// ── 404 & error handlers ───────────────────────────────────
+app.use('/api', (req, res) => res.status(404).json({ error: 'Not found', path: req.originalUrl }));
+app.use((err, req, res, next) => {
+  console.error('GLOBAL ERROR:', err);
+  res.status(err.status || 500).json({ error: err.message || 'Server error' });
+});
+
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
