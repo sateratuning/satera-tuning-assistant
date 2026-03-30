@@ -159,6 +159,12 @@ export default function Portal() {
   });
 
   const [logFile, setLogFile]       = useState(null);
+  const [tableRevision, setTableRevision] = useState(null);
+  const [showTableSubmit, setShowTableSubmit] = useState(false);
+  const [injectorTable, setInjectorTable] = useState('');
+  const [veTable, setVeTable]             = useState('');
+  const [sparkTable, setSparkTable]       = useState('');
+  const [submittingTables, setSubmittingTables] = useState(false);
   const [logFileName, setLogFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [stageResult, setStageResult] = useState(null);
@@ -224,6 +230,11 @@ export default function Portal() {
       setStageResult(null);
       setLogFile(null);
       setLogFileName('');
+      // Load latest table revision
+      try {
+        const tRes = await axios.get(`${API_BASE}/portal/sessions/${id}/tables`, { headers: getAuthHeader(user) });
+        setTableRevision(tRes.data.tables || null);
+      } catch {}
     } catch (e) { setError(e.message); }
   };
 
@@ -268,6 +279,33 @@ export default function Portal() {
   };
 
   // ── Stage log submission ──────────────────────────────────
+  const submitTables = async () => {
+    if (!injectorTable && !veTable && !sparkTable) {
+      setError('Please paste at least one table.'); return;
+    }
+    setSubmittingTables(true); setError('');
+    try {
+      const res = await axios.post(
+        `${API_BASE}/portal/sessions/${activeSession.id}/submit-tables`,
+        { injector_table: injectorTable, ve_table: veTable, spark_table: sparkTable },
+        { headers: { ...getAuthHeader(user), 'Content-Type': 'application/json' } }
+      );
+      setTableRevision(res.data.revision);
+      setShowTableSubmit(false);
+      showToast('Revision 1 generated! Download your adjusted tables below.', 'ok');
+    } catch(e) { setError(e?.response?.data?.error || e.message); }
+    finally { setSubmittingTables(false); }
+  };
+
+  const downloadTable = (text, filename) => {
+    if (!text) return;
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href = url; a.download = filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const submitStageLog = async () => {
     if (!logFile) { setError('Please upload your log file first.'); return; }
     setSubmitting(true);
@@ -283,6 +321,7 @@ export default function Portal() {
         { headers: getAuthHeader(user) }
       );
       setStageResult(res.data);
+      if (res.data.table_revision) setTableRevision(res.data.table_revision);
       setLogFile(null);
       setLogFileName('');
       // Reload session to get updated stage
@@ -623,6 +662,104 @@ export default function Portal() {
                 </p>
               </div>
             </div>
+
+            {/* ── TABLE REVISION PANEL ── */}
+            {!tableRevision && !showTableSubmit && (
+              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(245,166,35,0.3)', background:'rgba(245,166,35,0.04)' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+                  <span style={{ fontSize:24 }}>📋</span>
+                  <div>
+                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>Submit Your Current Tune Tables</div>
+                    <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Required before logging. Paste your Injector, VE, and WOT Spark tables so the AI can generate your first revision.</div>
+                  </div>
+                </div>
+                <button onClick={() => setShowTableSubmit(true)} style={{ ...css.btnPrimary, background:T.amber }}>
+                  📋 Submit Tune Tables
+                </button>
+              </div>
+            )}
+
+            {/* Table submission form */}
+            {showTableSubmit && (
+              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+                  <p style={{ ...css.title, margin:0 }}>Submit Tune Tables</p>
+                  <button onClick={() => setShowTableSubmit(false)} style={css.btnGhost}>Cancel</button>
+                </div>
+                <p style={{ fontSize:13, color:T.muted, margin:'0 0 16px', lineHeight:1.7 }}>
+                  In HP Tuners VCM Editor, right-click each table → <strong style={{ color:T.text }}>"Copy with Axis"</strong> → paste below.
+                  You only need to do this once — the AI will track changes from here.
+                </p>
+                {[
+                  { label:'Injector Flow Data Table', key:'injector', value:injectorTable, setter:setInjectorTable, hint:'Engine → Fuel → Injector Flow Data → Copy with Axis' },
+                  { label:'VE Table (Volumetric Efficiency)', key:'ve', value:veTable, setter:setVeTable, hint:'Engine → Fuel → VE Table → Copy with Axis' },
+                  { label:'WOT Spark Table', key:'spark', value:sparkTable, setter:setSparkTable, hint:'Engine → Spark → WOT Spark Table → Copy with Axis' },
+                ].map(({ label, key, value, setter, hint }) => (
+                  <div key={key} style={{ marginBottom:14 }}>
+                    <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>{label}</label>
+                    <div style={{ fontSize:11, color:T.faint, marginBottom:5 }}>{hint}</div>
+                    <textarea
+                      value={value}
+                      onChange={e => setter(e.target.value)}
+                      placeholder={`Paste your ${label} here…`}
+                      rows={5}
+                      style={{ ...css.input, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical' }}
+                      spellCheck={false}
+                    />
+                  </div>
+                ))}
+                {error && <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
+                <button onClick={submitTables} disabled={submittingTables || (!injectorTable && !veTable && !sparkTable)}
+                  style={{ ...css.btnPrimary, width:'100%', opacity: submittingTables ? 0.5 : 1 }}>
+                  {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Generating Revision 1…</span> : '⚡ Generate Revision 1'}
+                </button>
+              </div>
+            )}
+
+            {/* Table revision download panel */}
+            {tableRevision && (
+              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.2)', background:'rgba(61,255,122,0.03)' }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
+                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                    <span style={{ fontSize:20 }}>📥</span>
+                    <div>
+                      <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>
+                        Revision {tableRevision.revision} Ready
+                      </div>
+                      <div style={{ fontSize:11, color:T.muted }}>Flash these tables, then upload a log for AI review</div>
+                    </div>
+                  </div>
+                </div>
+                {tableRevision.revision_notes && (
+                  <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 14px', padding:'10px 14px', background:'rgba(0,0,0,0.2)', borderRadius:7 }}>
+                    {tableRevision.revision_notes}
+                  </p>
+                )}
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                  {tableRevision.injector_adjusted && (
+                    <button onClick={() => downloadTable(tableRevision.injector_adjusted, `injector_rev${tableRevision.revision}.txt`)}
+                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
+                      ⬇ Injector Table
+                    </button>
+                  )}
+                  {tableRevision.ve_adjusted && (
+                    <button onClick={() => downloadTable(tableRevision.ve_adjusted, `ve_rev${tableRevision.revision}.txt`)}
+                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
+                      ⬇ VE Table
+                    </button>
+                  )}
+                  {tableRevision.spark_adjusted && (
+                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `spark_rev${tableRevision.revision}.txt`)}
+                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
+                      ⬇ WOT Spark Table
+                    </button>
+                  )}
+                  <button onClick={() => setShowTableSubmit(true)} style={css.btnGhost}>
+                    Re-paste Tables
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Stage tracker */}
             <div style={css.cardHi}>
