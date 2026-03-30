@@ -236,12 +236,13 @@ Keep everything in plain English — the customer will read this directly.`;
 // TUNE TABLE SUBMISSION & REVISIONS
 // ══════════════════════════════════════════════════════════
 
-// POST /portal/sessions/:id/submit-tables — initial table paste
+// POST /portal/sessions/:id/submit-tables — initial spark table paste
 router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
   try {
-    const { injector_table, ve_table, spark_table } = req.body || {};
-    if (!injector_table && !ve_table && !spark_table)
-      return res.status(400).json({ error: 'At least one table is required.' });
+    const { spark_table } = req.body || {};
+    const injector_table = null, ve_table = null;
+    if (!spark_table)
+      return res.status(400).json({ error: 'WOT Spark Table is required.' });
 
     // Fetch session + vehicle
     const { data: session, error: sErr } = await supabase
@@ -256,7 +257,7 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
       veTable:       ve_table,
       sparkTable:    spark_table,
       checklist:     null,
-      triggerReason: `Initial tune submission. Vehicle mods: Injectors=${vehicle.injectors||'Stock'}, Cam=${vehicle.cam||'Stock'}, Power=${vehicle.power_adder}, Fuel=${vehicle.fuel}. Generate baseline table adjustments for these modifications.`,
+      triggerReason: `Initial WOT Spark Table submission. Vehicle mods: Injectors=${vehicle.injectors||'Stock'}, Cam=${vehicle.cam||'Stock'}, Power=${vehicle.power_adder}, Fuel=${vehicle.fuel}. Generate baseline spark timing adjustments for these modifications.`,
       revisionNum:   1,
     });
 
