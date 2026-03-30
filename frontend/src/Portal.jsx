@@ -694,10 +694,7 @@ export default function Portal() {
                   <textarea
                     value={sparkTable}
                     onChange={e => setSparkTable(e.target.value)}
-                    placeholder={"°	512	672	896...	rpm
-0.35	13.5	14	14.5...
-...
-g"}
+                    placeholder={"°  512  672  896...  rpm\n0.35  13.5  14  14.5...\n...\ng"}
                     rows={8}
                     style={{ ...css.input, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical' }}
                     spellCheck={false}
