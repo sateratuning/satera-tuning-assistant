@@ -40,7 +40,7 @@ const OPTS = {
   rear_gear: ['3.06', '3.09', '3.23', '3.55', '3.73', '3.90', '4.10'],
   tire_height: ['26"', '27"', '28"', '29"', '30"', '31"', '32"', '33"'],
   cam: ['Stock', 'Aftermarket'],
-  neural_network: ['Enabled', 'Disabled'],
+
 };
 
 const STAGE_INFO = {
@@ -155,7 +155,7 @@ export default function Portal() {
   const [vehicleForm, setVehicleForm] = useState({
     nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'',
     transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'',
-    throttle_body:'', cam:'', neural_network:'', calid:'', trans_calid:'', trans_model:'', notes:'',
+    throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'',
   });
 
   const [logFile, setLogFile]       = useState(null);
@@ -239,7 +239,7 @@ export default function Portal() {
       );
       await loadVehicles();
       setView('garage');
-      setVehicleForm({ nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', neural_network:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
+      setVehicleForm({ nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
       showToast('Vehicle saved!');
     } catch (e) { setError(e.message); }
   };
@@ -527,6 +527,44 @@ export default function Portal() {
                     </div>
                   </div>
                 </div>
+                <div style={css.card}>
+                  <SectionTitle>VCM Editor Auto-Fill</SectionTitle>
+                  <label style={css.label}>Paste your HP Tuners VCM info block to auto-fill fields</label>
+                  <textarea
+                    rows={5}
+                    placeholder={"VIN: 2C3CDXGJ4MH592923\n2021 Dodge Charger Scat Pack, 6.4 L, V8\nOS: 68501393AD\nHardware: ZF8HP, Dodge\nOS: 68501434AC"}
+                    style={{ ...css.input, resize:'vertical', lineHeight:1.5, fontFamily:'monospace', fontSize:12 }}
+                    onBlur={e => {
+                      const text = e.target.value;
+                      if (!text.trim()) return;
+                      // VIN
+                      const vinMatch = text.match(/VIN:\s*([A-Z0-9]{17})/i);
+                      // Year, Make, Model
+                      const modelLine = text.split('\n').find(l => /\d{4}\s+Dodge/i.test(l));
+                      const yearMatch = modelLine?.match(/(20\d{2})/);
+                      const modelMatch = modelLine?.match(/Charger|Challenger|Durango|Ram|300/i);
+                      const engineMatch = modelLine?.match(/6\.4|6\.2|5\.7|6\.1/);
+                      // OS Cal IDs
+                      const osMatches = [...text.matchAll(/OS:\s*(\w+)/gi)];
+                      // Trans model
+                      const transMatch = text.match(/Hardware:\s*(ZF\w+|NAG\w+)/i);
+                      setVehicleForm(p => ({
+                        ...p,
+                        vin:         vinMatch?.[1]          || p.vin,
+                        year:        yearMatch?.[1]          || p.year,
+                        model:       modelMatch?.[0]         ? (modelMatch[0].charAt(0).toUpperCase() + modelMatch[0].slice(1).toLowerCase()) : p.model,
+                        engine:      engineMatch?.[0] === '6.4' ? '6.4L (392)' : engineMatch?.[0] === '6.2' ? '6.2L Hellcat' : engineMatch?.[0] === '5.7' ? '5.7L Eagle' : p.engine,
+                        calid:       osMatches?.[0]?.[1]     || p.calid,
+                        trans_calid: osMatches?.[1]?.[1]     || p.trans_calid,
+                        trans_model: transMatch?.[1]         || p.trans_model,
+                      }));
+                      e.target.value = '';
+                    }}
+                  />
+                  <p style={{ fontSize:11, color:T.faint, margin:'6px 0 0' }}>
+                    Paste the info block from HP Tuners VCM Editor — VIN, year, model, engine and Cal IDs will be auto-filled. Clear the box after pasting.
+                  </p>
+                </div>
               </div>
 
               {/* Right col */}
@@ -539,10 +577,7 @@ export default function Portal() {
                       <div><label style={css.label}>MAP Sensor</label><select style={css.select} value={vehicleForm.map_sensor} onChange={e => setVehicleForm(p => ({...p, map_sensor:e.target.value}))}><option value="">Select…</option>{OPTS.map_sensor.map(o=><option key={o}>{o}</option>)}</select></div>
                       <div><label style={css.label}>Throttle Body</label><select style={css.select} value={vehicleForm.throttle_body} onChange={e => setVehicleForm(p => ({...p, throttle_body:e.target.value}))}><option value="">Select…</option>{OPTS.throttle_body.map(o=><option key={o}>{o}</option>)}</select></div>
                     </div>
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                      <div><label style={css.label}>Aftermarket Cam</label><select style={css.select} value={vehicleForm.cam} onChange={e => setVehicleForm(p => ({...p, cam:e.target.value}))}><option value="">Select…</option>{OPTS.cam.map(o=><option key={o}>{o}</option>)}</select></div>
-                      <div><label style={css.label}>Neural Network</label><select style={css.select} value={vehicleForm.neural_network} onChange={e => setVehicleForm(p => ({...p, neural_network:e.target.value}))}><option value="">Select…</option>{OPTS.neural_network.map(o=><option key={o}>{o}</option>)}</select></div>
-                    </div>
+                    <div><label style={css.label}>Aftermarket Cam</label><select style={css.select} value={vehicleForm.cam} onChange={e => setVehicleForm(p => ({...p, cam:e.target.value}))}><option value="">Select…</option>{OPTS.cam.map(o=><option key={o}>{o}</option>)}</select></div>
                   </div>
                 </div>
 
