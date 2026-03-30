@@ -166,6 +166,7 @@ export default function Portal() {
   const [logFileName, setLogFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [stageResult, setStageResult] = useState(null);
+  const [showRevisionDownload, setShowRevisionDownload] = useState(false);
   const [error, setError]           = useState('');
   const [toast, setToast]           = useState('');
 
@@ -231,7 +232,10 @@ export default function Portal() {
       // Load latest table revision
       try {
         const tRes = await axios.get(`${API_BASE}/portal/sessions/${id}/tables`, { headers: getAuthHeader(user) });
-        setTableRevision(tRes.data.tables || null);
+        const tables = tRes.data.tables || null;
+        setTableRevision(tables);
+        // Only show download if triggered by a log evaluation (not initial submission)
+        setShowRevisionDownload(tables && tables.triggered_by !== 'initial_submission');
       } catch {}
     } catch (e) { setError(e.message); }
   };
@@ -263,6 +267,33 @@ export default function Portal() {
     } catch (e) { setError(e.message); }
   };
 
+  const deleteSession = async (id) => {
+    if (!window.confirm('Delete this session and all its logs? This cannot be undone.')) return;
+    try {
+      await axios.delete(`${API_BASE}/portal/sessions/${id}`, { headers: getAuthHeader(user) });
+      if (activeSession?.id === id) { setActiveSession(null); setView('garage'); }
+      await loadSessions();
+      showToast('Session deleted.');
+    } catch (e) { setError(e.message); }
+  };
+
+  const restartSession = async () => {
+    if (!activeSession) return;
+    if (!window.confirm('Restart this session? All stage logs and table revisions will be cleared and you will go back to Stage 1.')) return;
+    try {
+      await axios.patch(
+        `${API_BASE}/portal/sessions/${activeSession.id}/restart`,
+        {},
+        { headers: getAuthHeader(user) }
+      );
+      await loadSession(activeSession.id);
+      setTableRevision(null);
+      setShowRevisionDownload(false);
+      setStageResult(null);
+      showToast('Session restarted — back to Stage 1.');
+    } catch (e) { setError(e.message); }
+  };
+
   // ── Session management ────────────────────────────────────
   const startSession = async () => {
     if (!selectedVehicle) { setError('Select a vehicle first.'); return; }
@@ -290,7 +321,8 @@ export default function Portal() {
       );
       setTableRevision(res.data.revision);
       setShowTableSubmit(false);
-      showToast('Revision 1 generated! Download your adjusted tables below.', 'ok');
+      setShowRevisionDownload(false); // don't show download panel yet — customer needs to flash and log first
+      showToast('Revision 1 generated — download it, flash it, then submit your Stage 1 log.', 'ok');
     } catch(e) { setError(e?.response?.data?.error || e.message); }
     finally { setSubmittingTables(false); }
   };
@@ -319,7 +351,10 @@ export default function Portal() {
         { headers: getAuthHeader(user) }
       );
       setStageResult(res.data);
-      if (res.data.table_revision) setTableRevision(res.data.table_revision);
+      if (res.data.table_revision) {
+        setTableRevision(res.data.table_revision);
+        setShowRevisionDownload(true); // show download since it was triggered by a log
+      }
       setLogFile(null);
       setLogFileName('');
       // Reload session to get updated stage
@@ -482,9 +517,14 @@ export default function Portal() {
                         {s.stages_passed?.length > 0 && ` • Stages ${s.stages_passed.join(', ')} passed`}
                       </div>
                     </div>
-                    <button onClick={() => loadSession(s.id)} style={{ ...css.btnPrimary, padding:'8px 18px', fontSize:13 }}>
-                      {s.status === 'complete' ? 'View Report' : 'Continue →'}
-                    </button>
+                    <div style={{ display:'flex', gap:8 }}>
+                      <button onClick={() => loadSession(s.id)} style={{ ...css.btnPrimary, padding:'8px 18px', fontSize:13 }}>
+                        {s.status === 'complete' ? 'View Report' : 'Continue →'}
+                      </button>
+                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,82,82,0.2)' }}>
+                        Delete
+                      </button>
+                    </div>
                   </div>
                 ))}
 
@@ -508,9 +548,10 @@ export default function Portal() {
                         {s.status === 'complete' ? '✅ Complete' : `In progress — Stage ${s.current_stage}`} • {new Date(s.updated_at).toLocaleDateString()}
                       </div>
                     </div>
-                    <button onClick={() => loadSession(s.id)} style={css.btnGhost}>
-                      Open →
-                    </button>
+                    <div style={{ display:'flex', gap:6 }}>
+                      <button onClick={() => loadSession(s.id)} style={css.btnGhost}>Open →</button>
+                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,82,82,0.2)', padding:'6px 10px' }}>✕</button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -651,6 +692,12 @@ export default function Portal() {
             {/* Back + title */}
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
               <button onClick={() => { setView('garage'); setActiveSession(null); }} style={css.btnGhost}>← Garage</button>
+              <button onClick={restartSession} style={{ ...css.btnGhost, color:T.amber, borderColor:'rgba(245,166,35,0.25)', fontSize:12 }}>
+                🔄 Restart Session
+              </button>
+              <button onClick={() => deleteSession(activeSession.id)} style={{ ...css.btnGhost, color:T.red, borderColor:'rgba(255,82,82,0.2)', fontSize:12 }}>
+                🗑 Delete Session
+              </button>
               <div>
                 <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:26, fontWeight:700, margin:'0 0 2px' }}>
                   {activeSession.vehicles?.nickname || `${activeSession.vehicles?.year} ${activeSession.vehicles?.model}`}
@@ -708,22 +755,48 @@ export default function Portal() {
               </div>
             )}
 
-            {/* Table revision download panel */}
-            {tableRevision && (
-              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.2)', background:'rgba(61,255,122,0.03)' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:12 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-                    <span style={{ fontSize:20 }}>📥</span>
-                    <div>
-                      <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>
-                        Revision {tableRevision.revision} Ready
-                      </div>
-                      <div style={{ fontSize:11, color:T.muted }}>Flash these tables, then upload a log for AI review</div>
+            {/* Initial revision — flash prompt (before any logs) */}
+            {tableRevision && !showRevisionDownload && !stageResult && (
+              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.25)', background:'rgba(61,255,122,0.03)' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
+                  <span style={{ fontSize:22 }}>✅</span>
+                  <div>
+                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>
+                      Revision {tableRevision.revision} Generated
                     </div>
+                    <div style={{ fontSize:12, color:T.muted }}>Download, flash to your vehicle, then submit your Stage 1 log below</div>
                   </div>
                 </div>
                 {tableRevision.revision_notes && (
-                  <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 14px', padding:'10px 14px', background:'rgba(0,0,0,0.2)', borderRadius:7 }}>
+                  <p style={{ fontSize:13, color:T.muted, lineHeight:1.7, margin:'0 0 12px' }}>
+                    {tableRevision.revision_notes}
+                  </p>
+                )}
+                <div style={{ display:'flex', gap:8 }}>
+                  {tableRevision.spark_adjusted && (
+                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `wot_spark_rev${tableRevision.revision}.txt`)}
+                      style={{ ...css.btnPrimary, fontSize:13 }}>
+                      ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Log-triggered revision download — only shows after log evaluation */}
+            {showRevisionDownload && tableRevision && (
+              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(245,166,35,0.35)', background:'rgba(245,166,35,0.04)' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
+                  <span style={{ fontSize:24 }}>🔧</span>
+                  <div>
+                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>
+                      Revision {tableRevision.revision} — Updated Table Ready
+                    </div>
+                    <div style={{ fontSize:12, color:T.muted }}>The AI updated your spark table based on your log. Download, flash, then resubmit a log.</div>
+                  </div>
+                </div>
+                {tableRevision.revision_notes && (
+                  <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 14px', padding:'12px 14px', background:'rgba(0,0,0,0.25)', borderRadius:8 }}>
                     {tableRevision.revision_notes}
                   </p>
                 )}
@@ -734,9 +807,6 @@ export default function Portal() {
                       ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
                     </button>
                   )}
-                  <button onClick={() => setShowTableSubmit(true)} style={css.btnGhost}>
-                    Re-paste Table
-                  </button>
                 </div>
               </div>
             )}
