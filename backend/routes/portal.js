@@ -233,6 +233,84 @@ Keep everything in plain English — the customer will read this directly.`;
 }
 
 // ══════════════════════════════════════════════════════════
+// TUNE TABLE SUBMISSION & REVISIONS
+// ══════════════════════════════════════════════════════════
+
+// POST /portal/sessions/:id/submit-tables — initial table paste
+router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+  try {
+    const { injector_table, ve_table, spark_table } = req.body || {};
+    if (!injector_table && !ve_table && !spark_table)
+      return res.status(400).json({ error: 'At least one table is required.' });
+
+    // Fetch session + vehicle
+    const { data: session, error: sErr } = await supabase
+      .from('tune_sessions').select('*, vehicles(*)').eq('id', req.params.id).eq('user_id', req.uid).single();
+    if (sErr || !session) return res.status(404).json({ error: 'Session not found.' });
+    const vehicle = session.vehicles;
+
+    // Generate Revision 1 based on mods alone
+    const revision = await generateTableRevision({
+      vehicle,
+      injectorTable: injector_table,
+      veTable:       ve_table,
+      sparkTable:    spark_table,
+      checklist:     null,
+      triggerReason: `Initial tune submission. Vehicle mods: Injectors=${vehicle.injectors||'Stock'}, Cam=${vehicle.cam||'Stock'}, Power=${vehicle.power_adder}, Fuel=${vehicle.fuel}. Generate baseline table adjustments for these modifications.`,
+      revisionNum:   1,
+    });
+
+    // Save to tune_tables
+    const { data: tableRev, error: tErr } = await supabase
+      .from('tune_tables')
+      .insert([{
+        session_id:         req.params.id,
+        user_id:            req.uid,
+        revision:           1,
+        injector_table,
+        ve_table,
+        spark_table,
+        injector_adjusted:  revision.injector_adjusted,
+        ve_adjusted:        revision.ve_adjusted,
+        spark_adjusted:     revision.spark_adjusted,
+        revision_notes:     revision.revision_notes,
+        triggered_by:       'initial_submission',
+      }])
+      .select().single();
+    if (tErr) throw tErr;
+
+    // Mark session as having tables submitted
+    await supabase.from('tune_sessions').update({
+      updated_at: new Date().toISOString(),
+      notes: 'Tables submitted — Revision 1 generated',
+    }).eq('id', req.params.id);
+
+    res.json({ ok: true, revision: tableRev });
+  } catch(e) {
+    console.error('submit-tables error:', e);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /portal/sessions/:id/tables — get latest revision
+router.get('/portal/sessions/:id/tables', requireAuth, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('tune_tables')
+      .select('*')
+      .eq('session_id', req.params.id)
+      .eq('user_id', req.uid)
+      .order('revision', { ascending: false })
+      .limit(1)
+      .single();
+    if (error && error.code !== 'PGRST116') throw error;
+    res.json({ ok: true, tables: data || null });
+  } catch(e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════
 // VEHICLES
 // ══════════════════════════════════════════════════════════
 
@@ -376,6 +454,54 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
     }]).select().single();
     if (lErr) throw lErr;
 
+    // Generate table revision if stage failed (or if stage 4 passed — final polish)
+    if (!passed || stage === 4) {
+      try {
+        // Get latest table revision for this session
+        const { data: latestTables } = await supabase
+          .from('tune_tables')
+          .select('*')
+          .eq('session_id', sessionId)
+          .order('revision', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (latestTables) {
+          const revNum = (latestTables.revision || 1) + 1;
+          const triggerReason = passed
+            ? `Stage ${stage} passed — generating final polish revision.`
+            : `Stage ${stage} failed. Log findings: ${observations}`;
+
+          const newRevision = await generateTableRevision({
+            vehicle,
+            injectorTable: latestTables.injector_adjusted || latestTables.injector_table,
+            veTable:       latestTables.ve_adjusted       || latestTables.ve_table,
+            sparkTable:    latestTables.spark_adjusted    || latestTables.spark_table,
+            checklist:     observations,
+            triggerReason,
+            revisionNum:   revNum,
+          });
+
+          await supabase.from('tune_tables').insert([{
+            session_id:        sessionId,
+            user_id:           req.uid,
+            vehicle_id:        vehicle.id,
+            revision:          revNum,
+            injector_table:    latestTables.injector_adjusted || latestTables.injector_table,
+            ve_table:          latestTables.ve_adjusted       || latestTables.ve_table,
+            spark_table:       latestTables.spark_adjusted    || latestTables.spark_table,
+            injector_adjusted: newRevision.injector_adjusted,
+            ve_adjusted:       newRevision.ve_adjusted,
+            spark_adjusted:    newRevision.spark_adjusted,
+            revision_notes:    newRevision.revision_notes,
+            triggered_by:      `stage_${stage}_${passed ? 'pass' : 'fail'}`,
+          }]);
+        }
+      } catch(revErr) {
+        console.warn('Table revision generation failed:', revErr.message);
+      }
+    }
+
     // Advance session if passed
     if (passed) {
       const newPassed  = [...(session.stages_passed || []), stage];
@@ -391,6 +517,16 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
       await supabase.from('tune_sessions').update({ updated_at: new Date().toISOString() }).eq('id', sessionId);
     }
 
+    // Fetch the latest table revision to include in response
+    const { data: latestRev } = await supabase
+      .from('tune_tables')
+      .select('id, revision, revision_notes, injector_adjusted, ve_adjusted, spark_adjusted, triggered_by')
+      .eq('session_id', sessionId)
+      .order('revision', { ascending: false })
+      .limit(1)
+      .single()
+      .catch(() => ({ data: null }));
+
     res.json({
       ok:               true,
       stage_log:        stageLog,
@@ -401,6 +537,7 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
       next_stage:       passed ? (stage < 4 ? stage + 1 : null) : stage,
       session_complete: passed && stage === 4,
       checklist:        observations,
+      table_revision:   latestRev || null,
     });
 
   } catch (e) {
