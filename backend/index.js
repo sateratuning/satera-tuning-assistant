@@ -19,6 +19,7 @@ const overlayRoutes = require('./routes/overlay');
 const feedbackRoutes = require('./routes/feedback');
 const { buildMessages } = require('./prompt');
 const sparkAdvisor = require('./routes/sparkAdvisor');
+const portalRoutes = require('./routes/portal');
 
 const dumpRole = (k) => {
   try {
@@ -70,6 +71,7 @@ app.use('/', overlayRoutes);
 app.use(trainerChat);
 app.use("/api", trainerTrainer);
 app.use('/', sparkAdvisor);
+app.use('/', portalRoutes);
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
