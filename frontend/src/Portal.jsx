@@ -786,11 +786,13 @@ export default function Portal() {
                   </p>
                 )}
                 <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                  {tableRevision.spark_adjusted && (
+                  {tableRevision.spark_adjusted ? (
                     <button onClick={() => downloadTable(tableRevision.spark_adjusted, `wot_spark_rev${tableRevision.revision}.txt`)}
                       style={{ ...css.btnPrimary }}>
                       ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
                     </button>
+                  ) : (
+                    <div style={{ fontSize:13, color:T.red }}>⚠ Table generation failed — please resubmit your log.</div>
                   )}
                 </div>
               </div>
@@ -837,7 +839,7 @@ export default function Portal() {
                     <div style={{ fontSize:12, fontWeight:600, color:T.green, marginBottom:8, letterSpacing:0.5 }}>📋 INSTRUCTIONS</div>
                     <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 12px' }}>
                       {activeSession.current_stage === 1 && 'Start the vehicle from a fully cold start and let it warm up to operating temperature completely. Log for at least 5-8 minutes at idle without revving or driving.'}
-                      {activeSession.current_stage === 2 && 'Drive at varying speeds between 25-55 mph keeping throttle below 50% at all times. Include steady cruise, light acceleration, and deceleration. Log for 10-15 minutes.'}
+                      {activeSession.current_stage === 2 && 'Drive at varying speeds keeping throttle below 50% at all times. Vary your RPM and speed — highway, city, and mixed driving all work. Log for 10-15 minutes. No speed limit, just keep it under 50% throttle.'}
                       {activeSession.current_stage === 3 && 'Make 2-3 wide open throttle pulls but STOP at 4500 RPM — do not rev past 4500 RPM. Let the car cool at least 5 minutes between each pull.'}
                       {activeSession.current_stage === 4 && 'Make 2-3 full wide open throttle pulls through the complete RPM range. Let the car fully cool between each pull. This is the final stage.'}
                     </p>
