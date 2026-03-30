@@ -232,6 +232,69 @@ Keep everything in plain English — the customer will read this directly.`;
   }
 }
 
+// ── AI Table Revision Generator ──────────────────────────
+async function generateTableRevision({ vehicle, sparkTable, checklist, triggerReason, revisionNum }) {
+  const isNA = !vehicle.power_adder ||
+    String(vehicle.power_adder).toLowerCase().includes('n/a') ||
+    String(vehicle.power_adder).toLowerCase().includes('naturally');
+
+  const vehicleStr = `${vehicle.year} ${vehicle.make || 'Dodge'} ${vehicle.model} — ${vehicle.engine} — ${vehicle.fuel}${isNA ? ' (Naturally Aspirated)' : `, ${vehicle.power_adder}`}
+Injectors: ${vehicle.injectors || 'Stock'} | Cam: ${vehicle.cam || 'Stock'} | Transmission: ${vehicle.transmission || 'Unknown'}
+Throttle: ${vehicle.throttle_body || 'Stock'} | MAP: ${vehicle.map_sensor || 'Stock'}`;
+
+  const prompt = `You are Satera Tuning generating Revision ${revisionNum} of the WOT Spark Table for this vehicle:
+${vehicleStr}
+
+Reason for this revision: ${triggerReason}
+
+${checklist ? `Log findings:\n${checklist}\n` : ''}
+
+Current WOT Spark Table (HP Tuners "Copy with Axis" format, tab-delimited):
+${sparkTable || 'Not provided'}
+
+Generate a revised WOT Spark Table. Rules:
+- Output ONLY the adjusted table in the exact same tab-delimited format as the input
+- Header row: degree symbol then tab then RPM values then tab then rpm
+- Data rows: airmass value then tab-separated spark values
+- Footer row: g
+- Never reduce more than 3 degrees per revision in any single cell
+- Never add more than 1 degree per revision in any single cell
+- Never go below 0 degrees in any cell
+- If knock was detected: reduce timing in the affected RPM/load cells
+- If no knock and timing has headroom: small additions are acceptable
+- ${isNA ? 'This is an NA vehicle' : `This is a forced induction vehicle (${vehicle.power_adder})`}
+- NEVER blame the tune — frame all changes as responses to hardware/fuel/load conditions
+
+Respond in this EXACT format with no extra text:
+===SPARK_REVISED===
+[revised WOT spark table in exact HP Tuners Copy with Axis format]
+===NOTES===
+[2-3 plain English sentences explaining what was changed and why]`;
+
+  try {
+    const res = await openai.chat.completions.create({
+      model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
+      temperature: 0.2,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 3000,
+    });
+    const text = res.choices?.[0]?.message?.content?.trim() || '';
+
+    const extract = (tag) => {
+      const match = text.match(new RegExp(`===${tag}===\n([\s\S]*?)(?:===|$)`));
+      return match?.[1]?.trim() || null;
+    };
+
+    return {
+      spark_adjusted: extract('SPARK_REVISED'),
+      revision_notes: extract('NOTES') || 'Spark table revised based on vehicle specifications and log data.',
+    };
+  } catch(e) {
+    console.error('Table revision AI error:', e.message);
+    return { spark_adjusted: null, revision_notes: 'AI revision unavailable.' };
+  }
+}
+
 // ══════════════════════════════════════════════════════════
 // TUNE TABLE SUBMISSION & REVISIONS
 // ══════════════════════════════════════════════════════════
@@ -253,12 +316,10 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
     // Generate Revision 1 based on mods alone
     const revision = await generateTableRevision({
       vehicle,
-      injectorTable: injector_table,
-      veTable:       ve_table,
-      sparkTable:    spark_table,
-      checklist:     null,
+      sparkTable:  spark_table,
+      checklist:   null,
       triggerReason: `Initial WOT Spark Table submission. Vehicle mods: Injectors=${vehicle.injectors||'Stock'}, Cam=${vehicle.cam||'Stock'}, Power=${vehicle.power_adder}, Fuel=${vehicle.fuel}. Generate baseline spark timing adjustments for these modifications.`,
-      revisionNum:   1,
+      revisionNum: 1,
     });
 
     // Save to tune_tables
@@ -475,27 +536,20 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
 
           const newRevision = await generateTableRevision({
             vehicle,
-            injectorTable: latestTables.injector_adjusted || latestTables.injector_table,
-            veTable:       latestTables.ve_adjusted       || latestTables.ve_table,
-            sparkTable:    latestTables.spark_adjusted    || latestTables.spark_table,
-            checklist:     observations,
+            sparkTable:  latestTables.spark_adjusted || latestTables.spark_table,
+            checklist:   observations,
             triggerReason,
-            revisionNum:   revNum,
+            revisionNum: revNum,
           });
 
           await supabase.from('tune_tables').insert([{
-            session_id:        sessionId,
-            user_id:           req.uid,
-            vehicle_id:        vehicle.id,
-            revision:          revNum,
-            injector_table:    latestTables.injector_adjusted || latestTables.injector_table,
-            ve_table:          latestTables.ve_adjusted       || latestTables.ve_table,
-            spark_table:       latestTables.spark_adjusted    || latestTables.spark_table,
-            injector_adjusted: newRevision.injector_adjusted,
-            ve_adjusted:       newRevision.ve_adjusted,
-            spark_adjusted:    newRevision.spark_adjusted,
-            revision_notes:    newRevision.revision_notes,
-            triggered_by:      `stage_${stage}_${passed ? 'pass' : 'fail'}`,
+            session_id:     sessionId,
+            user_id:        req.uid,
+            revision:       revNum,
+            spark_table:    latestTables.spark_adjusted || latestTables.spark_table,
+            spark_adjusted: newRevision.spark_adjusted,
+            revision_notes: newRevision.revision_notes,
+            triggered_by:   `stage_${stage}_${passed ? 'pass' : 'fail'}`,
           }]);
         }
       } catch(revErr) {
@@ -519,14 +573,17 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
     }
 
     // Fetch the latest table revision to include in response
-    const { data: latestRev } = await supabase
-      .from('tune_tables')
-      .select('id, revision, revision_notes, injector_adjusted, ve_adjusted, spark_adjusted, triggered_by')
-      .eq('session_id', sessionId)
-      .order('revision', { ascending: false })
-      .limit(1)
-      .single()
-      .catch(() => ({ data: null }));
+    let latestRev = null;
+    try {
+      const { data: lr } = await supabase
+        .from('tune_tables')
+        .select('id, revision, revision_notes, spark_adjusted, triggered_by')
+        .eq('session_id', sessionId)
+        .order('revision', { ascending: false })
+        .limit(1)
+        .single();
+      latestRev = lr;
+    } catch {}
 
     res.json({
       ok:               true,
