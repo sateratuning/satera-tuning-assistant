@@ -750,7 +750,7 @@ export default function Portal() {
                 {error && <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
                 <button onClick={submitTables} disabled={submittingTables || !sparkTable}
                   style={{ ...css.btnPrimary, width:'100%', opacity: submittingTables ? 0.5 : 1 }}>
-                  {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Generating Revision 1…</span> : '⚡ Generate Revision 1'}
+                  {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Saving Table…</span> : '💾 Submit Base Table'}
                 </button>
               </div>
             )}
