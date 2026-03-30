@@ -322,7 +322,7 @@ export default function Portal() {
       setTableRevision(res.data.revision);
       setShowTableSubmit(false);
       setShowRevisionDownload(false); // don't show download panel yet — customer needs to flash and log first
-      showToast('Revision 1 generated — download it, flash it, then submit your Stage 1 log.', 'ok');
+      showToast('Base table saved — now submit your Stage 1 log and the AI will review it.', 'ok');
     } catch(e) { setError(e?.response?.data?.error || e.message); }
     finally { setSubmittingTables(false); }
   };
@@ -719,7 +719,7 @@ export default function Portal() {
                   </div>
                 </div>
                 <button onClick={() => setShowTableSubmit(true)} style={{ ...css.btnPrimary, background:T.amber }}>
-                  📋 Submit Tune Tables
+                  📋 Submit Base WOT Spark Table
                 </button>
               </div>
             )}
@@ -728,12 +728,12 @@ export default function Portal() {
             {showTableSubmit && (
               <div className="fade-in" style={{ ...css.cardHi, marginBottom:16 }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-                  <p style={{ ...css.title, margin:0 }}>Submit Tune Tables</p>
+                  <p style={{ ...css.title, margin:0 }}>Submit Base WOT Spark Table</p>
                   <button onClick={() => setShowTableSubmit(false)} style={css.btnGhost}>Cancel</button>
                 </div>
                 <p style={{ fontSize:13, color:T.muted, margin:'0 0 16px', lineHeight:1.7 }}>
-                  In HP Tuners VCM Editor, right-click each table → <strong style={{ color:T.text }}>"Copy with Axis"</strong> → paste below.
-                  You only need to do this once — the AI will track changes from here.
+                  In HP Tuners VCM Editor, right-click the WOT Spark Table → <strong style={{ color:T.text }}>"Copy with Axis"</strong> → paste below.
+                  This saves your base table. The AI will generate revisions only when needed based on your logs.
                 </p>
                 <div style={{ marginBottom:14 }}>
                   <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>WOT Spark Table</label>
@@ -755,30 +755,15 @@ export default function Portal() {
               </div>
             )}
 
-            {/* Initial revision — flash prompt (before any logs) */}
-            {tableRevision && !showRevisionDownload && !stageResult && (
-              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.25)', background:'rgba(61,255,122,0.03)' }}>
-                <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:10 }}>
+            {/* Base table saved confirmation */}
+            {tableRevision && tableRevision.triggered_by === 'initial_submission' && !showRevisionDownload && (
+              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.2)', background:'rgba(61,255,122,0.03)' }}>
+                <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                   <span style={{ fontSize:22 }}>✅</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>
-                      Revision {tableRevision.revision} Generated
-                    </div>
-                    <div style={{ fontSize:12, color:T.muted }}>Download, flash to your vehicle, then submit your Stage 1 log below</div>
+                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>Base Table Saved</div>
+                    <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Your WOT Spark Table is on file. Submit your Stage 1 log below — the AI will review it and generate a revised table if needed.</div>
                   </div>
-                </div>
-                {tableRevision.revision_notes && (
-                  <p style={{ fontSize:13, color:T.muted, lineHeight:1.7, margin:'0 0 12px' }}>
-                    {tableRevision.revision_notes}
-                  </p>
-                )}
-                <div style={{ display:'flex', gap:8 }}>
-                  {tableRevision.spark_adjusted && (
-                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `wot_spark_rev${tableRevision.revision}.txt`)}
-                      style={{ ...css.btnPrimary, fontSize:13 }}>
-                      ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
-                    </button>
-                  )}
                 </div>
               </div>
             )}
