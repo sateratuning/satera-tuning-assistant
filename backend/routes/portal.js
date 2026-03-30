@@ -313,30 +313,18 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
     if (sErr || !session) return res.status(404).json({ error: 'Session not found.' });
     const vehicle = session.vehicles;
 
-    // Generate Revision 1 based on mods alone
-    const revision = await generateTableRevision({
-      vehicle,
-      sparkTable:  spark_table,
-      checklist:   null,
-      triggerReason: `Initial WOT Spark Table submission. Vehicle mods: Injectors=${vehicle.injectors||'Stock'}, Cam=${vehicle.cam||'Stock'}, Power=${vehicle.power_adder}, Fuel=${vehicle.fuel}. Generate baseline spark timing adjustments for these modifications.`,
-      revisionNum: 1,
-    });
-
-    // Save to tune_tables
+    // Just save the base table — no AI revision yet
+    // Revisions are only generated after log submissions when the AI sees issues
     const { data: tableRev, error: tErr } = await supabase
       .from('tune_tables')
       .insert([{
-        session_id:         req.params.id,
-        user_id:            req.uid,
-        revision:           1,
-        injector_table,
-        ve_table,
+        session_id:     req.params.id,
+        user_id:        req.uid,
+        revision:       1,
         spark_table,
-        injector_adjusted:  revision.injector_adjusted,
-        ve_adjusted:        revision.ve_adjusted,
-        spark_adjusted:     revision.spark_adjusted,
-        revision_notes:     revision.revision_notes,
-        triggered_by:       'initial_submission',
+        spark_adjusted: null,
+        revision_notes: null,
+        triggered_by:   'initial_submission',
       }])
       .select().single();
     if (tErr) throw tErr;
@@ -344,7 +332,7 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
     // Mark session as having tables submitted
     await supabase.from('tune_sessions').update({
       updated_at: new Date().toISOString(),
-      notes: 'Tables submitted — Revision 1 generated',
+      notes: 'Base table submitted',
     }).eq('id', req.params.id);
 
     res.json({ ok: true, revision: tableRev });
