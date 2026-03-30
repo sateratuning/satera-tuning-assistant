@@ -57,11 +57,11 @@ const STAGES = {
   2: {
     name: 'Part Throttle Cruise',
     icon: '🛣️',
-    instructions: 'Drive at varying speeds between 25-55 mph keeping throttle below 50% at all times. Include steady cruise, light acceleration, and deceleration. Log for at least 10-15 minutes of varied driving. No wide open throttle during this stage.',
+    instructions: 'Drive at varying speeds keeping throttle below 50% at all times. Vary your RPM and speed — highway, city, and mixed driving all work. Log for 10-15 minutes. No speed limit, just keep it under 50% throttle.',
     tips: [
       'Keep throttle below 50% at all times',
-      'Vary your speed — include light on/off throttle transitions',
-      'Highway or low-traffic roads work best',
+      'Vary your speed and RPM — mix of city and highway is ideal',
+      'Include steady cruise, light acceleration, and deceleration',
       'Avoid hard stops and aggressive driving',
     ],
   },
@@ -281,13 +281,23 @@ Respond in this EXACT format with no extra text:
     const text = res.choices?.[0]?.message?.content?.trim() || '';
 
     const extract = (tag) => {
-      const match = text.match(new RegExp(`===${tag}===\n([\s\S]*?)(?:===|$)`));
-      return match?.[1]?.trim() || null;
+      // Split on the tag and take what comes after, up to the next === marker
+      const marker = `===${tag}===`;
+      const idx = text.indexOf(marker);
+      if (idx === -1) return null;
+      const after = text.slice(idx + marker.length).trim();
+      const endIdx = after.indexOf('===');
+      const val = endIdx === -1 ? after.trim() : after.slice(0, endIdx).trim();
+      return val && val.length > 3 ? val : null;
     };
 
+    const sparkRevised = extract('SPARK_REVISED');
+    const notes = extract('NOTES');
+    console.log('[portal] spark_adjusted:', sparkRevised ? sparkRevised.length + ' chars' : 'null');
+
     return {
-      spark_adjusted: extract('SPARK_REVISED'),
-      revision_notes: extract('NOTES') || 'Spark table revised based on vehicle specifications and log data.',
+      spark_adjusted: sparkRevised,
+      revision_notes: notes || 'Spark table revised based on vehicle specifications and log data.',
     };
   } catch(e) {
     console.error('Table revision AI error:', e.message);
