@@ -411,4 +411,9 @@ router.post('/api/portal/sessions/:id/submit-stage', requireAuth, upload.single(
   }
 });
 
+// Export both the router and an init function that accepts the express app
 module.exports = router;
+module.exports.init = function(app) {
+  app.use('/', router);
+  console.log('[portal] initialized on express app');
+};
