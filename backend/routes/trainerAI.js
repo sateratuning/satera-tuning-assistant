@@ -445,4 +445,15 @@ router.post("/fine-tune-now", async (req, res) => {
   } catch (err) { console.error("fine-tune-now error:", err.message); res.status(500).json({ error:"Fine-tuning failed" }); }
 });
 
+// ── Mount portal routes on this same router ──────────────
+// Since index.js has persistent save issues, portal routes
+// are mounted here as trainerAI is already registered on app.
+try {
+  const portalRouter = require('./portal');
+  router.use('/', portalRouter);
+  console.log('[trainerAI] portal routes mounted');
+} catch(e) {
+  console.warn('[trainerAI] portal mount failed:', e.message);
+}
+
 module.exports = router;
