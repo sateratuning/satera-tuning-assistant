@@ -445,23 +445,4 @@ router.post("/fine-tune-now", async (req, res) => {
   } catch (err) { console.error("fine-tune-now error:", err.message); res.status(500).json({ error:"Fine-tuning failed" }); }
 });
 
-// ── Mount portal routes on the express app ───────────────
-// We get the app reference from the first request since
-// router.use() can't properly mount sub-routers with middleware.
-let _portalMounted = false;
-router.use((req, res, next) => {
-  if (!_portalMounted && req.app) {
-    try {
-      const portal = require('./portal');
-      req.app.use('/', portal);
-      _portalMounted = true;
-      console.log('[trainerAI] portal routes mounted on app');
-    } catch(e) {
-      console.warn('[trainerAI] portal mount failed:', e.message);
-      _portalMounted = true; // don't retry
-    }
-  }
-  next();
-});
-
 module.exports = router;
