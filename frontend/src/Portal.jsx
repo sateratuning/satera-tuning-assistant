@@ -785,12 +785,25 @@ export default function Portal() {
                     {tableRevision.revision_notes}
                   </p>
                 )}
-                <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap', alignItems:'center' }}>
                   {tableRevision.spark_adjusted ? (
-                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `wot_spark_rev${tableRevision.revision}.txt`)}
-                      style={{ ...css.btnPrimary }}>
-                      ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
-                    </button>
+                    <div style={{ width:'100%' }}>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(tableRevision.spark_adjusted);
+                          showToast('Spark table copied to clipboard!', 'ok');
+                        }}
+                        style={{ ...css.btnPrimary, marginBottom:10 }}>
+                        📋 Copy Revised Spark Table
+                      </button>
+                      <div style={{ fontSize:12, color:T.muted, lineHeight:1.8, padding:'10px 14px', background:'rgba(0,0,0,0.2)', borderRadius:7 }}>
+                        <strong style={{ color:T.text }}>How to paste into HP Tuners:</strong><br/>
+                        1. In VCM Editor, go to <strong style={{ color:T.text }}>Engine → Spark → WOT Spark Table</strong><br/>
+                        2. Click the top-left cell of the table to select all cells<br/>
+                        3. Press <strong style={{ color:T.text }}>Ctrl+A</strong> to select all, then <strong style={{ color:T.text }}>Ctrl+V</strong> to paste<br/>
+                        4. Save and flash your tune, then come back and submit a new log
+                      </div>
+                    </div>
                   ) : (
                     <div style={{ fontSize:13, color:T.red }}>⚠ Table generation failed — please resubmit your log.</div>
                   )}
