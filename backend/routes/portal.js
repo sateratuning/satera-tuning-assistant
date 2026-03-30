@@ -236,7 +236,7 @@ Keep everything in plain English — the customer will read this directly.`;
 // VEHICLES
 // ══════════════════════════════════════════════════════════
 
-router.get('/api/portal/vehicles', requireAuth, async (req, res) => {
+router.get('/portal/vehicles', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase.from('vehicles').select('*').eq('user_id', req.uid).order('created_at', { ascending: false });
     if (error) throw error;
@@ -244,7 +244,7 @@ router.get('/api/portal/vehicles', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.post('/api/portal/vehicles', requireAuth, express.json(), async (req, res) => {
+router.post('/portal/vehicles', requireAuth, express.json(), async (req, res) => {
   try {
     const v = req.body;
     if (!v.year || !v.model || !v.engine || !v.fuel || !v.power_adder)
@@ -266,7 +266,7 @@ router.post('/api/portal/vehicles', requireAuth, express.json(), async (req, res
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.put('/api/portal/vehicles/:id', requireAuth, express.json(), async (req, res) => {
+router.put('/portal/vehicles/:id', requireAuth, express.json(), async (req, res) => {
   try {
     const { data, error } = await supabase.from('vehicles').update({ ...req.body, updated_at: new Date().toISOString() }).eq('id', req.params.id).eq('user_id', req.uid).select().single();
     if (error) throw error;
@@ -274,7 +274,7 @@ router.put('/api/portal/vehicles/:id', requireAuth, express.json(), async (req, 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete('/api/portal/vehicles/:id', requireAuth, async (req, res) => {
+router.delete('/portal/vehicles/:id', requireAuth, async (req, res) => {
   try {
     const { error } = await supabase.from('vehicles').delete().eq('id', req.params.id).eq('user_id', req.uid);
     if (error) throw error;
@@ -286,7 +286,7 @@ router.delete('/api/portal/vehicles/:id', requireAuth, async (req, res) => {
 // TUNE SESSIONS
 // ══════════════════════════════════════════════════════════
 
-router.get('/api/portal/sessions', requireAuth, async (req, res) => {
+router.get('/portal/sessions', requireAuth, async (req, res) => {
   try {
     const { data, error } = await supabase.from('tune_sessions').select('*, vehicles(*)').eq('user_id', req.uid).order('updated_at', { ascending: false });
     if (error) throw error;
@@ -294,7 +294,7 @@ router.get('/api/portal/sessions', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.get('/api/portal/sessions/:id', requireAuth, async (req, res) => {
+router.get('/portal/sessions/:id', requireAuth, async (req, res) => {
   try {
     const { data: session, error: sErr } = await supabase.from('tune_sessions').select('*, vehicles(*)').eq('id', req.params.id).eq('user_id', req.uid).single();
     if (sErr) throw sErr;
@@ -304,7 +304,7 @@ router.get('/api/portal/sessions/:id', requireAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.post('/api/portal/sessions', requireAuth, express.json(), async (req, res) => {
+router.post('/portal/sessions', requireAuth, express.json(), async (req, res) => {
   try {
     const { vehicle_id } = req.body;
     if (!vehicle_id) return res.status(400).json({ error: 'vehicle_id required' });
@@ -316,7 +316,7 @@ router.post('/api/portal/sessions', requireAuth, express.json(), async (req, res
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.get('/api/portal/stages', (req, res) => {
+router.get('/portal/stages', (req, res) => {
   res.json({ ok: true, stages: STAGES });
 });
 
@@ -324,7 +324,7 @@ router.get('/api/portal/stages', (req, res) => {
 // STAGE LOG SUBMISSION
 // ══════════════════════════════════════════════════════════
 
-router.post('/api/portal/sessions/:id/submit-stage', requireAuth, upload.single('log'), async (req, res) => {
+router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log'), async (req, res) => {
   let filePath = null;
   try {
     if (!req.file) return res.status(400).json({ error: 'No CSV file uploaded.' });
