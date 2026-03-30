@@ -161,9 +161,7 @@ export default function Portal() {
   const [logFile, setLogFile]       = useState(null);
   const [tableRevision, setTableRevision] = useState(null);
   const [showTableSubmit, setShowTableSubmit] = useState(false);
-  const [injectorTable, setInjectorTable] = useState('');
-  const [veTable, setVeTable]             = useState('');
-  const [sparkTable, setSparkTable]       = useState('');
+  const [sparkTable, setSparkTable] = useState('');
   const [submittingTables, setSubmittingTables] = useState(false);
   const [logFileName, setLogFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -280,14 +278,14 @@ export default function Portal() {
 
   // ── Stage log submission ──────────────────────────────────
   const submitTables = async () => {
-    if (!injectorTable && !veTable && !sparkTable) {
-      setError('Please paste at least one table.'); return;
+    if (!sparkTable) {
+      setError('Please paste your WOT Spark Table.'); return;
     }
     setSubmittingTables(true); setError('');
     try {
       const res = await axios.post(
         `${API_BASE}/portal/sessions/${activeSession.id}/submit-tables`,
-        { injector_table: injectorTable, ve_table: veTable, spark_table: sparkTable },
+        { spark_table: sparkTable },
         { headers: { ...getAuthHeader(user), 'Content-Type': 'application/json' } }
       );
       setTableRevision(res.data.revision);
@@ -669,8 +667,8 @@ export default function Portal() {
                 <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
                   <span style={{ fontSize:24 }}>📋</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>Submit Your Current Tune Tables</div>
-                    <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Required before logging. Paste your Injector, VE, and WOT Spark tables so the AI can generate your first revision.</div>
+                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>Submit Your WOT Spark Table</div>
+                    <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Required before logging. Paste your current WOT Spark Table so the AI can generate your first revision.</div>
                   </div>
                 </div>
                 <button onClick={() => setShowTableSubmit(true)} style={{ ...css.btnPrimary, background:T.amber }}>
@@ -690,26 +688,23 @@ export default function Portal() {
                   In HP Tuners VCM Editor, right-click each table → <strong style={{ color:T.text }}>"Copy with Axis"</strong> → paste below.
                   You only need to do this once — the AI will track changes from here.
                 </p>
-                {[
-                  { label:'Injector Flow Data Table', key:'injector', value:injectorTable, setter:setInjectorTable, hint:'Engine → Fuel → Injector Flow Data → Copy with Axis' },
-                  { label:'VE Table (Volumetric Efficiency)', key:'ve', value:veTable, setter:setVeTable, hint:'Engine → Fuel → VE Table → Copy with Axis' },
-                  { label:'WOT Spark Table', key:'spark', value:sparkTable, setter:setSparkTable, hint:'Engine → Spark → WOT Spark Table → Copy with Axis' },
-                ].map(({ label, key, value, setter, hint }) => (
-                  <div key={key} style={{ marginBottom:14 }}>
-                    <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>{label}</label>
-                    <div style={{ fontSize:11, color:T.faint, marginBottom:5 }}>{hint}</div>
-                    <textarea
-                      value={value}
-                      onChange={e => setter(e.target.value)}
-                      placeholder={`Paste your ${label} here…`}
-                      rows={5}
-                      style={{ ...css.input, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical' }}
-                      spellCheck={false}
-                    />
-                  </div>
-                ))}
+                <div style={{ marginBottom:14 }}>
+                  <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>WOT Spark Table</label>
+                  <div style={{ fontSize:11, color:T.faint, marginBottom:5 }}>VCM Editor → Engine → Spark → WOT Spark Table → right-click → Copy with Axis</div>
+                  <textarea
+                    value={sparkTable}
+                    onChange={e => setSparkTable(e.target.value)}
+                    placeholder={"°	512	672	896...	rpm
+0.35	13.5	14	14.5...
+...
+g"}
+                    rows={8}
+                    style={{ ...css.input, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical' }}
+                    spellCheck={false}
+                  />
+                </div>
                 {error && <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
-                <button onClick={submitTables} disabled={submittingTables || (!injectorTable && !veTable && !sparkTable)}
+                <button onClick={submitTables} disabled={submittingTables || !sparkTable}
                   style={{ ...css.btnPrimary, width:'100%', opacity: submittingTables ? 0.5 : 1 }}>
                   {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Generating Revision 1…</span> : '⚡ Generate Revision 1'}
                 </button>
@@ -736,26 +731,14 @@ export default function Portal() {
                   </p>
                 )}
                 <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
-                  {tableRevision.injector_adjusted && (
-                    <button onClick={() => downloadTable(tableRevision.injector_adjusted, `injector_rev${tableRevision.revision}.txt`)}
-                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
-                      ⬇ Injector Table
-                    </button>
-                  )}
-                  {tableRevision.ve_adjusted && (
-                    <button onClick={() => downloadTable(tableRevision.ve_adjusted, `ve_rev${tableRevision.revision}.txt`)}
-                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
-                      ⬇ VE Table
-                    </button>
-                  )}
                   {tableRevision.spark_adjusted && (
-                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `spark_rev${tableRevision.revision}.txt`)}
-                      style={{ ...css.btnPrimary, fontSize:12, padding:'8px 16px' }}>
-                      ⬇ WOT Spark Table
+                    <button onClick={() => downloadTable(tableRevision.spark_adjusted, `wot_spark_rev${tableRevision.revision}.txt`)}
+                      style={{ ...css.btnPrimary }}>
+                      ⬇ Download WOT Spark Table (Rev {tableRevision.revision})
                     </button>
                   )}
                   <button onClick={() => setShowTableSubmit(true)} style={css.btnGhost}>
-                    Re-paste Tables
+                    Re-paste Table
                   </button>
                 </div>
               </div>
