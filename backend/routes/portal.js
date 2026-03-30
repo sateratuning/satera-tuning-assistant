@@ -456,6 +456,40 @@ router.post('/portal/sessions', requireAuth, express.json(), async (req, res) =>
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
+// DELETE /portal/sessions/:id
+router.delete('/portal/sessions/:id', requireAuth, async (req, res) => {
+  try {
+    // Delete stage logs first
+    await supabase.from('stage_logs').delete().eq('session_id', req.params.id).eq('user_id', req.uid);
+    // Delete tune tables
+    await supabase.from('tune_tables').delete().eq('session_id', req.params.id).eq('user_id', req.uid);
+    // Delete session
+    const { error } = await supabase.from('tune_sessions').delete().eq('id', req.params.id).eq('user_id', req.uid);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// PATCH /portal/sessions/:id/restart — reset back to stage 1
+router.patch('/portal/sessions/:id/restart', requireAuth, async (req, res) => {
+  try {
+    // Clear all stage logs for this session
+    await supabase.from('stage_logs').delete().eq('session_id', req.params.id).eq('user_id', req.uid);
+    // Clear all table revisions
+    await supabase.from('tune_tables').delete().eq('session_id', req.params.id).eq('user_id', req.uid);
+    // Reset session to stage 1
+    const { data, error } = await supabase
+      .from('tune_sessions')
+      .update({ current_stage: 1, stages_passed: [], status: 'active', notes: null, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id)
+      .eq('user_id', req.uid)
+      .select('*, vehicles(*)')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, session: data });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 router.get('/portal/stages', (req, res) => {
   res.json({ ok: true, stages: STAGES });
 });
@@ -516,8 +550,8 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
     }]).select().single();
     if (lErr) throw lErr;
 
-    // Generate table revision if stage failed (or if stage 4 passed — final polish)
-    if (!passed || stage === 4) {
+    // Generate table revision only if stage failed
+    if (!passed) {
       try {
         // Get latest table revision for this session
         const { data: latestTables } = await supabase
@@ -530,9 +564,7 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
 
         if (latestTables) {
           const revNum = (latestTables.revision || 1) + 1;
-          const triggerReason = passed
-            ? `Stage ${stage} passed — generating final polish revision.`
-            : `Stage ${stage} failed. Log findings: ${observations}`;
+          const triggerReason = `Stage ${stage} failed. Log findings: ${observations}`;
 
           const newRevision = await generateTableRevision({
             vehicle,
