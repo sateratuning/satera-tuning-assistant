@@ -2,8 +2,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { Link } from 'react-router-dom';
-import { auth, googleProvider } from './firebase';
-import { signInWithPopup, signOut, onAuthStateChanged } from 'firebase/auth';
+import { auth, signInWithGoogle, signOutUser, onAuthStateChanged } from './firebase';
 
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
 
@@ -190,12 +189,12 @@ export default function Portal() {
   }, [user]);
 
   const signIn = async () => {
-    try { await signInWithPopup(auth, googleProvider); }
+    try { await signInWithGoogle(); }
     catch (e) { setError(e.message); }
   };
 
   const handleSignOut = async () => {
-    await signOut(auth);
+    await signOutUser();
     setView('garage');
     setActiveSession(null);
     setSelectedVehicle(null);
