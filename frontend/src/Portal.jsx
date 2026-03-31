@@ -447,7 +447,7 @@ export default function Portal() {
                     <div style={{ fontSize:12, color:T.muted }}>
                       {s==='1' && 'Verify cold start, idle stability, and base fuel trims'}
                       {s==='2' && 'Check part-throttle fueling under load at cruise speeds'}
-                      {s==='3' && 'Limited WOT pulls to 4500 RPM to verify low-end fueling'}
+                      {s==='3' && 'Part-throttle cruise + single WOT pull in 3rd or 4th gear, 2000-6000 RPM'}
                       {s==='4' && 'Full WOT pulls — AI generates spark table recommendations'}
                     </div>
                   </div>
@@ -853,7 +853,7 @@ export default function Portal() {
                     <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 12px' }}>
                       {activeSession.current_stage === 1 && 'Start the vehicle from a fully cold start and let it warm up to operating temperature completely. Log for at least 5-8 minutes at idle without revving or driving.'}
                       {activeSession.current_stage === 2 && 'Drive at varying speeds keeping throttle below 50% at all times. Vary your RPM and speed — highway, city, and mixed driving all work. Log for 10-15 minutes. No speed limit, just keep it under 50% throttle.'}
-                      {activeSession.current_stage === 3 && 'Make 2-3 wide open throttle pulls but STOP at 4500 RPM — do not rev past 4500 RPM. Let the car cool at least 5 minutes between each pull.'}
+                      {activeSession.current_stage === 3 && 'Start with 10-15 minutes of varied part-throttle cruising, then at the end make a single WOT pull in 3rd or 4th gear (manual mode). Start the pull around 2000-2500 RPM and bring it to 6000 RPM. Watch your AFR closely during WOT — it must stay between 11.5 and 12.5. If it goes above 13.0 or below 11.0, lift off immediately. Keep it all in one continuous log with only ONE WOT attempt.'}
                       {activeSession.current_stage === 4 && 'Make 2-3 full wide open throttle pulls through the complete RPM range. Let the car fully cool between each pull. This is the final stage.'}
                     </p>
                     <div style={{ fontSize:11, color:T.muted, fontWeight:600, marginBottom:6, letterSpacing:0.5 }}>💡 TIPS</div>
