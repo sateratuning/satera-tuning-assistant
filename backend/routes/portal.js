@@ -68,12 +68,14 @@ const STAGES = {
   3: {
     name: 'WOT — Low RPM',
     icon: '⚡',
-    instructions: 'Make 2-3 wide open throttle pulls but STOP at 4500 RPM. Do not rev past 4500 RPM. Let the car fully cool for at least 5 minutes between each pull. We are verifying fueling and knock in the low-mid RPM range before allowing full pulls.',
+    instructions: 'Start with 10-15 minutes of varied part-throttle cruising, then at the end make a single WOT pull in 3rd or 4th gear (manual mode). Start the pull around 2000-2500 RPM and bring it to 6000 RPM. Watch your AFR closely during WOT — it must stay between 11.5 and 12.5. If it goes above 13.0 or below 11.0, lift off immediately. ONE WOT attempt per log — keep it all in one continuous log.',
     tips: [
-      'Full throttle only — no partial throttle pulls',
-      'STOP accelerating at 4500 RPM — lift off completely',
-      'Wait at least 5 minutes between pulls',
-      'Use fresh 93 octane minimum or E85 if calibrated for it',
+      'Start with 10-15 minutes of normal part-throttle driving',
+      'At the end, put it in manual mode — 3rd or 4th gear is ideal',
+      'Begin the WOT pull around 2000-2500 RPM, bring it to 6000 RPM',
+      'Watch AFR during WOT only — must stay between 11.5 and 12.5',
+      'If AFR goes above 13.0 or below 11.0, lift off immediately',
+      'ONE WOT attempt per log — keep it all in one continuous log',
     ],
   },
   4: {
