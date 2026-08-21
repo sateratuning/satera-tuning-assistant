@@ -383,7 +383,7 @@ export default function MainApp() {
   }, []);
 
   const [formData, setFormData] = useState({
-    platform:'mopar', make:'Dodge',
+    platform:'', make:'',
     vin:'', year:'', model:'', engine:'', injectors:'', map:'',
     throttle:'', power:'', trans:'', tire:'', gear:'', fuel:'',
     weight:'', pullLabel:'', pullGear:'', logFile: null,
