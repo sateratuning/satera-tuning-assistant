@@ -673,20 +673,33 @@ export default function MainApp() {
             <div style={css.card}>
               <p style={css.sectionTitle}>Vehicle Details</p>
               <div style={css.fieldGrid}>
-                <div style={{ display:'flex', gap:8, marginBottom:4 }}>
-                  {[['mopar','🔧 Mopar / HEMI'],['ford','🐎 Ford Coyote']].map(([p, label]) => (
-                    <button key={p} onClick={() => setFormData(prev => ({
-                      ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford',
-                      model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
-                    }))} style={{
-                      flex:1, padding:'8px', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:600,
-                      border: formData.platform===p ? '1.5px solid #3dff7a' : '1px solid #1f2d1f',
-                      background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'transparent',
-                      color: formData.platform===p ? '#3dff7a' : '#6b9f6b',
-                    }}>{label}</button>
-                  ))}
+                <div style={{ marginBottom: formData.platform ? 20 : 0 }}>
+                  <p style={{ fontSize:11, color:'#6b9f6b', letterSpacing:1, textTransform:'uppercase', fontWeight:700, marginBottom:10 }}>
+                    Select Your Vehicle Platform
+                  </p>
+                  <div style={{ display:'flex', gap:10 }}>
+                    {[
+                      ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
+                      ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
+                    ].map(([p, icon, label, sub]) => (
+                      <button key={p} onClick={() => setFormData(prev => ({
+                        ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford',
+                        model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
+                      }))} style={{
+                        flex:1, padding:'16px 12px', borderRadius:10, cursor:'pointer', textAlign:'center',
+                        border: formData.platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
+                        background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.2)',
+                        transition:'all 0.2s',
+                        boxShadow: formData.platform===p ? '0 0 16px rgba(61,255,122,0.15)' : 'none',
+                      }}>
+                        <div style={{ fontSize:28, marginBottom:6 }}>{icon}</div>
+                        <div style={{ fontSize:14, fontWeight:700, color: formData.platform===p ? '#3dff7a' : '#dff0df', marginBottom:4 }}>{label}</div>
+                        <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                {formData.platform && <><div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="year" value={formData.year} onChange={handleChange} style={css.select}>
                     <option value="">Year *</option>{years.map(y=><option key={y} value={y}>{y}</option>)}
                   </select>
@@ -830,7 +843,14 @@ export default function MainApp() {
               </div>
             </div>
 
-            {/* Upload + Analyze */}
+            {/* Upload + Analyze — gated behind platform selection */}
+            {!formData.platform && (
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:120, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
+                <div style={{ fontSize:28 }}>👈</div>
+                <div>Select your vehicle platform on the left to get started</div>
+              </div>
+            )}
+            {formData.platform && <>{/* Upload + Analyze */}
             <div className="st-card-highlight">
               <p className="st-section-title">Datalog Upload</p>
               <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
