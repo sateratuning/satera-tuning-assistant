@@ -9,7 +9,8 @@ import { Chart } from 'chart.js';
 import BoostSummary from './components/BoostSummary';
 import {
   years, models, engines, injectors, mapSensors, throttles,
-  powerAdders, transmissions, tireHeights, gearRatios, fuels
+  powerAdders, transmissions, tireHeights, gearRatios, fuels,
+  fordModels, fordEngines, fordInjectors, fordMapSensors, fordThrottles, fordTransmissions
 } from './ui/options';
 import { deriveAdvice, SateraTone } from './ui/advice';
 
@@ -382,6 +383,7 @@ export default function MainApp() {
   }, []);
 
   const [formData, setFormData] = useState({
+    platform:'mopar', make:'Dodge',
     vin:'', year:'', model:'', engine:'', injectors:'', map:'',
     throttle:'', power:'', trans:'', tire:'', gear:'', fuel:'',
     weight:'', pullLabel:'', pullGear:'', logFile: null,
@@ -466,7 +468,7 @@ export default function MainApp() {
     try {
       const form = new FormData();
       form.append('log', formData.logFile);
-      form.append('vehicle', JSON.stringify({ year: formData.year, model: formData.model }));
+      form.append('vehicle', JSON.stringify({ year: formData.year, model: formData.model, make: formData.make || (formData.platform==='ford' ? 'Ford' : 'Dodge') }));
       form.append('mods', JSON.stringify({
         engine: formData.engine, injectors: formData.injectors, map: formData.map,
         throttle: formData.throttle, power_adder: formData.power,
@@ -671,37 +673,50 @@ export default function MainApp() {
             <div style={css.card}>
               <p style={css.sectionTitle}>Vehicle Details</p>
               <div style={css.fieldGrid}>
+                <div style={{ display:'flex', gap:8, marginBottom:4 }}>
+                  {[['mopar','🔧 Mopar / HEMI'],['ford','🐎 Ford Coyote']].map(([p, label]) => (
+                    <button key={p} onClick={() => setFormData(prev => ({
+                      ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford',
+                      model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
+                    }))} style={{
+                      flex:1, padding:'8px', borderRadius:7, cursor:'pointer', fontSize:12, fontWeight:600,
+                      border: formData.platform===p ? '1.5px solid #3dff7a' : '1px solid #1f2d1f',
+                      background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'transparent',
+                      color: formData.platform===p ? '#3dff7a' : '#6b9f6b',
+                    }}>{label}</button>
+                  ))}
+                </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="year" value={formData.year} onChange={handleChange} style={css.select}>
                     <option value="">Year *</option>{years.map(y=><option key={y} value={y}>{y}</option>)}
                   </select>
                   <select name="model" value={formData.model} onChange={handleChange} style={css.select}>
-                    <option value="">Model *</option>{models.map(m=><option key={m} value={m}>{m}</option>)}
+                    <option value="">Model *</option>{(formData.platform==='ford' ? fordModels : models).map(m=><option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <select name="engine" value={formData.engine} onChange={handleChange} style={css.select}>
-                  <option value="">Engine *</option>{engines.map(e=><option key={e} value={e}>{e}</option>)}
+                  <option value="">Engine *</option>{(formData.platform==='ford' ? fordEngines : engines).map(e=><option key={e} value={e}>{e}</option>)}
                 </select>
                 <select name="fuel" value={formData.fuel} onChange={handleChange} style={css.select}>
                   <option value="">Fuel *</option>{fuels.map(f=><option key={f} value={f}>{f}</option>)}
                 </select>
                 <select name="trans" value={formData.trans} onChange={handleChange} style={css.select}>
-                  <option value="">Transmission *</option>{transmissions.map(t=><option key={t} value={t}>{t}</option>)}
+                  <option value="">Transmission *</option>{(formData.platform==='ford' ? fordTransmissions : transmissions).map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
                 <select name="power" value={formData.power} onChange={handleChange} style={css.select}>
                   <option value="">Power Adder *</option>{powerAdders.map(p=><option key={p} value={p}>{p}</option>)}
                 </select>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="injectors" value={formData.injectors} onChange={handleChange} style={css.select}>
-                    <option value="">Injectors</option>{injectors.map(i=><option key={i} value={i}>{i}</option>)}
+                    <option value="">Injectors</option>{(formData.platform==='ford' ? fordInjectors : injectors).map(i=><option key={i} value={i}>{i}</option>)}
                   </select>
                   <select name="map" value={formData.map} onChange={handleChange} style={css.select}>
-                    <option value="">MAP Sensor</option>{mapSensors.map(m=><option key={m} value={m}>{m}</option>)}
+                    <option value="">MAP Sensor</option>{(formData.platform==='ford' ? fordMapSensors : mapSensors).map(m=><option key={m} value={m}>{m}</option>)}
                   </select>
                 </div>
                 <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="throttle" value={formData.throttle} onChange={handleChange} style={css.select}>
-                    <option value="">Throttle Body</option>{throttles.map(t=><option key={t} value={t}>{t}</option>)}
+                    <option value="">Throttle Body</option>{(formData.platform==='ford' ? fordThrottles : throttles).map(t=><option key={t} value={t}>{t}</option>)}
                   </select>
                   <select name="gear" value={formData.gear} onChange={handleChange} style={css.select}>
                     <option value="">Rear Gear</option>{gearRatios.map(g=><option key={g} value={g}>{g}</option>)}
