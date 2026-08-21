@@ -19,7 +19,8 @@ import {
 } from 'firebase/auth';
 import {
   years, models, engines, injectors, mapSensors, throttles,
-  powerAdders, transmissions, tireHeights, gearRatios, fuels
+  powerAdders, transmissions, tireHeights, gearRatios, fuels,
+  fordModels, fordEngines, fordTransmissions
 } from './ui/options';
 
 const API_BASE = process.env.REACT_APP_API_BASE || '';
@@ -285,6 +286,7 @@ export default function LogComparison() {
   const [interval, setInterval]         = useState('60-130');
 
   // Vehicle
+  const [platform, setPlatform] = useState('mopar');
   const [vehicle, setVehicle] = useState({
     name: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: ''
@@ -451,7 +453,7 @@ export default function LogComparison() {
     const best = computeBestForInterval(parsed);
     if (best == null) { setStatus(`No valid ${interval} run found.`); return; }
     const alias = maskedDisplayName(user);
-    const vehicleInfo = { ...vehicle, name: alias, interval, timeSeconds: best };
+    const vehicleInfo = { ...vehicle, make: platform==='ford' ? 'Ford' : 'Dodge', name: alias, interval, timeSeconds: best };
     const fd = new FormData();
     fd.append('log', file, file.name || 'log.csv');
     fd.append('vehicleInfo', JSON.stringify(vehicleInfo));
@@ -773,6 +775,17 @@ export default function LogComparison() {
               )}
             </div>
           </div>
+          <div style={{ display:'flex', gap:6, marginBottom:8 }}>
+            {[['mopar','🔧 Mopar / HEMI'],['ford','🐎 Ford Coyote']].map(([p, label]) => (
+              <button key={p} onClick={() => { setPlatform(p); setVehicle(v => ({...v, model:'', engine:'', trans:''})); }}
+                style={{ padding:'6px 12px', borderRadius:6, cursor:'pointer', fontSize:11, fontWeight:600, whiteSpace:'nowrap',
+                  border: platform===p ? '1.5px solid #3dff7a' : '1px solid #1f2d1f',
+                  background: platform===p ? 'rgba(61,255,122,0.07)' : 'transparent',
+                  color: platform===p ? '#3dff7a' : '#6b9f6b' }}>
+                {label}
+              </button>
+            ))}
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
             <input
               name="name"
@@ -786,13 +799,13 @@ export default function LogComparison() {
               <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
             </select>
             <select name="model" value={vehicle.model} onChange={e => setVehicle(v => ({ ...v, model: e.target.value }))} style={css.select}>
-              <option value="">Model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}
+              <option value="">Model</option>{(platform==='ford' ? fordModels : models).map(m => <option key={m} value={m}>{m}</option>)}
             </select>
             <select name="engine" value={vehicle.engine} onChange={e => setVehicle(v => ({ ...v, engine: e.target.value }))} style={css.select}>
-              <option value="">Engine</option>{engines.map(e => <option key={e} value={e}>{e}</option>)}
+              <option value="">Engine</option>{(platform==='ford' ? fordEngines : engines).map(e => <option key={e} value={e}>{e}</option>)}
             </select>
             <select name="trans" value={vehicle.trans} onChange={e => setVehicle(v => ({ ...v, trans: e.target.value }))} style={css.select}>
-              <option value="">Transmission</option>{transmissions.map(t => <option key={t} value={t}>{t}</option>)}
+              <option value="">Transmission</option>{(platform==='ford' ? fordTransmissions : transmissions).map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <select name="power" value={vehicle.power} onChange={e => setVehicle(v => ({ ...v, power: e.target.value }))} style={css.select}>
               <option value="">Power</option>{powerAdders.map(p => <option key={p} value={p}>{p}</option>)}
@@ -1013,7 +1026,7 @@ export default function LogComparison() {
                   <option value="">Year</option>{years.map(y => <option key={y} value={y}>{y}</option>)}
                 </select>
                 <select value={filters.model} onChange={e => setFilters(f => ({ ...f, model: e.target.value }))} style={{ ...css.select, fontSize: 12 }}>
-                  <option value="">Model</option>{models.map(m => <option key={m} value={m}>{m}</option>)}
+                  <option value="">Model</option>{(platform==='ford' ? fordModels : models).map(m => <option key={m} value={m}>{m}</option>)}
                 </select>
                 <select value={filters.engine} onChange={e => setFilters(f => ({ ...f, engine: e.target.value }))} style={{ ...css.select, fontSize: 12 }}>
                   <option value="">Engine</option>{engines.map(x => <option key={x} value={x}>{x}</option>)}
