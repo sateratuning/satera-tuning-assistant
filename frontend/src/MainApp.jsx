@@ -29,30 +29,45 @@ const HP_DEN        = 550;
 
 // ── Design tokens ──────────────────────────────────────────
 const T = {
-  bg:       '#0c0f0c',
-  panel:    '#111811',
-  card:     '#141e14',
-  border:   '#1f2d1f',
-  borderHi: '#2e472e',
-  green:    '#3dff7a',
-  greenDim: '#1a7a38',
-  greenLo:  'rgba(61,255,122,0.07)',
-  amber:    '#f5a623',
-  red:      '#ff5252',
-  blue:     '#4db8ff',
-  text:     '#dff0df',
-  muted:    '#6b9f6b',
-  faint:    '#2e4a2e',
+  // Surfaces — cool graphite, machined-aluminium cast
+  bg:       '#0A0C0D',
+  void:     '#0A0C0D',
+  panel:    '#14181A',
+  card:     '#14181A',
+  cardHi:   '#1C2226',
+  steel:    '#1C2226',
+  border:   '#2A3339',
+  borderHi: '#3A464D',
+  // Signals — each hue carries meaning
+  green:    '#00E676',
+  greenDim: '#00A854',
+  greenLo:  'rgba(0,230,118,0.08)',
+  greenGlow:'rgba(0,230,118,0.15)',
+  ice:      '#7DD3FC',
+  blue:     '#7DD3FC',
+  blueLo:   'rgba(125,211,252,0.08)',
+  amber:    '#FFB020',
+  amberLo:  'rgba(255,176,32,0.08)',
+  red:      '#FF4D4D',
+  orange:   '#FF8A3D',
+  // Ink
+  text:     '#E8EDEF',
+  muted:    '#78888F',
+  faint:    '#4A585E',
+  // Type stacks
+  fDisplay: "'Archivo', system-ui, sans-serif",
+  fBody:    "'IBM Plex Sans', system-ui, sans-serif",
+  fData:    "'IBM Plex Mono', ui-monospace, monospace",
 };
 
 const css = {
-  page:   { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: "'Inter', system-ui, sans-serif" },
+  page:   { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: T.fBody },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     padding: '0 28px', height: 64,
     background: 'linear-gradient(135deg, #0a1a0a 0%, #0f280f 50%, #0a1a0a 100%)',
     borderBottom: `1px solid ${T.border}`,
-    boxShadow: '0 1px 0 rgba(61,255,122,0.08)',
+    
   },
   logo: { fontSize: 18, fontWeight: 700, color: T.green, letterSpacing: 0.5, display: 'flex', alignItems: 'center', gap: 10 },
   shell:  { padding: '24px 24px', maxWidth: 1400, margin: '0 auto' },
@@ -67,7 +82,7 @@ const css = {
   cardHighlight: {
     background: T.card, border: `1px solid ${T.borderHi}`,
     borderRadius: 10, padding: 18,
-    boxShadow: `0 0 0 1px rgba(61,255,122,0.04) inset`,
+    
   },
 
   // Section titles
@@ -79,17 +94,17 @@ const css = {
 
   // Inputs / selects
   input: {
-    width: '100%', background: '#0a100a',
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    width: '100%', background: 'rgba(0,0,0,0.25)',
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '9px 12px', color: T.text,
     fontSize: 13, outline: 'none', boxSizing: 'border-box',
   },
   select: {
-    width: '100%', background: '#0a100a',
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    width: '100%', background: 'rgba(0,0,0,0.25)',
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '9px 12px', color: T.text,
     fontSize: 13, outline: 'none', appearance: 'none',
-    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%233dff7a\'/%3E%3C/svg%3E")',
+    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%2300E676\'/%3E%3C/svg%3E")',
     backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%',
     paddingRight: 32, boxSizing: 'border-box',
   },
@@ -98,24 +113,24 @@ const css = {
   // Buttons
   btnPrimary: {
     background: T.green, color: '#000', fontWeight: 700,
-    border: 'none', borderRadius: 7, padding: '11px 22px',
+    border: 'none', borderRadius: 6, padding: '11px 22px',
     cursor: 'pointer', fontSize: 14, letterSpacing: 0.3,
     transition: 'opacity 0.15s',
   },
   btnGhost: {
     background: 'transparent', color: T.muted,
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '8px 14px', cursor: 'pointer', fontSize: 13,
     transition: 'border-color 0.15s, color 0.15s',
   },
   btnGhostActive: {
     background: T.greenLo, color: T.green,
-    border: `1px solid ${T.green}`, borderRadius: 7,
+    border: `1px solid ${T.green}`, borderRadius: 6,
     padding: '8px 14px', cursor: 'pointer', fontSize: 13,
   },
   btnNav: {
     background: T.greenLo, color: T.green,
-    border: `1px solid ${T.borderHi}`, borderRadius: 7,
+    border: `1px solid ${T.borderHi}`, borderRadius: 6,
     padding: '8px 16px', cursor: 'pointer', fontSize: 13,
     textDecoration: 'none', fontWeight: 600, letterSpacing: 0.3,
   },
@@ -277,11 +292,11 @@ function Skeleton({ height = 18, width = '100%', style = {} }) {
 
 // ── Checklist row ──────────────────────────────────────────
 const CHECK_STYLE = {
-  critical: { icon: '🚨', label: 'Critical',  color: '#ff5252', bg: 'rgba(255,82,82,0.06)',    border: 'rgba(255,82,82,0.25)'    },
-  warn:     { icon: '⚠️',  label: 'Warning',   color: '#f5a623', bg: 'rgba(245,166,35,0.06)',  border: 'rgba(245,166,35,0.25)'   },
-  ok:       { icon: '✅',  label: 'Good',      color: '#3dff7a', bg: 'rgba(61,255,122,0.05)',  border: 'rgba(61,255,122,0.2)'    },
-  stat:     { icon: '📊',  label: 'Data',      color: '#4db8ff', bg: 'rgba(77,184,255,0.05)',  border: 'rgba(77,184,255,0.2)'    },
-  info:     { icon: 'ℹ️',  label: 'Info',      color: '#6b9f6b', bg: 'transparent',            border: 'rgba(107,159,107,0.15)'  },
+  critical: { icon: '🚨', label: 'Critical',  color: T.red, bg: 'rgba(255,77,77,0.06)',    border: 'rgba(255,77,77,0.25)'    },
+  warn:     { icon: '⚠️',  label: 'Warning',   color: T.amber, bg: 'rgba(255,176,32,0.06)',  border: 'rgba(255,176,32,0.25)'   },
+  ok:       { icon: '✅',  label: 'Good',      color: T.green, bg: 'rgba(0,230,118,0.05)',  border: 'rgba(0,230,118,0.2)'    },
+  stat:     { icon: '📊',  label: 'Data',      color: T.ice, bg: 'rgba(125,211,252,0.05)',  border: 'rgba(125,211,252,0.2)'    },
+  info:     { icon: 'ℹ️',  label: 'Info',      color: T.muted, bg: 'transparent',            border: 'rgba(107,159,107,0.15)'  },
 };
 function CheckRow({ type, body }) {
   const s = CHECK_STYLE[type] || CHECK_STYLE.info;
@@ -299,7 +314,7 @@ function CheckRow({ type, body }) {
   return (
     <div style={{
       display: 'flex', gap: 10, padding: '9px 12px',
-      borderRadius: 7, background: s.bg, marginBottom: 4,
+      borderRadius: 6, background: s.bg, marginBottom: 4,
       borderLeft: `3px solid ${s.color}`,
       alignItems: 'flex-start',
     }}>
@@ -315,7 +330,7 @@ function CheckRow({ type, body }) {
             display: 'block', marginBottom: 5, lineHeight: 1.4,
           }}>{headline}</span>
         )}
-        <span style={{ fontSize: 13, lineHeight: 1.6, color: '#dff0df', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+        <span style={{ fontSize: 13, lineHeight: 1.6, color: T.text, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {detail}
         </span>
       </div>
@@ -326,9 +341,9 @@ function CheckRow({ type, body }) {
 // ── Severity badge ─────────────────────────────────────────
 function SeverityBadge({ severity }) {
   const map = {
-    high: { label: 'High Priority', bg: 'rgba(255,82,82,0.12)', color: T.red },
-    med:  { label: 'Medium',        bg: 'rgba(245,166,35,0.12)', color: T.amber },
-    low:  { label: 'Info',          bg: 'rgba(61,255,122,0.08)', color: T.green },
+    high: { label: 'High Priority', bg: 'rgba(255,77,77,0.12)', color: T.red },
+    med:  { label: 'Medium',        bg: 'rgba(255,176,32,0.12)', color: T.amber },
+    low:  { label: 'Info',          bg: 'rgba(0,230,118,0.08)', color: T.green },
   };
   const s = map[severity] || map.low;
   return (
@@ -347,7 +362,7 @@ function SeverityBadge({ severity }) {
 function MetricTile({ label, value, sub, accent }) {
   return (
     <div style={{
-      background: '#0e160e', border: `1px solid ${accent ? T.borderHi : T.border}`,
+      background: T.card, border: `1px solid ${accent ? T.borderHi : T.border}`,
       borderRadius: 8, padding: '12px 16px', textAlign: 'center',
     }}>
       <div style={{ fontSize: 11, color: T.muted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>{label}</div>
@@ -518,7 +533,7 @@ export default function MainApp() {
     datasets: [{
       label: 'Vehicle Speed (mph)',
       data: graphs.time.map((t,i) => ({ x:t, y:graphs.speed[i] })),
-      borderColor: T.green, backgroundColor: 'rgba(61,255,122,0.1)',
+      borderColor: T.green, backgroundColor: 'rgba(0,230,118,0.1)',
       borderWidth: 2, pointRadius: 0, tension: 0.25
     }]
   } : null;
@@ -621,7 +636,7 @@ export default function MainApp() {
   return (
     <div style={css.page} className="st-page">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
         @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
         .st-animate { animation: fadeIn 0.35s ease both; }
@@ -645,8 +660,8 @@ export default function MainApp() {
         <div className="st-logo">
           <div className="st-logo-icon">
             <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
-              <circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/>
-              <path d="M7 11 L10 14 L15 8" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="11" cy="11" r="10" stroke=T.green strokeWidth="1.5"/>
+              <path d="M7 11 L10 14 L15 8" stroke=T.green strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           Satera Tuning
@@ -670,7 +685,7 @@ export default function MainApp() {
           {/* ── LEFT SIDEBAR ─────────────────────────── */}
           <aside style={{ display:'grid', gap:16, alignContent:'start' }}>
             {!formData.platform && (
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:160, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:160, color:T.faint, fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #2A3339', borderRadius:10, padding:24 }}>
                 <div style={{ fontSize:28 }}>👆</div>
                 <div>Choose your platform above<br/>to unlock vehicle options</div>
               </div>
@@ -801,7 +816,7 @@ export default function MainApp() {
             <div className="st-how-it-works">
               <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
                 <span style={{ fontSize:14 }}>⚡</span>
-                <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:600, letterSpacing:2, textTransform:'uppercase', color:'#3dff7a' }}>How It Works</span>
+                <span style={{ fontFamily:T.fDisplay, fontSize:13, fontWeight:600, letterSpacing:2, textTransform:'uppercase', color:T.green }}>How It Works</span>
               </div>
               <div className="st-how-it-works-steps">
                 <div className="st-step">
@@ -827,14 +842,14 @@ export default function MainApp() {
             </div>
 
             {/* ── PLATFORM SELECTOR ── */}
-            <div style={{ background:'#141e14', border:'1px solid #2e472e', borderRadius:10, padding:20 }}>
-              <p style={{ fontSize:12, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
+            <div style={{ background:T.card, border:'1px solid #2e472e', borderRadius:10, padding:20 }}>
+              <p style={{ fontSize:12, color:T.green, letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
                 Step 1 — Select Your Vehicle Platform
               </p>
-              <p style={{ fontSize:12, color:'#6b9f6b', margin:'0 0 14px' }}>
+              <p style={{ fontSize:12, color:T.muted, margin:'0 0 14px' }}>
                 Choose your platform to unlock the vehicle options and log upload.
               </p>
-              <div style={{ display:'flex', gap:12 }}>
+              <div className="st-platform">
                 {[
                   ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
                   ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
@@ -844,14 +859,14 @@ export default function MainApp() {
                     model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
                   }))} style={{
                     flex:1, padding:'18px 14px', borderRadius:10, cursor:'pointer', textAlign:'center',
-                    border: formData.platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
-                    background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.25)',
+                    border: formData.platform===p ? '2px solid #00E676' : '1.5px solid #2A3339',
+                    background: formData.platform===p ? 'rgba(0,230,118,0.07)' : 'rgba(0,0,0,0.25)',
                     transition:'all 0.2s',
-                    boxShadow: formData.platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                    boxShadow: formData.platform===p ? '0 0 18px rgba(0,230,118,0.18)' : 'none',
                   }}>
                     <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
-                    <div style={{ fontSize:15, fontWeight:700, color: formData.platform===p ? '#3dff7a' : '#dff0df', marginBottom:5 }}>{label}</div>
-                    <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
+                    <div style={{ fontSize:15, fontWeight:700, color: formData.platform===p ? T.green : T.text, marginBottom:5 }}>{label}</div>
+                    <div style={{ fontSize:11, color:T.faint, lineHeight:1.4 }}>{sub}</div>
                   </button>
                 ))}
               </div>
@@ -859,7 +874,7 @@ export default function MainApp() {
 
             {/* Upload + Analyze — gated behind platform selection */}
             {!formData.platform && (
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:120, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:120, color:T.faint, fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #2A3339', borderRadius:10, padding:24 }}>
                 <div style={{ fontSize:28 }}>👆</div>
                 <div>Select your vehicle platform above to upload a log</div>
               </div>
@@ -887,7 +902,7 @@ export default function MainApp() {
                 </button>
               </div>
               {status && <p style={{ marginTop:10, fontSize:13, color: status.startsWith('❌') ? T.red : T.muted }}>{status}</p>}
-              <p style={{ margin:'10px 0 0', fontSize:12, color:'#2e4a2e' }}>
+              <p style={{ margin:'10px 0 0', fontSize:12, color:T.faint }}>
                 Export from HP Tuners VCM Scanner → File → Export Data Log as CSV
               </p>
             </div>
@@ -925,37 +940,40 @@ export default function MainApp() {
                 <div style={{ display:'grid', gap:12, animation:'fadeIn 0.4s ease' }}>
                   {/* Alert banner for criticals */}
                   {criticals.length > 0 && (
-                    <div style={{ background:'rgba(255,82,82,0.07)', border:'1px solid rgba(255,82,82,0.25)', borderRadius:10, padding:16 }}>
-                      <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#ff5252', letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>⚠ Needs Immediate Attention</p>
+                    <div style={{ background:'rgba(255,77,77,0.07)', border:'1px solid rgba(255,77,77,0.25)', borderRadius:10, padding:16 }}>
+                      <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.red, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>⚠ Needs Immediate Attention</p>
                       {criticals.map((l,i) => <CheckRow key={i} {...l}/>)}
                     </div>
                   )}
                   {/* Warnings */}
                   {warns.length > 0 && (
-                    <div style={{ background:'rgba(245,166,35,0.04)', border:'1px solid rgba(245,166,35,0.15)', borderRadius:10, padding:16 }}>
-                      <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#f5a623', letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>Attention Needed</p>
+                    <div style={{ background:'rgba(255,176,32,0.04)', border:'1px solid rgba(255,176,32,0.15)', borderRadius:10, padding:16 }}>
+                      <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.amber, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>Attention Needed</p>
                       {warns.map((l,i) => <CheckRow key={i} {...l}/>)}
                     </div>
                   )}
                   {/* Stats row */}
                   {stats.length > 0 && (
                     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
-                      <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px', display:'flex', alignItems:'center', gap:8 }}>Performance Data</p>
-                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(200px,1fr))', gap:8 }}>
+                      <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px', display:'flex', alignItems:'center', gap:8 }}>Performance Data</p>
+                      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(190px,1fr))', gap:10 }}>
                         {stats.map((l,i) => {
                           const parts = l.body.split(':');
                           const label = parts[0]?.trim();
-                          const value = parts.slice(1).join(':').trim();
+                          const raw   = parts.slice(1).join(':').trim();
+                          // a timer or peak figure is what the tuner came for — give it the hero readout
                           const isTimer = /0.60|40.100|60.130/i.test(label);
+                          // split trailing unit off the figure so it can be set smaller
+                          const m = raw.match(/^([-\d.,]+)\s*(.*)$/);
+                          const num  = m ? m[1] : raw;
+                          const unit = m && m[2] ? m[2] : '';
                           return (
-                            <div key={i} style={{
-                              background: isTimer ? 'rgba(61,255,122,0.06)' : '#0e160e',
-                              border: isTimer ? `1px solid rgba(61,255,122,0.25)` : `1px solid ${T.border}`,
-                              borderRadius:8, padding:'10px 14px',
-                              gridColumn: isTimer ? 'span 1' : 'span 1',
-                            }}>
-                              <div style={{ fontSize:11, color: isTimer ? T.green : T.muted, textTransform:'uppercase', letterSpacing:0.8, marginBottom:4, fontWeight: isTimer ? 700 : 400 }}>{label}</div>
-                              <div style={{ fontSize: isTimer ? 22 : 16, fontWeight:700, color: isTimer ? T.green : '#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                            <div key={i} className={`st-readout ${isTimer ? 'is-hero' : 'is-data'}`}>
+                              <div className="st-readout-label">{label}</div>
+                              <div className="st-readout-value">
+                                {num}{unit && <span className="unit">{unit}</span>}
+                              </div>
+                              <div className="st-readout-scale"/>
                             </div>
                           );
                         })}
@@ -965,14 +983,14 @@ export default function MainApp() {
                   {/* All clear */}
                   {oks.length > 0 && (
                     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
-                      <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>All Clear</p>
+                      <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>All Clear</p>
                       {oks.map((l,i) => <CheckRow key={i} {...l}/>)}
                     </div>
                   )}
                   {/* Info items */}
                   {infos.length > 0 && (
                     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
-                      <p style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#5a8f5a', letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>Notes</p>
+                      <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.muted, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px' }}>Notes</p>
                       {infos.map((l,i) => <CheckRow key={i} {...l}/>)}
                     </div>
                   )}
@@ -985,14 +1003,14 @@ export default function MainApp() {
               <div style={css.card}>
                 <p style={css.sectionTitle}>Simulated Dyno — Setup Status</p>
                 <div style={{ display:'flex', gap:10, flexWrap:'wrap' }}>
-                  <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background: hasRPM ? 'rgba(61,255,122,0.1)' : 'rgba(255,82,82,0.1)', color: hasRPM ? T.green : T.red }}>
+                  <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background: hasRPM ? 'rgba(0,230,118,0.1)' : 'rgba(255,77,77,0.1)', color: hasRPM ? T.green : T.red }}>
                     {hasRPM ? '✓ RPM detected' : '✗ No RPM data'}
                   </span>
-                  <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background:'rgba(61,255,122,0.08)', color:T.muted }}>
+                  <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background:'rgba(0,230,118,0.08)', color:T.muted }}>
                     Mode: {dynoMode === 'dyno' ? 'Dyno' : 'Track'}
                   </span>
                   {dynoMode==='track' && (
-                    <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background: formData.weight ? 'rgba(61,255,122,0.08)' : 'rgba(245,166,35,0.08)', color: formData.weight ? T.muted : T.amber }}>
+                    <span style={{ fontSize:12, padding:'4px 10px', borderRadius:99, background: formData.weight ? 'rgba(0,230,118,0.08)' : 'rgba(255,176,32,0.08)', color: formData.weight ? T.muted : T.amber }}>
                       {formData.weight ? `${formData.weight} lbs` : '⚠ Weight not set'}
                     </span>
                   )}
@@ -1022,13 +1040,13 @@ export default function MainApp() {
                         {
                           label: 'Horsepower',
                           data: dyno.x.map((v,i)=>({x:v,y:dyno.hp[i]})).filter(p=>isNum(p.x)&&isNum(p.y)),
-                          borderColor:'#3dff7a', backgroundColor:'rgba(61,255,122,0.12)',
+                          borderColor:T.green, backgroundColor:'rgba(0,230,118,0.12)',
                           yAxisID:'yHP', borderWidth:2, pointRadius:0, tension:0.25,
                         },
                         ...(dyno.tq ? [{
                           label: 'Torque (lb-ft)',
                           data: dyno.x.map((v,i)=>({x:v,y:dyno.tq[i]})).filter(p=>isNum(p.x)&&isNum(p.y)),
-                          borderColor:T.amber, backgroundColor:'rgba(245,166,35,0.12)',
+                          borderColor:T.amber, backgroundColor:'rgba(255,176,32,0.12)',
                           yAxisID:'yTQ', borderWidth:2, pointRadius:0, tension:0.25,
                         }] : []),
                       ]
@@ -1071,7 +1089,7 @@ export default function MainApp() {
                     <div className='st-ai-card st-ai-card-action'>
                       <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:14 }}>
                         <span style={{ fontSize:20 }}>🔧</span>
-                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:'#4db8ff', letterSpacing:1.5, textTransform:'uppercase' }}>What This Means For You</span>
+                        <span style={{ fontFamily:T.fDisplay, fontSize:15, fontWeight:700, color:T.ice, letterSpacing:1.5, textTransform:'uppercase' }}>What This Means For You</span>
                       </div>
                       <p style={{ fontSize:14, lineHeight:1.8, color:T.text, margin:0 }}>{actionText}</p>
                     </div>
@@ -1087,12 +1105,12 @@ export default function MainApp() {
                 <div style={{ display:'grid', gap:12 }}>
                   {suggestions.map(s => (
                     <div key={s.id} style={{
-                      background:'#0a100a', border:`1px solid ${T.border}`,
+                      background:'rgba(0,0,0,0.25)', border:`1px solid ${T.border}`,
                       borderRadius:8, padding:14,
                     }}>
                       <div style={{ display:'flex', alignItems:'center', marginBottom:8 }}>
                         {SateraTone.showSeverityBadges && <SeverityBadge severity={s.severity}/>}
-                        <strong style={{ fontSize:13, color:'#eaff9c' }}>{s.label}</strong>
+                        <strong style={{ fontSize:13, color:T.ice }}>{s.label}</strong>
                       </div>
                       <ul style={{ margin:0, paddingLeft:18, fontSize:13, color:T.muted, lineHeight:1.65 }}>
                         {s.bullets.map((b,i)=><li key={i} style={{ marginBottom:3 }}>{b}</li>)}
