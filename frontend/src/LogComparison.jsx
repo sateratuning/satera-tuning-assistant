@@ -590,8 +590,8 @@ export default function LogComparison() {
         <div className="st-logo">
           <div className="st-logo-icon">
             <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
-              <circle cx="11" cy="11" r="10" stroke=T.green strokeWidth="1.5"/>
-              <path d="M7 11 L10 14 L15 8" stroke=T.green strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="11" cy="11" r="10" stroke={T.green} strokeWidth="1.5"/>
+              <path d="M7 11 L10 14 L15 8" stroke={T.green} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           Satera Tuning
