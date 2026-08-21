@@ -37,23 +37,47 @@ const PLATFORM_OPTS = {
 
 // ── Design tokens ──────────────────────────────────────────
 const T = {
-  bg: '#090c09', card: '#111811', cardHi: '#141e14',
-  border: '#1a281a', borderHi: '#274027',
-  green: '#3dff7a', greenLo: 'rgba(61,255,122,0.07)',
-  amber: '#f5a623', red: '#ff5252', blue: '#4db8ff',
-  text: '#dff0df', muted: '#5a8f5a', faint: '#2e4a2e',
+  // Surfaces — cool graphite, machined-aluminium cast
+  bg:       '#0A0C0D',
+  void:     '#0A0C0D',
+  panel:    '#14181A',
+  card:     '#14181A',
+  cardHi:   '#1C2226',
+  steel:    '#1C2226',
+  border:   '#2A3339',
+  borderHi: '#3A464D',
+  // Signals — each hue carries meaning
+  green:    '#00E676',
+  greenDim: '#00A854',
+  greenLo:  'rgba(0,230,118,0.08)',
+  greenGlow:'rgba(0,230,118,0.15)',
+  ice:      '#7DD3FC',
+  blue:     '#7DD3FC',
+  blueLo:   'rgba(125,211,252,0.08)',
+  amber:    '#FFB020',
+  amberLo:  'rgba(255,176,32,0.08)',
+  red:      '#FF4D4D',
+  orange:   '#FF8A3D',
+  // Ink
+  text:     '#E8EDEF',
+  muted:    '#78888F',
+  faint:    '#4A585E',
+  // Type stacks
+  fDisplay: "'Archivo', system-ui, sans-serif",
+  fBody:    "'IBM Plex Sans', system-ui, sans-serif",
+  fData:    "'IBM Plex Mono', ui-monospace, monospace",
 };
 
 const css = {
-  page:    { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: "'Inter', system-ui, sans-serif" },
-  card:    { background: T.card, border: `1px solid ${T.border}`, borderRadius: 12, padding: 20, position: 'relative' },
-  cardHi:  { background: T.cardHi, border: `1px solid ${T.borderHi}`, borderRadius: 12, padding: 20, position: 'relative', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' },
-  title:   { fontFamily: "'Rajdhani',sans-serif", fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: T.green, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 },
-  input:   { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: "'Inter',sans-serif" },
-  select:  { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 7, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%233dff7a\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%', paddingRight: 32, boxSizing: 'border-box', cursor: 'pointer' },
+  page:    { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: T.fBody },
+  card:    { background: T.card, border: `1px solid ${T.border}`, borderRadius: 10, padding: 20, position: 'relative' },
+  cardHi:  { background: T.cardHi, border: `1px solid ${T.borderHi}`, borderRadius: 10, padding: 20, position: 'relative', boxShadow: '0 4px 24px rgba(0,0,0,0.3)' },
+  title:   { fontFamily: T.fDisplay, fontSize: 12, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: T.green, margin: '0 0 16px', display: 'flex', alignItems: 'center', gap: 8 },
+  input:   { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 6, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', boxSizing: 'border-box', fontFamily: T.fBody },
+  select:  { width: '100%', background: 'rgba(0,0,0,0.3)', border: `1px solid ${T.border}`, borderRadius: 6, padding: '9px 12px', color: T.text, fontSize: 13, outline: 'none', appearance: 'none', backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%2300E676\'/%3E%3C/svg%3E")', backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%', paddingRight: 32, boxSizing: 'border-box', cursor: 'pointer' },
   label:   { display: 'block', fontSize: 11, color: T.muted, marginBottom: 5, letterSpacing: 0.5 },
-  btnPrimary: { fontFamily: "'Rajdhani',sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#000', background: T.green, border: 'none', borderRadius: 7, padding: '11px 24px', cursor: 'pointer', boxShadow: '0 0 20px rgba(61,255,122,0.2)', transition: 'all 0.2s' },
-  btnGhost:   { fontFamily: "'Inter',sans-serif", fontSize: 12, fontWeight: 500, color: T.muted, background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 7, padding: '8px 16px', cursor: 'pointer' },
+  btnPrimary: { fontFamily: T.fDisplay, fontSize: 14, fontWeight: 700, letterSpacing: 1, textTransform: 'uppercase', color: '#000', background: T.green, border: 'none', borderRadius: 6, padding: '11px 24px', cursor: 'pointer',  transition: 'all 0.2s' },
+  btnGhost:   { fontFamily: T.fBody, fontSize: 12, fontWeight: 500, color: T.muted, background: 'transparent', border: `1px solid ${T.border}`, borderRadius: 6, padding: '8px 16px', cursor: 'pointer' },
 };
 
 const OPTS = {
@@ -139,13 +163,13 @@ function VehicleCard({ vehicle, onSelect, onDelete, selected }) {
         ...css.card,
         cursor: 'pointer',
         border: `1px solid ${selected ? T.green : T.border}`,
-        background: selected ? 'rgba(61,255,122,0.04)' : T.card,
+        background: selected ? 'rgba(0,230,118,0.04)' : T.card,
         transition: 'all 0.2s',
       }}
     >
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start' }}>
         <div>
-          <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color: selected ? T.green : T.text, marginBottom:4 }}>
+          <div style={{ fontFamily:T.fDisplay, fontSize:16, fontWeight:700, color: selected ? T.green : T.text, marginBottom:4 }}>
             {vehicle.nickname || `${vehicle.year} ${vehicle.model}`}
           </div>
           <div style={{ fontSize:12, color:T.muted, lineHeight:1.7 }}>
@@ -156,11 +180,11 @@ function VehicleCard({ vehicle, onSelect, onDelete, selected }) {
         </div>
         <div style={{ display:'flex', flexDirection:'column', gap:6, alignItems:'flex-end' }}>
           {selected && (
-            <span style={{ fontSize:10, fontWeight:700, color:T.green, letterSpacing:1, background:T.greenLo, border:`1px solid rgba(61,255,122,0.2)`, borderRadius:4, padding:'2px 8px' }}>SELECTED</span>
+            <span style={{ fontSize:10, fontWeight:700, color:T.green, letterSpacing:1, background:T.greenLo, border:`1px solid rgba(0,230,118,0.2)`, borderRadius:4, padding:'2px 8px' }}>SELECTED</span>
           )}
           <button
             onClick={e => { e.stopPropagation(); onDelete(vehicle.id); }}
-            style={{ ...css.btnGhost, fontSize:11, padding:'4px 10px', color:T.red, borderColor:'rgba(255,82,82,0.2)' }}
+            style={{ ...css.btnGhost, fontSize:11, padding:'4px 10px', color:T.red, borderColor:'rgba(255,77,77,0.2)' }}
           >
             Delete
           </button>
@@ -409,7 +433,7 @@ export default function Portal() {
   return (
     <div style={css.page}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         * { box-sizing: border-box; }
         select option { background: #111811; }
         input[type=file] { display: none; }
@@ -422,15 +446,15 @@ export default function Portal() {
 
       {/* ── HEADER ── */}
       <header style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'0 32px', height:68, background:'rgba(9,12,9,0.95)', borderBottom:`1px solid ${T.borderHi}`, position:'sticky', top:0, zIndex:100, backdropFilter:'blur(12px)' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:12, fontFamily:"'Rajdhani',sans-serif", fontSize:22, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:T.green }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12, fontFamily:T.fDisplay, fontSize:22, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:T.green }}>
           <div style={{ width:34, height:34, border:`1.5px solid ${T.green}`, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center' }}>
             <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
-              <circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/>
-              <path d="M7 9l3 3 5-5" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="11" cy="11" r="10" stroke=T.green strokeWidth="1.5"/>
+              <path d="M7 9l3 3 5-5" stroke=T.green strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           Satera Tuning
-          <span style={{ fontFamily:"'Inter',sans-serif", fontSize:11, fontWeight:400, color:T.muted, textTransform:'none', letterSpacing:0 }}>Tune Portal</span>
+          <span style={{ fontFamily: T.fBody, fontSize:11, fontWeight:400, color:T.muted, textTransform:'none', letterSpacing:0 }}>Tune Portal</span>
         </div>
         <div style={{ display:'flex', gap:10, alignItems:'center' }}>
           <Link to="/ai-review" style={{ ...css.btnGhost, textDecoration:'none', display:'inline-block' }}>AI Review</Link>
@@ -448,7 +472,7 @@ export default function Portal() {
 
         {/* ── Toast ── */}
         {toast && (
-          <div className="fade-in" style={{ padding:'12px 18px', borderRadius:8, marginBottom:20, fontSize:13, background: toast.type==='err' ? 'rgba(255,82,82,0.08)' : 'rgba(61,255,122,0.06)', border:`1px solid ${toast.type==='err' ? 'rgba(255,82,82,0.25)' : 'rgba(61,255,122,0.2)'}`, color: toast.type==='err' ? T.red : T.green }}>
+          <div className="fade-in" style={{ padding:'12px 18px', borderRadius:8, marginBottom:20, fontSize:13, background: toast.type==='err' ? 'rgba(255,77,77,0.08)' : 'rgba(0,230,118,0.06)', border:`1px solid ${toast.type==='err' ? 'rgba(255,77,77,0.25)' : 'rgba(0,230,118,0.2)'}`, color: toast.type==='err' ? T.red : T.green }}>
             {toast.msg}
           </div>
         )}
@@ -463,7 +487,7 @@ export default function Portal() {
         {!authLoading && !user && (
           <div className="fade-in" style={{ maxWidth:500, margin:'80px auto', textAlign:'center' }}>
             <div style={{ fontSize:48, marginBottom:20 }}>🏁</div>
-            <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:32, fontWeight:700, color:T.text, margin:'0 0 12px' }}>
+            <h1 style={{ fontFamily:T.fDisplay, fontSize:32, fontWeight:700, color:T.text, margin:'0 0 12px' }}>
               Satera Tune Portal
             </h1>
             <p style={{ fontSize:14, color:T.muted, lineHeight:1.8, margin:'0 0 32px' }}>
@@ -499,7 +523,7 @@ export default function Portal() {
           <div className="fade-in">
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-end', marginBottom:24 }}>
               <div>
-                <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:30, fontWeight:700, margin:'0 0 4px' }}>My Garage</h1>
+                <h1 style={{ fontFamily:T.fDisplay, fontSize:30, fontWeight:700, margin:'0 0 4px' }}>My Garage</h1>
                 <p style={{ fontSize:13, color:T.muted, margin:0 }}>Select a vehicle to start or continue a tune session</p>
               </div>
               <button onClick={() => setView('new-vehicle')} style={css.btnPrimary}>
@@ -509,7 +533,7 @@ export default function Portal() {
 
             {/* Error */}
             {error && (
-              <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:16, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>
+              <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:16, background:'rgba(255,77,77,0.08)', border:'1px solid rgba(255,77,77,0.2)', color:T.red, fontSize:13 }}>
                 {error} <button onClick={() => setError('')} style={{ background:'none', border:'none', color:T.red, cursor:'pointer', float:'right' }}>✕</button>
               </div>
             )}
@@ -553,7 +577,7 @@ export default function Portal() {
                       <button onClick={() => loadSession(s.id)} style={{ ...css.btnPrimary, padding:'8px 18px', fontSize:13 }}>
                         {s.status === 'complete' ? 'View Report' : 'Continue →'}
                       </button>
-                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,82,82,0.2)' }}>
+                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,77,77,0.2)' }}>
                         Delete
                       </button>
                     </div>
@@ -582,7 +606,7 @@ export default function Portal() {
                     </div>
                     <div style={{ display:'flex', gap:6 }}>
                       <button onClick={() => loadSession(s.id)} style={css.btnGhost}>Open →</button>
-                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,82,82,0.2)', padding:'6px 10px' }}>✕</button>
+                      <button onClick={() => deleteSession(s.id)} style={{ ...css.btnGhost, fontSize:11, color:T.red, borderColor:'rgba(255,77,77,0.2)', padding:'6px 10px' }}>✕</button>
                     </div>
                   </div>
                 ))}
@@ -598,11 +622,11 @@ export default function Portal() {
           <div className="fade-in">
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
               <button onClick={() => setView('garage')} style={css.btnGhost}>← Back</button>
-              <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:28, fontWeight:700, margin:0 }}>Add Vehicle</h1>
+              <h1 style={{ fontFamily:T.fDisplay, fontSize:28, fontWeight:700, margin:0 }}>Add Vehicle</h1>
             </div>
 
             {error && (
-              <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:16, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>
+              <div style={{ padding:'10px 14px', borderRadius:8, marginBottom:16, background:'rgba(255,77,77,0.08)', border:'1px solid rgba(255,77,77,0.2)', color:T.red, fontSize:13 }}>
                 {error}
               </div>
             )}
@@ -615,7 +639,7 @@ export default function Portal() {
               <p style={{ fontSize:12, color:T.muted, margin:'0 0 14px' }}>
                 Choose your platform to unlock the vehicle options.
               </p>
-              <div style={{ display:'flex', gap:12 }}>
+              <div className="st-platform">
                 {[
                   ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
                   ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
@@ -627,7 +651,7 @@ export default function Portal() {
                     border: vehicleForm.platform===p ? `2px solid ${T.green}` : `1.5px solid ${T.border}`,
                     background: vehicleForm.platform===p ? T.greenLo : 'rgba(0,0,0,0.25)',
                     transition:'all 0.2s',
-                    boxShadow: vehicleForm.platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                    boxShadow: vehicleForm.platform===p ? '0 0 18px rgba(0,230,118,0.18)' : 'none',
                   }}>
                     <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
                     <div style={{ fontSize:15, fontWeight:700, color: vehicleForm.platform===p ? T.green : T.text, marginBottom:5 }}>{label}</div>
@@ -680,7 +704,7 @@ export default function Portal() {
                   <textarea
                     rows={5}
                     placeholder={"VIN: 2C3CDXGJ4MH592923\n2021 Dodge Charger Scat Pack, 6.4 L, V8\nOS: 68501393AD\nHardware: ZF8HP, Dodge\nOS: 68501434AC"}
-                    style={{ ...css.input, resize:'vertical', lineHeight:1.5, fontFamily:'monospace', fontSize:12 }}
+                    style={{ ...css.input, resize:'vertical', lineHeight:1.5, fontFamily: T.fData, fontSize:12 }}
                     onBlur={e => {
                       const text = e.target.value;
                       if (!text.trim()) return;
@@ -761,14 +785,14 @@ export default function Portal() {
             {/* Back + title */}
             <div style={{ display:'flex', alignItems:'center', gap:16, marginBottom:24 }}>
               <button onClick={() => { setView('garage'); setActiveSession(null); }} style={css.btnGhost}>← Garage</button>
-              <button onClick={restartSession} style={{ ...css.btnGhost, color:T.amber, borderColor:'rgba(245,166,35,0.25)', fontSize:12 }}>
+              <button onClick={restartSession} style={{ ...css.btnGhost, color:T.amber, borderColor:'rgba(255,176,32,0.25)', fontSize:12 }}>
                 🔄 Restart Session
               </button>
-              <button onClick={() => deleteSession(activeSession.id)} style={{ ...css.btnGhost, color:T.red, borderColor:'rgba(255,82,82,0.2)', fontSize:12 }}>
+              <button onClick={() => deleteSession(activeSession.id)} style={{ ...css.btnGhost, color:T.red, borderColor:'rgba(255,77,77,0.2)', fontSize:12 }}>
                 🗑 Delete Session
               </button>
               <div>
-                <h1 style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:26, fontWeight:700, margin:'0 0 2px' }}>
+                <h1 style={{ fontFamily:T.fDisplay, fontSize:26, fontWeight:700, margin:'0 0 2px' }}>
                   {activeSession.vehicles?.nickname || `${activeSession.vehicles?.year} ${activeSession.vehicles?.model}`}
                 </h1>
                 <p style={{ fontSize:12, color:T.muted, margin:0 }}>
@@ -779,11 +803,11 @@ export default function Portal() {
 
             {/* ── TABLE REVISION PANEL ── */}
             {!tableRevision && !showTableSubmit && (
-              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(245,166,35,0.3)', background:'rgba(245,166,35,0.04)' }}>
+              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(255,176,32,0.3)', background:'rgba(255,176,32,0.04)' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
                   <span style={{ fontSize:24 }}>📋</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>Submit Your WOT Spark Table</div>
+                    <div style={{ fontFamily:T.fDisplay, fontSize:16, fontWeight:700, color:T.amber }}>Submit Your WOT Spark Table</div>
                     <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Required before logging. Paste your current WOT Spark Table so the AI can generate your first revision.</div>
                   </div>
                 </div>
@@ -811,8 +835,8 @@ export default function Portal() {
                   </div>
                   <label htmlFor="httUpload" style={{
                     display:'flex', alignItems:'center', gap:10, padding:'14px 16px',
-                    borderRadius:8, border: httFile ? `1.5px solid rgba(61,255,122,0.4)` : `1.5px dashed ${T.borderHi}`,
-                    background: httFile ? 'rgba(61,255,122,0.04)' : 'transparent',
+                    borderRadius:8, border: httFile ? `1.5px solid rgba(0,230,118,0.4)` : `1.5px dashed ${T.borderHi}`,
+                    background: httFile ? 'rgba(0,230,118,0.04)' : 'transparent',
                     cursor:'pointer', fontSize:13, color: httFile ? T.text : T.muted, transition:'all 0.2s',
                   }}>
                     <span style={{ fontSize:20 }}>📁</span>
@@ -830,7 +854,7 @@ export default function Portal() {
                     All other tune settings remain exactly as they are.
                   </p>
                 </div>
-                {error && <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
+                {error && <div style={{ padding:'10px 14px', borderRadius:6, marginBottom:12, background:'rgba(255,77,77,0.08)', border:'1px solid rgba(255,77,77,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
                 <button onClick={submitTables} disabled={submittingTables || !httFile}
                   style={{ ...css.btnPrimary, width:'100%', opacity: submittingTables ? 0.5 : 1 }}>
                   {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Saving Table…</span> : '⬆ Upload Base Tune File'}
@@ -840,11 +864,11 @@ export default function Portal() {
 
             {/* Base table saved confirmation */}
             {tableRevision && tableRevision.triggered_by === 'initial_submission' && !showRevisionDownload && (
-              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(61,255,122,0.2)', background:'rgba(61,255,122,0.03)' }}>
+              <div className="fade-in" style={{ ...css.card, marginBottom:16, border:'1px solid rgba(0,230,118,0.2)', background:'rgba(0,230,118,0.03)' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                   <span style={{ fontSize:22 }}>✅</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:15, fontWeight:700, color:T.green }}>Base Table Saved</div>
+                    <div style={{ fontFamily:T.fDisplay, fontSize:15, fontWeight:700, color:T.green }}>Base Table Saved</div>
                     <div style={{ fontSize:12, color:T.muted, marginTop:2 }}>Your WOT Spark Table is on file. Submit your Stage 1 log below — the AI will review it and generate a revised table if needed.</div>
                   </div>
                 </div>
@@ -853,11 +877,11 @@ export default function Portal() {
 
             {/* Log-triggered revision download — only shows after log evaluation */}
             {showRevisionDownload && tableRevision && (
-              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(245,166,35,0.35)', background:'rgba(245,166,35,0.04)' }}>
+              <div className="fade-in" style={{ ...css.cardHi, marginBottom:16, border:'1px solid rgba(255,176,32,0.35)', background:'rgba(255,176,32,0.04)' }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:12 }}>
                   <span style={{ fontSize:24 }}>🔧</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.amber }}>
+                    <div style={{ fontFamily:T.fDisplay, fontSize:16, fontWeight:700, color:T.amber }}>
                       Revision {tableRevision.revision} — Updated Table Ready
                     </div>
                     <div style={{ fontSize:12, color:T.muted }}>The AI updated your spark table based on your log. Download, flash, then resubmit a log.</div>
@@ -916,7 +940,7 @@ export default function Portal() {
               {activeSession.status === 'complete' && (
                 <div style={{ textAlign:'center', padding:'20px 0' }}>
                   <div style={{ fontSize:40, marginBottom:12 }}>🏆</div>
-                  <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:24, fontWeight:700, color:T.green, marginBottom:8 }}>
+                  <div style={{ fontFamily:T.fDisplay, fontSize:24, fontWeight:700, color:T.green, marginBottom:8 }}>
                     All Stages Complete!
                   </div>
                   <p style={{ fontSize:14, color:T.muted }}>
@@ -931,7 +955,7 @@ export default function Portal() {
                   <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:12 }}>
                     <span style={{ fontSize:24 }}>{currentStageInfo.icon}</span>
                     <div>
-                      <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:16, fontWeight:700, color:T.text }}>
+                      <div style={{ fontFamily:T.fDisplay, fontSize:16, fontWeight:700, color:T.text }}>
                         Stage {activeSession.current_stage}: {currentStageInfo.name}
                       </div>
                       <div style={{ fontSize:11, color:T.muted }}>
@@ -941,7 +965,7 @@ export default function Portal() {
                   </div>
 
                   {/* Instructions box */}
-                  <div style={{ background:'rgba(61,255,122,0.04)', border:`1px solid ${T.border}`, borderRadius:8, padding:'14px 16px', marginBottom:14 }}>
+                  <div style={{ background:'rgba(0,230,118,0.04)', border:`1px solid ${T.border}`, borderRadius:8, padding:'14px 16px', marginBottom:14 }}>
                     <div style={{ fontSize:12, fontWeight:600, color:T.green, marginBottom:8, letterSpacing:0.5 }}>📋 INSTRUCTIONS</div>
                     <p style={{ fontSize:13, color:T.text, lineHeight:1.75, margin:'0 0 12px' }}>
                       {activeSession.current_stage === 1 && 'Start the vehicle from a fully cold start and let it warm up to operating temperature completely. Log for at least 5-8 minutes at idle without revving or driving.'}
@@ -980,7 +1004,7 @@ export default function Portal() {
                     <label htmlFor="stageLog" style={{
                       display:'flex', alignItems:'center', gap:10, padding:'13px 16px',
                       borderRadius:8, border: logFile ? `1.5px solid ${T.green}33` : `1.5px dashed ${T.borderHi}`,
-                      background: logFile ? 'rgba(61,255,122,0.04)' : 'transparent',
+                      background: logFile ? 'rgba(0,230,118,0.04)' : 'transparent',
                       cursor:'pointer', fontSize:13, color: logFile ? T.text : T.muted, transition:'all 0.2s',
                     }}>
                       <span style={{ fontSize:16 }}>📂</span>
@@ -996,7 +1020,7 @@ export default function Portal() {
                   </div>
 
                   {error && (
-                    <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>
+                    <div style={{ padding:'10px 14px', borderRadius:6, marginBottom:12, background:'rgba(255,77,77,0.08)', border:'1px solid rgba(255,77,77,0.2)', color:T.red, fontSize:13 }}>
                       {error}
                     </div>
                   )}
@@ -1014,11 +1038,11 @@ export default function Portal() {
 
             {/* Stage result */}
             {stageResult && (
-              <div className="fade-in" style={{ ...css.cardHi, marginTop:16, border:`1px solid ${stageResult.passed ? 'rgba(61,255,122,0.3)' : 'rgba(255,82,82,0.3)'}` }}>
+              <div className="fade-in" style={{ ...css.cardHi, marginTop:16, border:`1px solid ${stageResult.passed ? 'rgba(0,230,118,0.3)' : 'rgba(255,77,77,0.3)'}` }}>
                 <div style={{ display:'flex', alignItems:'center', gap:12, marginBottom:16 }}>
                   <span style={{ fontSize:32 }}>{stageResult.passed ? '✅' : '❌'}</span>
                   <div>
-                    <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:18, fontWeight:700, color: stageResult.passed ? T.green : T.red }}>
+                    <div style={{ fontFamily:T.fDisplay, fontSize:18, fontWeight:700, color: stageResult.passed ? T.green : T.red }}>
                       Stage {stageResult.passed ? 'Passed' : 'Failed'}
                     </div>
                     <div style={{ fontSize:12, color:T.muted }}>
@@ -1053,7 +1077,7 @@ export default function Portal() {
                     <div key={s} style={{ marginBottom:16, paddingBottom:16, borderBottom:`1px solid ${T.border}` }}>
                       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
                         <span>{info.icon}</span>
-                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:700, color: latestPass ? T.green : T.muted, letterSpacing:1 }}>
+                        <span style={{ fontFamily:T.fDisplay, fontSize:13, fontWeight:700, color: latestPass ? T.green : T.muted, letterSpacing:1 }}>
                           Stage {s}: {info.name} {latestPass ? '✓ PASSED' : `(${logs.length} attempt${logs.length>1?'s':''})`}
                         </span>
                       </div>
