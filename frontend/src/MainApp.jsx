@@ -738,10 +738,9 @@ export default function MainApp() {
                 <select name="tire" value={formData.tire} onChange={handleChange} style={css.select}>
                   <option value="">Tire Height</option>{tireHeights.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
+                </div>}
               </div>
-              </div>{/* end platform gate */}
-              </div>{/* end fieldGrid */}
-            </div>{/* end vehicle card */}
+            </div>
 
             {/* Dyno mode */}
             <div style={css.card}>
