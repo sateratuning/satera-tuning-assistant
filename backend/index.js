@@ -231,36 +231,82 @@ function detectPullGear({ rpm, mph, tireIn, rear }) {
 function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   const summary = [];
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
-  const hasCol = (name) => headers.includes(name);
+  const hasCol = (name) => !!name && headers.includes(name);
+  // Resolve a channel name across Mopar / Ford naming conventions
+  const pick = (candidates) => {
+    for (const c of candidates) if (headers.includes(c)) return c;
+    // loose contains-match fallback
+    for (const c of candidates) {
+      const hit = headers.find(h => h.toLowerCase() === c.toLowerCase());
+      if (hit) return hit;
+    }
+    for (const c of candidates) {
+      const hit = headers.find(h => h.toLowerCase().includes(c.toLowerCase()));
+      if (hit) return hit;
+    }
+    return null;
+  };
   const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : undefined;
   const PSI_PER_KPA = 0.1450377377;
   const defaultBaroKpa = 101.325;
 
-  const accelName    = 'Accelerator Position D (SAE)';
-  const throttleName = 'Throttle Position (SAE)';
-  const timingName   = 'Timing Advance (SAE)';
-  const rpmName      = 'Engine RPM (SAE)';
-  const mapName      = 'Intake Manifold Absolute Pressure (SAE)';
-  const timeName     = 'Offset';
-  const speedName    = 'Vehicle Speed (SAE)';
+  const accelName    = pick(['Accelerator Position D (SAE)','Accelerator Pedal Position','Accelerator Position (SAE)','Accelerator Pedal Position (%)']);
+  const throttleName = pick(['Throttle Position (SAE)','Throttle Position (%)','Relative Throttle Position (SAE)','Throttle Angle']);
+  const timingName   = pick(['Timing Advance (SAE)','Spark Advance (SAE)','Spark Advance']);
+  const rpmName      = pick(['Engine RPM (SAE)','Engine RPM','RPM (SAE)','RPM']);
+  const mapName      = pick(['Intake Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure','MAP (SAE)']);
+  const timeName     = pick(['Offset','Time','Time (s)']);
+  const speedName    = pick(['Vehicle Speed (SAE)','Vehicle Speed','Speed (SAE)']);
+  const boostName    = pick(['Boost Pressure','Boost (SAE)','Boost']);
 
-  // ── WOT gating ────────────────────────────────────────
+  // ── WOT gating (cross-platform) ───────────────────────
+  // Mopar: pedal and blade track closely at WOT.
+  // Ford:  pedal hits 100% but blade angle is limited by torque management
+  //        (often peaks ~85-90%), so requiring BOTH over 86 misses real WOT.
   let wotRows = [];
-  if (hasCol(accelName)) {
-    wotRows = parsed.filter(r => {
-      const pedalOK = Number.isFinite(r[accelName]) && r[accelName] > 86;
-      const tpsOK   = !hasCol(throttleName) || (Number.isFinite(r[throttleName]) && r[throttleName] > 86);
-      return pedalOK && tpsOK;
-    });
+  {
+    const pedalVals = hasCol(accelName)    ? parsed.map(r => r[accelName]).filter(Number.isFinite)    : [];
+    const tpsVals   = hasCol(throttleName) ? parsed.map(r => r[throttleName]).filter(Number.isFinite) : [];
+    const maxPedal  = pedalVals.length ? Math.max(...pedalVals) : 0;
+    const maxTps    = tpsVals.length   ? Math.max(...tpsVals)   : 0;
+
+    // Treat "near the highest value this log actually reached" as WOT,
+    // with an absolute floor so part-throttle logs never qualify.
+    const pedalGate = maxPedal >= 90 ? Math.max(86, maxPedal * 0.95) : Infinity;
+    const tpsGate   = maxTps   >= 70 ? Math.max(70, maxTps   * 0.95) : Infinity;
+
+    if (Number.isFinite(pedalGate) || Number.isFinite(tpsGate)) {
+      wotRows = parsed.filter(r => {
+        const pedalOK = Number.isFinite(r[accelName])    && r[accelName]    >= pedalGate;
+        const tpsOK   = Number.isFinite(r[throttleName]) && r[throttleName] >= tpsGate;
+        return pedalOK || tpsOK;   // OR, not AND
+      });
+    }
   }
 
-  // ── Knock ─────────────────────────────────────────────
-  const baroName = ['Barometric Pressure (SAE)', 'Baro Pressure (SAE)', 'Ambient Pressure (SAE)'].find(hasCol);
+  // ── Boost helper (cross-platform) ─────────────────────
+  const baroName = pick(['Barometric Pressure (SAE)','Barometric Pressure','Baro Pressure (SAE)','Ambient Pressure (SAE)']);
+
+  // Ford logs MAP/Baro in psi and provides a dedicated Boost Pressure channel.
+  // Mopar logs MAP/Baro in kPa. Detect by magnitude: atmospheric is ~101 kPa vs ~14.7 psi.
+  const mapSample = hasCol(mapName) ? parsed.map(r => r[mapName]).filter(Number.isFinite) : [];
+  const mapIsPsi  = mapSample.length ? (Math.max(...mapSample) < 60) : false;
+
   const getBoostPsi = (r) => {
-    const mapKpa = r[mapName];
-    if (!Number.isFinite(mapKpa)) return null;
+    // Prefer Ford's dedicated boost channel when present (already psi, gauge)
+    if (hasCol(boostName)) {
+      const b = r[boostName];
+      if (Number.isFinite(b)) return b > 0 ? b : 0;
+    }
+    const mapVal = r[mapName];
+    if (!Number.isFinite(mapVal)) return null;
+    if (mapIsPsi) {
+      const baroPsi = baroName && Number.isFinite(r[baroName]) ? r[baroName] : 14.7;
+      const psi = mapVal - baroPsi;
+      return psi > 0 ? psi : 0;
+    }
     const baroKpa = baroName && Number.isFinite(r[baroName]) ? r[baroName] : defaultBaroKpa;
-    const psi = (mapKpa - baroKpa) * PSI_PER_KPA;
+    const psi = (mapVal - baroKpa) * PSI_PER_KPA;
     return psi > 0 ? psi : 0;
   };
 
@@ -545,10 +591,25 @@ const REF_TIRE_IN = 28.0;
 
 function buildDynoPayload(parsed, { mode = 'dyno', rear, tireIn, pullGear, trans }) {
   try {
-    const T   = parsed.map(r => r['Offset']).filter(isNum);
-    const RPM = parsed.map(r => r['Engine RPM (SAE)']);
-    const MPH = parsed.map(r => r['Vehicle Speed (SAE)']);
-    const Ped = parsed.map(r => r['Accelerator Position D (SAE)']);
+    // Resolve channel names across Mopar / Ford naming conventions
+    const firstKey = (cands) => {
+      const keys = parsed.length ? Object.keys(parsed[0]) : [];
+      for (const c of cands) if (keys.includes(c)) return c;
+      for (const c of cands) {
+        const hit = keys.find(k => k.toLowerCase().includes(c.toLowerCase()));
+        if (hit) return hit;
+      }
+      return cands[0];
+    };
+    const kTime  = firstKey(['Offset','Time','Time (s)']);
+    const kRpm   = firstKey(['Engine RPM (SAE)','Engine RPM','RPM (SAE)','RPM']);
+    const kMph   = firstKey(['Vehicle Speed (SAE)','Vehicle Speed','Speed (SAE)']);
+    const kPed   = firstKey(['Accelerator Position D (SAE)','Accelerator Pedal Position','Accelerator Position (SAE)','Throttle Position (SAE)']);
+
+    const T   = parsed.map(r => r[kTime]).filter(isNum);
+    const RPM = parsed.map(r => r[kRpm]);
+    const MPH = parsed.map(r => r[kMph]);
+    const Ped = parsed.map(r => r[kPed]);
     if (!RPM.some(isNum) || !MPH.some(isNum) || !T.some(isNum)) return { error: 'Missing RPM/MPH/Time columns' };
 
     const sweep = selectRpmSweep(T, RPM, MPH, Ped);
@@ -651,9 +712,9 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     const checklist = formatChecklist(parsed, headers, isNA, isFord);
 
     const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
-      rpm:     r['Engine RPM (SAE)'],
-      airmass: r['Cylinder Airmass'],
-      knock:   r['Total Knock Retard'],
+      rpm:     r['Engine RPM (SAE)']    ?? r['Engine RPM']     ?? null,
+      airmass: r['Cylinder Airmass']    ?? r['Air Load']       ?? r['Absolute Load (SAE)'] ?? null,
+      knock:   r['Total Knock Retard']  ?? r['Knock Retard']   ?? null,
     }));
 
     const observations = checklist + '\n' + JSON.stringify(reduced.slice(0, 200), null, 2);
