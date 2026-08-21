@@ -449,8 +449,8 @@ export default function Portal() {
         <div style={{ display:'flex', alignItems:'center', gap:12, fontFamily:T.fDisplay, fontSize:22, fontWeight:700, letterSpacing:1.5, textTransform:'uppercase', color:T.green }}>
           <div style={{ width:34, height:34, border:`1.5px solid ${T.green}`, borderRadius:8, display:'flex', alignItems:'center', justifyContent:'center' }}>
             <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
-              <circle cx="11" cy="11" r="10" stroke=T.green strokeWidth="1.5"/>
-              <path d="M7 9l3 3 5-5" stroke=T.green strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="11" cy="11" r="10" stroke={T.green} strokeWidth="1.5"/>
+              <path d="M7 9l3 3 5-5" stroke={T.green} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           Satera Tuning
