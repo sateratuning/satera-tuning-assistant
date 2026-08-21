@@ -6,6 +6,35 @@ import { auth, signInWithGoogle, signOutUser, onAuthStateChanged } from './fireb
 
 const API_BASE = process.env.REACT_APP_API_BASE || '/api';
 
+// ── Platform-specific options ─────────────────────────────
+const PLATFORM_OPTS = {
+  mopar: {
+    models: ['Charger', 'Challenger', '300', 'Durango', 'Ram 1500', 'Ram 2500', 'Jeep Grand Cherokee'],
+    engines: ['5.7L Pre-Eagle', '5.7L Eagle', '6.1L SRT', '6.4L (392)', '6.2L Hellcat', '6.2L Redeye', '6.2L Demon', '6.2L Jailbreak'],
+    transmissions: ['TR6060 (6-speed Manual)', 'NAG1/WA580 (5-speed Auto)', '8HP70 (8-speed Auto)', '8HP90 (8-speed Auto)'],
+    injectors: ['Stock', 'ID850x', 'ID1050x', 'ID1300x', 'ID1700x'],
+    map_sensor: ['Stock (1 Bar)', '2 Bar', '3 Bar', '4 Bar'],
+    throttle_body: ['Stock', '87mm', '92mm', '95mm', '102mm', '105mm'],
+  },
+  ford: {
+    models: ['Mustang GT', 'Mustang GT500', 'Mustang Dark Horse', 'F-150 5.0', 'Expedition 5.0'],
+    engines: [
+      '5.0L Gen 1 (2011-2014)',
+      '5.0L Gen 2 (2015-2017)',
+      '5.0L Gen 3 (2018-2023)',
+      '5.0L Gen 4 (2024+)',
+      '5.2L Voodoo (GT350)',
+      '5.2L Predator (GT500)',
+    ],
+    transmissions: ['TR-3160 (6-speed Manual)', 'MT-82 (6-speed Manual)', '6R80 (6-speed Auto)', '10R80 (10-speed Auto)', 'Tremec TR-9070 (7-speed DCT)'],
+    injectors: ['Stock', 'ID725x', 'ID850x', 'ID1050x', 'ID1300x', 'ID1700x', 'ID2000cc'],
+    map_sensor: ['Stock (Gen4 only)', 'N/A (Gen1-3 MAF-based)'],
+    throttle_body: ['Stock', '87mm', '90mm', '95mm', '97mm', '102mm'],
+  },
+};
+
+
+
 // ── Design tokens ──────────────────────────────────────────
 const T = {
   bg: '#090c09', card: '#111811', cardHi: '#141e14',
@@ -153,7 +182,7 @@ export default function Portal() {
   const [stageLogs, setStageLogs]             = useState([]);
 
   const [vehicleForm, setVehicleForm] = useState({
-    nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'',
+    platform:'mopar', nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'',
     transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'',
     throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'',
   });
@@ -161,7 +190,9 @@ export default function Portal() {
   const [logFile, setLogFile]       = useState(null);
   const [tableRevision, setTableRevision] = useState(null);
   const [showTableSubmit, setShowTableSubmit] = useState(false);
-  const [sparkTable, setSparkTable] = useState('');
+  const [httFile, setHttFile]         = useState(null);
+  const [httFileName, setHttFileName] = useState('');
+  const [tablesSummary, setTablesSummary] = useState(null);
   const [submittingTables, setSubmittingTables] = useState(false);
   const [logFileName, setLogFileName] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -252,7 +283,7 @@ export default function Portal() {
       );
       await loadVehicles();
       setView('garage');
-      setVehicleForm({ nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
+      setVehicleForm({ platform:'mopar', nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
       showToast('Vehicle saved!');
     } catch (e) { setError(e.message); }
   };
@@ -309,20 +340,21 @@ export default function Portal() {
 
   // ── Stage log submission ──────────────────────────────────
   const submitTables = async () => {
-    if (!sparkTable) {
-      setError('Please paste your WOT Spark Table.'); return;
-    }
+    if (!httFile) { setError('Please select your .htt template file.'); return; }
     setSubmittingTables(true); setError('');
     try {
+      const fd = new FormData();
+      fd.append('htt_file', httFile);
       const res = await axios.post(
         `${API_BASE}/portal/sessions/${activeSession.id}/submit-tables`,
-        { spark_table: sparkTable },
-        { headers: { ...getAuthHeader(user), 'Content-Type': 'application/json' } }
+        fd,
+        { headers: getAuthHeader(user) }
       );
       setTableRevision(res.data.revision);
+      setTablesSummary(res.data.summary);
       setShowTableSubmit(false);
-      setShowRevisionDownload(false); // don't show download panel yet — customer needs to flash and log first
-      showToast('Base table saved — now submit your Stage 1 log and the AI will review it.', 'ok');
+      setShowRevisionDownload(false);
+      showToast(`HTT file saved — tables found: ${(res.data.tablesFound || []).join(', ')}. Submit your Stage 1 log and the AI will review it.`, 'ok');
     } catch(e) { setError(e?.response?.data?.error || e.message); }
     finally { setSubmittingTables(false); }
   };
@@ -581,13 +613,29 @@ export default function Portal() {
                 <div style={css.card}>
                   <SectionTitle>Vehicle Identity</SectionTitle>
                   <div style={{ display:'grid', gap:10 }}>
-                    <div><label style={css.label}>Nickname (optional)</label><input placeholder="e.g. My Hellcat" style={css.input} value={vehicleForm.nickname} onChange={e => setVehicleForm(p => ({...p, nickname:e.target.value}))}/></div>
+                    <div>
+                      <label style={css.label}>Platform *</label>
+                      <div style={{ display:'flex', gap:8 }}>
+                        {[['mopar','🔧 Mopar / Gen3 HEMI'],['ford','🐎 Ford Coyote']].map(([p, label]) => (
+                          <button key={p} onClick={() => setVehicleForm(prev => ({
+                            ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford', model:'', engine:'', transmission:'', injectors:'', map_sensor:'', throttle_body:''
+                          }))} style={{
+                            flex:1, padding:'10px 8px', borderRadius:7, cursor:'pointer', fontSize:13, fontWeight:600,
+                            border: vehicleForm.platform===p ? `1.5px solid ${T.green}` : `1px solid ${T.border}`,
+                            background: vehicleForm.platform===p ? T.greenLo : 'transparent',
+                            color: vehicleForm.platform===p ? T.green : T.muted,
+                            transition:'all 0.2s',
+                          }}>{label}</button>
+                        ))}
+                      </div>
+                    </div>
+                    <div><label style={css.label}>Nickname (optional)</label><input placeholder={vehicleForm.platform==='ford' ? 'e.g. My Mustang GT' : 'e.g. My Hellcat'} style={css.input} value={vehicleForm.nickname} onChange={e => setVehicleForm(p => ({...p, nickname:e.target.value}))}/></div>
                     <div><label style={css.label}>VIN (optional)</label><input placeholder="17-digit VIN" style={css.input} value={vehicleForm.vin} onChange={e => setVehicleForm(p => ({...p, vin:e.target.value}))}/></div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                       <div><label style={css.label}>Year *</label><select style={css.select} value={vehicleForm.year} onChange={e => setVehicleForm(p => ({...p, year:e.target.value}))}><option value="">Select…</option>{OPTS.year.map(o=><option key={o}>{o}</option>)}</select></div>
-                      <div><label style={css.label}>Model *</label><select style={css.select} value={vehicleForm.model} onChange={e => setVehicleForm(p => ({...p, model:e.target.value}))}><option value="">Select…</option>{OPTS.model.map(o=><option key={o}>{o}</option>)}</select></div>
+                      <div><label style={css.label}>Model *</label><select style={css.select} value={vehicleForm.model} onChange={e => setVehicleForm(p => ({...p, model:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.models || []).map(o=><option key={o}>{o}</option>)}</select></div>
                     </div>
-                    <div><label style={css.label}>Engine *</label><select style={css.select} value={vehicleForm.engine} onChange={e => setVehicleForm(p => ({...p, engine:e.target.value}))}><option value="">Select…</option>{OPTS.engine.map(o=><option key={o}>{o}</option>)}</select></div>
+                    <div><label style={css.label}>Engine *</label><select style={css.select} value={vehicleForm.engine} onChange={e => setVehicleForm(p => ({...p, engine:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.engines || []).map(o=><option key={o}>{o}</option>)}</select></div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                       <div><label style={css.label}>Fuel *</label><select style={css.select} value={vehicleForm.fuel} onChange={e => setVehicleForm(p => ({...p, fuel:e.target.value}))}><option value="">Select…</option>{OPTS.fuel.map(o=><option key={o}>{o}</option>)}</select></div>
                       <div><label style={css.label}>Power Adder *</label><select style={css.select} value={vehicleForm.power_adder} onChange={e => setVehicleForm(p => ({...p, power_adder:e.target.value}))}><option value="">Select…</option>{OPTS.power_adder.map(o=><option key={o}>{o}</option>)}</select></div>
@@ -598,7 +646,7 @@ export default function Portal() {
                 <div style={css.card}>
                   <SectionTitle>Drivetrain</SectionTitle>
                   <div style={{ display:'grid', gap:10 }}>
-                    <div><label style={css.label}>Transmission</label><select style={css.select} value={vehicleForm.transmission} onChange={e => setVehicleForm(p => ({...p, transmission:e.target.value}))}><option value="">Select…</option>{OPTS.transmission.map(o=><option key={o}>{o}</option>)}</select></div>
+                    <div><label style={css.label}>Transmission</label><select style={css.select} value={vehicleForm.transmission} onChange={e => setVehicleForm(p => ({...p, transmission:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.transmissions || []).map(o=><option key={o}>{o}</option>)}</select></div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                       <div><label style={css.label}>Rear Gear</label><select style={css.select} value={vehicleForm.rear_gear} onChange={e => setVehicleForm(p => ({...p, rear_gear:e.target.value}))}><option value="">Select…</option>{OPTS.rear_gear.map(o=><option key={o}>{o}</option>)}</select></div>
                       <div><label style={css.label}>Tire Height</label><select style={css.select} value={vehicleForm.tire_height} onChange={e => setVehicleForm(p => ({...p, tire_height:e.target.value}))}><option value="">Select…</option>{OPTS.tire_height.map(o=><option key={o}>{o}</option>)}</select></div>
@@ -650,10 +698,10 @@ export default function Portal() {
                 <div style={css.card}>
                   <SectionTitle>Modifications</SectionTitle>
                   <div style={{ display:'grid', gap:10 }}>
-                    <div><label style={css.label}>Injectors</label><select style={css.select} value={vehicleForm.injectors} onChange={e => setVehicleForm(p => ({...p, injectors:e.target.value}))}><option value="">Select…</option>{OPTS.injectors.map(o=><option key={o}>{o}</option>)}</select></div>
+                    <div><label style={css.label}>Injectors</label><select style={css.select} value={vehicleForm.injectors} onChange={e => setVehicleForm(p => ({...p, injectors:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.injectors || []).map(o=><option key={o}>{o}</option>)}</select></div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
-                      <div><label style={css.label}>MAP Sensor</label><select style={css.select} value={vehicleForm.map_sensor} onChange={e => setVehicleForm(p => ({...p, map_sensor:e.target.value}))}><option value="">Select…</option>{OPTS.map_sensor.map(o=><option key={o}>{o}</option>)}</select></div>
-                      <div><label style={css.label}>Throttle Body</label><select style={css.select} value={vehicleForm.throttle_body} onChange={e => setVehicleForm(p => ({...p, throttle_body:e.target.value}))}><option value="">Select…</option>{OPTS.throttle_body.map(o=><option key={o}>{o}</option>)}</select></div>
+                      <div><label style={css.label}>MAP Sensor</label><select style={css.select} value={vehicleForm.map_sensor} onChange={e => setVehicleForm(p => ({...p, map_sensor:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.map_sensor || []).map(o=><option key={o}>{o}</option>)}</select></div>
+                      <div><label style={css.label}>Throttle Body</label><select style={css.select} value={vehicleForm.throttle_body} onChange={e => setVehicleForm(p => ({...p, throttle_body:e.target.value}))}><option value="">Select…</option>{(PLATFORM_OPTS[vehicleForm.platform]?.throttle_body || []).map(o=><option key={o}>{o}</option>)}</select></div>
                     </div>
                     <div><label style={css.label}>Aftermarket Cam</label><select style={css.select} value={vehicleForm.cam} onChange={e => setVehicleForm(p => ({...p, cam:e.target.value}))}><option value="">Select…</option>{OPTS.cam.map(o=><option key={o}>{o}</option>)}</select></div>
                   </div>
@@ -719,7 +767,7 @@ export default function Portal() {
                   </div>
                 </div>
                 <button onClick={() => setShowTableSubmit(true)} style={{ ...css.btnPrimary, background:T.amber }}>
-                  📋 Submit Base WOT Spark Table
+                  📋 Upload Your Base Tune File
                 </button>
               </div>
             )}
@@ -728,29 +776,43 @@ export default function Portal() {
             {showTableSubmit && (
               <div className="fade-in" style={{ ...css.cardHi, marginBottom:16 }}>
                 <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
-                  <p style={{ ...css.title, margin:0 }}>Submit Base WOT Spark Table</p>
+                  <p style={{ ...css.title, margin:0 }}>Upload Your Base Tune File</p>
                   <button onClick={() => setShowTableSubmit(false)} style={css.btnGhost}>Cancel</button>
                 </div>
                 <p style={{ fontSize:13, color:T.muted, margin:'0 0 16px', lineHeight:1.7 }}>
-                  In HP Tuners VCM Editor, right-click the WOT Spark Table → <strong style={{ color:T.text }}>"Copy with Axis"</strong> → paste below.
-                  This saves your base table. The AI will generate revisions only when needed based on your logs.
+                  Export your current tune as a template: <strong style={{ color:T.text }}>File → Export → Template</strong> → save as .htt.
+                  Upload it below. The AI will automatically find and revise your tables based on your mods and logs — all other tune settings stay untouched.
                 </p>
                 <div style={{ marginBottom:14 }}>
-                  <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>WOT Spark Table</label>
-                  <div style={{ fontSize:11, color:T.faint, marginBottom:5 }}>VCM Editor → Engine → Spark → WOT Spark Table → right-click → Copy with Axis</div>
-                  <textarea
-                    value={sparkTable}
-                    onChange={e => setSparkTable(e.target.value)}
-                    placeholder={"°  512  672  896...  rpm\n0.35  13.5  14  14.5...\n...\ng"}
-                    rows={8}
-                    style={{ ...css.input, fontFamily:'monospace', fontSize:11, lineHeight:1.5, resize:'vertical' }}
-                    spellCheck={false}
-                  />
+                  <label style={{ ...css.label, fontSize:12, fontWeight:600, color:T.green }}>HP Tuners Template File (.htt)</label>
+                  <div style={{ fontSize:11, color:T.faint, marginBottom:8 }}>
+                    In VCM Editor: <strong style={{ color:T.muted }}>File → Export → Template</strong> → save as .htt → upload below
+                  </div>
+                  <label htmlFor="httUpload" style={{
+                    display:'flex', alignItems:'center', gap:10, padding:'14px 16px',
+                    borderRadius:8, border: httFile ? `1.5px solid rgba(61,255,122,0.4)` : `1.5px dashed ${T.borderHi}`,
+                    background: httFile ? 'rgba(61,255,122,0.04)' : 'transparent',
+                    cursor:'pointer', fontSize:13, color: httFile ? T.text : T.muted, transition:'all 0.2s',
+                  }}>
+                    <span style={{ fontSize:20 }}>📁</span>
+                    <div style={{ flex:1 }}>
+                      <div style={{ fontWeight: httFile ? 600 : 400 }}>{httFileName || 'Click to select your .htt template file'}</div>
+                      {httFile && <div style={{ fontSize:11, color:T.green, marginTop:2 }}>✓ Ready to upload</div>}
+                    </div>
+                  </label>
+                  <input id="httUpload" type="file" accept=".htt" style={{ display:'none' }} onChange={e => {
+                    const f = e.target.files?.[0];
+                    if (f) { setHttFile(f); setHttFileName(f.name); }
+                  }}/>
+                  <p style={{ fontSize:11, color:T.faint, margin:'6px 0 0', lineHeight:1.6 }}>
+                    The AI will automatically find and modify your WOT Spark and VE tables.
+                    All other tune settings remain exactly as they are.
+                  </p>
                 </div>
                 {error && <div style={{ padding:'10px 14px', borderRadius:7, marginBottom:12, background:'rgba(255,82,82,0.08)', border:'1px solid rgba(255,82,82,0.2)', color:T.red, fontSize:13 }}>{error}</div>}
-                <button onClick={submitTables} disabled={submittingTables || !sparkTable}
+                <button onClick={submitTables} disabled={submittingTables || !httFile}
                   style={{ ...css.btnPrimary, width:'100%', opacity: submittingTables ? 0.5 : 1 }}>
-                  {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Saving Table…</span> : '💾 Submit Base Table'}
+                  {submittingTables ? <span style={{ animation:'pulse 1.5s infinite' }}>⏳ Saving Table…</span> : '⬆ Upload Base Tune File'}
                 </button>
               </div>
             )}
@@ -790,18 +852,28 @@ export default function Portal() {
                     <div style={{ width:'100%' }}>
                       <button
                         onClick={() => {
-                          navigator.clipboard.writeText(tableRevision.spark_adjusted);
-                          showToast('Spark table copied to clipboard!', 'ok');
+                          // Download the revised HTT file
+                          const bytes = atob(tableRevision.spark_adjusted);
+                          const arr = new Uint8Array(bytes.length);
+                          for (let i = 0; i < bytes.length; i++) arr[i] = bytes.charCodeAt(i);
+                          const blob = new Blob([arr], { type: 'application/octet-stream' });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement('a');
+                          a.href = url;
+                          a.download = `satera_tune_rev${tableRevision.revision}.htt`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                          showToast(`Downloading Rev ${tableRevision.revision} HTT file…`, 'ok');
                         }}
                         style={{ ...css.btnPrimary, marginBottom:10 }}>
-                        📋 Copy Revised Spark Table
+                        ⬇ Download Revised Tune (Rev {tableRevision.revision})
                       </button>
                       <div style={{ fontSize:12, color:T.muted, lineHeight:1.8, padding:'10px 14px', background:'rgba(0,0,0,0.2)', borderRadius:7 }}>
-                        <strong style={{ color:T.text }}>How to paste into HP Tuners:</strong><br/>
-                        1. In VCM Editor, go to <strong style={{ color:T.text }}>Engine → Spark → WOT Spark Table</strong><br/>
-                        2. Click the top-left cell of the table to select all cells<br/>
-                        3. Press <strong style={{ color:T.text }}>Ctrl+A</strong> to select all, then <strong style={{ color:T.text }}>Ctrl+V</strong> to paste<br/>
-                        4. Save and flash your tune, then come back and submit a new log
+                        <strong style={{ color:T.text }}>How to flash in HP Tuners:</strong><br/>
+                        1. Open HP Tuners VCM Editor<br/>
+                        2. Go to <strong style={{ color:T.text }}>File → Open Template</strong> and select the downloaded .htt file<br/>
+                        3. Click <strong style={{ color:T.text }}>Write to Vehicle</strong> to flash<br/>
+                        4. Drive, log, and come back to submit your next log
                       </div>
                     </div>
                   ) : (
