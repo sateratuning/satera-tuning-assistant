@@ -669,37 +669,18 @@ export default function MainApp() {
         <div style={isNarrow ? css.gridNarrow : css.grid2}>
           {/* ── LEFT SIDEBAR ─────────────────────────── */}
           <aside style={{ display:'grid', gap:16, alignContent:'start' }}>
+            {!formData.platform && (
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:160, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
+                <div style={{ fontSize:28 }}>👆</div>
+                <div>Choose your platform above<br/>to unlock vehicle options</div>
+              </div>
+            )}
+            {formData.platform && <div>
             {/* Vehicle form */}
             <div style={css.card}>
               <p style={css.sectionTitle}>Vehicle Details</p>
               <div style={css.fieldGrid}>
-                <div style={{ marginBottom: formData.platform ? 20 : 0 }}>
-                  <p style={{ fontSize:11, color:'#6b9f6b', letterSpacing:1, textTransform:'uppercase', fontWeight:700, marginBottom:10 }}>
-                    Select Your Vehicle Platform
-                  </p>
-                  <div style={{ display:'flex', gap:10 }}>
-                    {[
-                      ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
-                      ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
-                    ].map(([p, icon, label, sub]) => (
-                      <button key={p} onClick={() => setFormData(prev => ({
-                        ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford',
-                        model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
-                      }))} style={{
-                        flex:1, padding:'16px 12px', borderRadius:10, cursor:'pointer', textAlign:'center',
-                        border: formData.platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
-                        background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.2)',
-                        transition:'all 0.2s',
-                        boxShadow: formData.platform===p ? '0 0 16px rgba(61,255,122,0.15)' : 'none',
-                      }}>
-                        <div style={{ fontSize:28, marginBottom:6 }}>{icon}</div>
-                        <div style={{ fontSize:14, fontWeight:700, color: formData.platform===p ? '#3dff7a' : '#dff0df', marginBottom:4 }}>{label}</div>
-                        <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                {formData.platform && <div><div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                <div><div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="year" value={formData.year} onChange={handleChange} style={css.select}>
                     <option value="">Year *</option>{years.map(y=><option key={y} value={y}>{y}</option>)}
                   </select>
@@ -738,7 +719,7 @@ export default function MainApp() {
                 <select name="tire" value={formData.tire} onChange={handleChange} style={css.select}>
                   <option value="">Tire Height</option>{tireHeights.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
-                </div>}
+                </div>
               </div>
             </div>
 
@@ -810,6 +791,7 @@ export default function MainApp() {
                 </div>
               )}
             </div>
+            </div>}
           </aside>
 
           {/* ── RIGHT MAIN AREA ───────────────────────── */}
@@ -844,11 +826,42 @@ export default function MainApp() {
               </div>
             </div>
 
+            {/* ── PLATFORM SELECTOR ── */}
+            <div style={{ background:'#141e14', border:'1px solid #2e472e', borderRadius:10, padding:20 }}>
+              <p style={{ fontSize:12, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
+                Step 1 — Select Your Vehicle Platform
+              </p>
+              <p style={{ fontSize:12, color:'#6b9f6b', margin:'0 0 14px' }}>
+                Choose your platform to unlock the vehicle options and log upload.
+              </p>
+              <div style={{ display:'flex', gap:12 }}>
+                {[
+                  ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
+                  ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
+                ].map(([p, icon, label, sub]) => (
+                  <button key={p} onClick={() => setFormData(prev => ({
+                    ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford',
+                    model:'', engine:'', trans:'', injectors:'', map:'', throttle:''
+                  }))} style={{
+                    flex:1, padding:'18px 14px', borderRadius:10, cursor:'pointer', textAlign:'center',
+                    border: formData.platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
+                    background: formData.platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.25)',
+                    transition:'all 0.2s',
+                    boxShadow: formData.platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                  }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
+                    <div style={{ fontSize:15, fontWeight:700, color: formData.platform===p ? '#3dff7a' : '#dff0df', marginBottom:5 }}>{label}</div>
+                    <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Upload + Analyze — gated behind platform selection */}
             {!formData.platform && (
               <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:120, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
-                <div style={{ fontSize:28 }}>👈</div>
-                <div>Select your vehicle platform on the left to get started</div>
+                <div style={{ fontSize:28 }}>👆</div>
+                <div>Select your vehicle platform above to upload a log</div>
               </div>
             )}
             {formData.platform && <div>{/* Upload + Analyze */}
