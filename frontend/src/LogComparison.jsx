@@ -833,7 +833,8 @@ export default function LogComparison() {
             <select name="tire" value={vehicle.tire} onChange={e => setVehicle(v => ({ ...v, tire: e.target.value }))} style={css.select}>
               <option value="">Tire Height</option>{tireHeights.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
-          </div></></> }
+          </div>
+          </>}
         </div>
 
         {/* ── 2-COLUMN LAYOUT: center + leaderboard ────── */}
