@@ -27,34 +27,45 @@ const API_BASE = process.env.REACT_APP_API_BASE || '';
 
 // ── Design tokens (matches MainApp) ───────────────────────
 const T = {
-  bg:        '#0c0f0c',
-  panel:     '#111811',
-  card:      '#141e14',
-  border:    '#1f2d1f',
-  borderHi:  '#2e472e',
-  green:     '#3dff7a',
-  greenDim:  '#1a7a38',
-  greenLo:   'rgba(61,255,122,0.07)',
-  greenGlow: 'rgba(61,255,122,0.15)',
-  amber:     '#f5a623',
-  amberLo:   'rgba(245,166,35,0.08)',
-  red:       '#ff5252',
-  blue:      '#4db8ff',
-  blueLo:    'rgba(77,184,255,0.08)',
-  orange:    '#ff9f40',
-  text:      '#dff0df',
-  muted:     '#6b9f6b',
-  faint:     '#2e4a2e',
+  // Surfaces — cool graphite, machined-aluminium cast
+  bg:       '#0A0C0D',
+  void:     '#0A0C0D',
+  panel:    '#14181A',
+  card:     '#14181A',
+  cardHi:   '#1C2226',
+  steel:    '#1C2226',
+  border:   '#2A3339',
+  borderHi: '#3A464D',
+  // Signals — each hue carries meaning
+  green:    '#00E676',
+  greenDim: '#00A854',
+  greenLo:  'rgba(0,230,118,0.08)',
+  greenGlow:'rgba(0,230,118,0.15)',
+  ice:      '#7DD3FC',
+  blue:     '#7DD3FC',
+  blueLo:   'rgba(125,211,252,0.08)',
+  amber:    '#FFB020',
+  amberLo:  'rgba(255,176,32,0.08)',
+  red:      '#FF4D4D',
+  orange:   '#FF8A3D',
+  // Ink
+  text:     '#E8EDEF',
+  muted:    '#78888F',
+  faint:    '#4A585E',
+  // Type stacks
+  fDisplay: "'Archivo', system-ui, sans-serif",
+  fBody:    "'IBM Plex Sans', system-ui, sans-serif",
+  fData:    "'IBM Plex Mono', ui-monospace, monospace",
 };
 
 const css = {
-  page:   { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: "'Segoe UI', system-ui, Arial, sans-serif" },
+  page:   { background: T.bg, color: T.text, minHeight: '100vh', fontFamily: T.fBody },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
     padding: '0 28px', height: 64,
     background: 'linear-gradient(135deg, #0a1a0a 0%, #0f280f 50%, #0a1a0a 100%)',
     borderBottom: `1px solid ${T.border}`,
-    boxShadow: '0 1px 0 rgba(61,255,122,0.08)',
+    
     flexWrap: 'wrap', gap: 10,
   },
   logo: {
@@ -71,7 +82,7 @@ const css = {
   cardHighlight: {
     background: T.card, border: `1px solid ${T.borderHi}`,
     borderRadius: 10, padding: 18,
-    boxShadow: `0 0 0 1px rgba(61,255,122,0.04) inset`,
+    
   },
 
   sectionTitle: {
@@ -81,49 +92,49 @@ const css = {
   },
 
   input: {
-    width: '100%', background: '#0a100a',
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    width: '100%', background: 'rgba(0,0,0,0.25)',
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '9px 12px', color: T.text,
     fontSize: 13, outline: 'none', boxSizing: 'border-box',
   },
   select: {
-    width: '100%', background: '#0a100a',
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    width: '100%', background: 'rgba(0,0,0,0.25)',
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '9px 12px', color: T.text, fontSize: 13,
     outline: 'none', appearance: 'none',
-    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%233dff7a\'/%3E%3C/svg%3E")',
+    backgroundImage: 'url("data:image/svg+xml,%3Csvg xmlns=\'http://www.w3.org/2000/svg\' width=\'10\' height=\'6\'%3E%3Cpath d=\'M0 0l5 6 5-6z\' fill=\'%2300E676\'/%3E%3C/svg%3E")',
     backgroundRepeat: 'no-repeat', backgroundPosition: 'calc(100% - 12px) 50%',
     paddingRight: 32, boxSizing: 'border-box',
   },
 
   btnPrimary: {
     background: T.green, color: '#000', fontWeight: 700,
-    border: 'none', borderRadius: 7, padding: '10px 20px',
+    border: 'none', borderRadius: 6, padding: '10px 20px',
     cursor: 'pointer', fontSize: 13, letterSpacing: 0.3,
     whiteSpace: 'nowrap',
   },
   btnGhost: {
     background: 'transparent', color: T.muted,
-    border: `1px solid ${T.border}`, borderRadius: 7,
+    border: `1px solid ${T.border}`, borderRadius: 6,
     padding: '8px 14px', cursor: 'pointer', fontSize: 13,
     whiteSpace: 'nowrap',
   },
   btnWarn: {
     background: T.amberLo, color: T.amber,
-    border: `1px solid rgba(245,166,35,0.3)`, borderRadius: 7,
+    border: `1px solid rgba(255,176,32,0.3)`, borderRadius: 6,
     padding: '8px 14px', cursor: 'pointer', fontSize: 13,
     whiteSpace: 'nowrap',
   },
   btnNav: {
     background: T.greenLo, color: T.green,
-    border: `1px solid ${T.borderHi}`, borderRadius: 7,
+    border: `1px solid ${T.borderHi}`, borderRadius: 6,
     padding: '8px 16px', cursor: 'pointer', fontSize: 13,
     textDecoration: 'none', fontWeight: 600, letterSpacing: 0.3,
     whiteSpace: 'nowrap',
   },
   btnBlue: {
     background: T.blueLo, color: T.blue,
-    border: `1px solid rgba(77,184,255,0.25)`, borderRadius: 7,
+    border: `1px solid rgba(125,211,252,0.25)`, borderRadius: 6,
     padding: '7px 14px', cursor: 'pointer', fontSize: 13,
     whiteSpace: 'nowrap',
   },
@@ -371,12 +382,12 @@ export default function LogComparison() {
     let xEnd = 0;
 
     if (r1) {
-      datasets.push({ label: log1Name || 'Log 1', data: r1.data, tension: 0.1, parsing: false, borderColor: T.green, backgroundColor: 'rgba(61,255,122,0.1)', borderWidth: 2, pointRadius: 0 });
+      datasets.push({ label: log1Name || 'Log 1', data: r1.data, tension: 0.1, parsing: false, borderColor: T.green, backgroundColor: 'rgba(0,230,118,0.1)', borderWidth: 2, pointRadius: 0 });
       datasets.push({ label: `${startMPH}–${endMPH}: ${r1.duration}s`, data: [{ x: r1.data.at(-1).x, y: r1.data.at(-1).y }], pointRadius: 7, pointStyle: 'triangle', showLine: false, borderColor: T.green });
       xEnd = Math.max(xEnd, r1.duration);
     }
     if (r2) {
-      datasets.push({ label: log2Name || 'Log 2', data: r2.data, tension: 0.1, parsing: false, borderColor: T.blue, backgroundColor: 'rgba(77,184,255,0.1)', borderWidth: 2, pointRadius: 0 });
+      datasets.push({ label: log2Name || 'Log 2', data: r2.data, tension: 0.1, parsing: false, borderColor: T.blue, backgroundColor: 'rgba(125,211,252,0.1)', borderWidth: 2, pointRadius: 0 });
       datasets.push({ label: `${startMPH}–${endMPH} (L2): ${r2.duration}s`, data: [{ x: r2.data.at(-1).x, y: r2.data.at(-1).y }], pointRadius: 7, pointStyle: 'triangle', showLine: false, borderColor: T.blue });
       xEnd = Math.max(xEnd, r2.duration);
     }
@@ -554,7 +565,7 @@ export default function LogComparison() {
   return (
     <div style={css.page} className="st-page">
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@600;700&family=Inter:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
         @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
         @keyframes fadeIn  { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
         select option { background: #111811; }
@@ -568,10 +579,10 @@ export default function LogComparison() {
         }
         .upload-label:hover { border-color: ${T.green}; color: ${T.green}; }
         .upload-label.has-file { border-color: ${T.borderHi}; color: ${T.text}; border-style: solid; }
-        .lb-row:hover { background: rgba(61,255,122,0.04); }
+        .lb-row:hover { background: rgba(0,230,118,0.04); }
         .lb-row td { padding: 9px 10px; border-bottom: 1px solid ${T.border}; font-size: 13px; }
         .lb-row-top td { color: #eaff9c; }
-        .lb-row-top { background: rgba(61,255,122,0.03); }
+        .lb-row-top { background: rgba(0,230,118,0.03); }
       `}</style>
 
       {/* ── HEADER ─────────────────────────────────────── */}
@@ -579,8 +590,8 @@ export default function LogComparison() {
         <div className="st-logo">
           <div className="st-logo-icon">
             <svg width="18" height="18" viewBox="0 0 22 22" fill="none">
-              <circle cx="11" cy="11" r="10" stroke="#3dff7a" strokeWidth="1.5"/>
-              <path d="M7 11 L10 14 L15 8" stroke="#3dff7a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <circle cx="11" cy="11" r="10" stroke=T.green strokeWidth="1.5"/>
+              <path d="M7 11 L10 14 L15 8" stroke=T.green strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
           </div>
           Satera Tuning
@@ -612,7 +623,7 @@ export default function LogComparison() {
 
       {/* ── EMAIL AUTH FORM ─────────────────────────────── */}
       {!user && showEmailForm && (
-        <div style={{ background: '#0e160e', borderBottom: `1px solid ${T.border}`, padding: '14px 28px' }}>
+        <div style={{ background: T.card, borderBottom: `1px solid ${T.border}`, padding: '14px 28px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 8, alignItems: 'end', maxWidth: 700 }}>
             <div>
               <label style={{ display: 'block', fontSize: 11, color: T.muted, marginBottom: 4 }}>Email</label>
@@ -625,7 +636,7 @@ export default function LogComparison() {
             <button disabled={authBusy} onClick={handleEmailSignIn} style={css.btnPrimary}>
               {authBusy ? 'Working…' : 'Sign in'}
             </button>
-            <button disabled={authBusy} onClick={handleEmailSignUp} style={{ ...css.btnGhost, color: T.amber, borderColor: 'rgba(245,166,35,0.3)' }}>
+            <button disabled={authBusy} onClick={handleEmailSignUp} style={{ ...css.btnGhost, color: T.amber, borderColor: 'rgba(255,176,32,0.3)' }}>
               {authBusy ? 'Working…' : 'Create account'}
             </button>
           </div>
@@ -642,7 +653,7 @@ export default function LogComparison() {
         <div className="st-how-it-works" style={{ marginBottom: 16 }}>
           <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:4 }}>
             <span style={{ fontSize:14 }}>🏁</span>
-            <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:13, fontWeight:600, letterSpacing:2, textTransform:'uppercase', color:'#3dff7a' }}>How It Works</span>
+            <span style={{ fontFamily:T.fDisplay, fontSize:13, fontWeight:600, letterSpacing:2, textTransform:'uppercase', color:T.green }}>How It Works</span>
           </div>
           <div className="st-how-it-works-steps">
             <div className="st-step">
@@ -665,8 +676,8 @@ export default function LogComparison() {
               <div className="st-step-text"><strong>Submit Your Time</strong>Sign in and add your run to the leaderboard</div>
             </div>
           </div>
-          <div style={{ marginTop:12, paddingTop:12, borderTop:'1px solid rgba(61,255,122,0.08)', display:'flex', alignItems:'center', gap:10 }}>
-            <span style={{ fontSize:11, color:'#5a8f5a' }}>Not sure how to export a CSV from HP Tuners?</span>
+          <div style={{ marginTop:12, paddingTop:12, borderTop:'1px solid rgba(0,230,118,0.08)', display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ fontSize:11, color:T.muted }}>Not sure how to export a CSV from HP Tuners?</span>
             <a
               href="https://youtu.be/PJ2-haxPl6I"
               target="_blank"
@@ -691,28 +702,28 @@ export default function LogComparison() {
 
         {/* ── PLATFORM SELECTOR ── */}
         <div style={{ ...css.card, marginBottom: 20 }}>
-          <p style={{ fontSize:12, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
+          <p style={{ fontSize:12, color:T.green, letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
             Step 1 — Select Your Vehicle Platform
           </p>
-          <p style={{ fontSize:12, color:'#6b9f6b', margin:'0 0 14px' }}>
+          <p style={{ fontSize:12, color:T.muted, margin:'0 0 14px' }}>
             Choose your platform to unlock log upload and vehicle options.
           </p>
-          <div style={{ display:'flex', gap:12 }}>
+          <div className="st-platform">
             {[
-              ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
+                  ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
               ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
             ].map(([p, icon, label, sub]) => (
               <button key={p} onClick={() => { setPlatform(p); setVehicle(v => ({...v, model:'', engine:'', trans:''})); }}
                 style={{
                   flex:1, padding:'18px 14px', borderRadius:10, cursor:'pointer', textAlign:'center',
-                  border: platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
-                  background: platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.25)',
+                  border: platform===p ? '2px solid #00E676' : '1.5px solid #2A3339',
+                  background: platform===p ? 'rgba(0,230,118,0.07)' : 'rgba(0,0,0,0.25)',
                   transition:'all 0.2s',
-                  boxShadow: platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                  boxShadow: platform===p ? '0 0 18px rgba(0,230,118,0.18)' : 'none',
                 }}>
                 <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
-                <div style={{ fontSize:15, fontWeight:700, color: platform===p ? '#3dff7a' : '#dff0df', marginBottom:5 }}>{label}</div>
-                <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
+                <div style={{ fontSize:15, fontWeight:700, color: platform===p ? T.green : T.text, marginBottom:5 }}>{label}</div>
+                <div style={{ fontSize:11, color:T.faint, lineHeight:1.4 }}>{sub}</div>
               </button>
             ))}
           </div>
@@ -720,7 +731,7 @@ export default function LogComparison() {
 
         {/* ── UPLOAD CONTROLS — gated behind platform ─── */}
         {!platform && (
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:140, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24, marginBottom:20 }}>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:140, color:T.faint, fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #2A3339', borderRadius:10, padding:24, marginBottom:20 }}>
             <div style={{ fontSize:28 }}>👆</div>
             <div>Select your vehicle platform above to upload logs</div>
           </div>
@@ -861,12 +872,12 @@ export default function LogComparison() {
                   </div>
                   <div style={{ marginTop: 12, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                     {summary['Log 1'] && (
-                      <span style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(61,255,122,0.08)', borderRadius: 99, color: T.green }}>
+                      <span style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(0,230,118,0.08)', borderRadius: 99, color: T.green }}>
                         🚀 {log1Name || 'Log 1'}: {summary['Log 1']}s
                       </span>
                     )}
                     {summary['Log 2'] && (
-                      <span style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(77,184,255,0.08)', borderRadius: 99, color: T.blue }}>
+                      <span style={{ fontSize: 12, padding: '4px 12px', background: 'rgba(125,211,252,0.08)', borderRadius: 99, color: T.blue }}>
                         🚀 {log2Name || 'Log 2'}: {summary['Log 2']}s
                       </span>
                     )}
@@ -913,18 +924,18 @@ export default function LogComparison() {
               )}
 
               {reviewError && !reviewLoading && (
-                <div style={{ padding: '10px 14px', background: 'rgba(255,82,82,0.08)', borderRadius: 7, border: `1px solid rgba(255,82,82,0.2)`, fontSize: 13, color: T.red }}>
+                <div style={{ padding: '10px 14px', background: 'rgba(255,77,77,0.08)', borderRadius: 6, border: `1px solid rgba(255,77,77,0.2)`, fontSize: 13, color: T.red }}>
                   {reviewError}
                 </div>
               )}
 
               {!reviewLoading && reviewLines.length > 0 && (() => {
                 const CHECK_STYLE = {
-                  critical: { icon: '🚨', label: 'Critical', color: '#ff5252', bg: 'rgba(255,82,82,0.06)',   border: '#ff5252' },
-                  warn:     { icon: '⚠️',  label: 'Warning',  color: '#f5a623', bg: 'rgba(245,166,35,0.06)', border: '#f5a623' },
-                  ok:       { icon: '✅',  label: 'Good',     color: '#3dff7a', bg: 'rgba(61,255,122,0.05)', border: '#3dff7a' },
-                  stat:     { icon: '📊',  label: 'Data',     color: '#4db8ff', bg: 'rgba(77,184,255,0.05)', border: '#4db8ff' },
-                  info:     { icon: 'ℹ️',  label: 'Info',     color: '#6b9f6b', bg: 'transparent',           border: '#2e4a2e' },
+                  critical: { icon: '🚨', label: 'Critical', color: T.red, bg: 'rgba(255,77,77,0.06)',   border: T.red },
+                  warn:     { icon: '⚠️',  label: 'Warning',  color: T.amber, bg: 'rgba(255,176,32,0.06)', border: T.amber },
+                  ok:       { icon: '✅',  label: 'Good',     color: T.green, bg: 'rgba(0,230,118,0.05)', border: T.green },
+                  stat:     { icon: '📊',  label: 'Data',     color: T.ice, bg: 'rgba(125,211,252,0.05)', border: T.ice },
+                  info:     { icon: 'ℹ️',  label: 'Info',     color: T.muted, bg: 'transparent',           border: T.faint },
                 };
                 const criticals = reviewLines.filter(l => l.type === 'critical');
                 const warns     = reviewLines.filter(l => l.type === 'warn');
@@ -951,7 +962,7 @@ export default function LogComparison() {
                         {headline && (
                           <span style={{ fontSize:13, fontWeight:700, color:s.color, display:'block', marginBottom:4, lineHeight:1.4 }}>{headline}</span>
                         )}
-                        <span style={{ fontSize:12, lineHeight:1.6, color:'#dff0df', whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{detail}</span>
+                        <span style={{ fontSize:12, lineHeight:1.6, color:T.text, whiteSpace:'pre-wrap', wordBreak:'break-word' }}>{detail}</span>
                       </div>
                     </div>
                   );
@@ -959,33 +970,32 @@ export default function LogComparison() {
                 return (
                   <div style={{ display:'grid', gap:10, marginTop:4 }}>
                     {criticals.length > 0 && (
-                      <div style={{ background:'rgba(255,82,82,0.06)', border:'1px solid rgba(255,82,82,0.2)', borderRadius:8, padding:12 }}>
-                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#ff5252', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>⚠ Needs Immediate Attention</div>
+                      <div style={{ background:'rgba(255,77,77,0.06)', border:'1px solid rgba(255,77,77,0.2)', borderRadius:8, padding:12 }}>
+                        <div style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.red, letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>⚠ Needs Immediate Attention</div>
                         {criticals.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
                     {warns.length > 0 && (
-                      <div style={{ background:'rgba(245,166,35,0.04)', border:'1px solid rgba(245,166,35,0.15)', borderRadius:8, padding:12 }}>
-                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#f5a623', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Attention Needed</div>
+                      <div style={{ background:'rgba(255,176,32,0.04)', border:'1px solid rgba(255,176,32,0.15)', borderRadius:8, padding:12 }}>
+                        <div style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.amber, letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Attention Needed</div>
                         {warns.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
                     {stats.length > 0 && (
-                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
-                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Performance Data</div>
-                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:6 }}>
+                      <div style={{ background:T.card, border:'1px solid #2A3339', borderRadius:8, padding:12 }}>
+                        <div style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Performance Data</div>
+                        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
                           {stats.map((l,i) => {
                             const parts = l.body.split(':');
-                            const label = parts[0]?.trim(), value = parts.slice(1).join(':').trim();
+                            const label = parts[0]?.trim(), raw = parts.slice(1).join(':').trim();
                             const isTimer = /0.60|40.100|60.130/i.test(label);
+                            const m = raw.match(/^([-\d.,]+)\s*(.*)$/);
+                            const num = m ? m[1] : raw, unit = m && m[2] ? m[2] : '';
                             return (
-                              <div key={i} style={{
-                                background: isTimer ? 'rgba(61,255,122,0.06)' : '#0e160e',
-                                border: isTimer ? '1px solid rgba(61,255,122,0.25)' : '1px solid #1f2d1f',
-                                borderRadius:6, padding:'8px 10px'
-                              }}>
-                                <div style={{ fontSize:10, color: isTimer ? '#3dff7a' : '#6b9f6b', textTransform:'uppercase', letterSpacing:0.8, marginBottom:3, fontWeight: isTimer ? 700 : 400 }}>{label}</div>
-                                <div style={{ fontSize: isTimer ? 20 : 14, fontWeight:700, color: isTimer ? '#3dff7a' : '#4db8ff', fontVariantNumeric:'tabular-nums' }}>{value}</div>
+                              <div key={i} className={`st-readout ${isTimer ? 'is-hero' : 'is-data'}`}>
+                                <div className="st-readout-label">{label}</div>
+                                <div className="st-readout-value">{num}{unit && <span className="unit">{unit}</span>}</div>
+                                <div className="st-readout-scale"/>
                               </div>
                             );
                           })}
@@ -993,13 +1003,13 @@ export default function LogComparison() {
                       </div>
                     )}
                     {oks.length > 0 && (
-                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
-                        <div style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:12, fontWeight:700, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>All Clear</div>
+                      <div style={{ background:T.card, border:'1px solid #2A3339', borderRadius:8, padding:12 }}>
+                        <div style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>All Clear</div>
                         {oks.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
                     {infos.length > 0 && (
-                      <div style={{ background:'#141e14', border:'1px solid #1f2d1f', borderRadius:8, padding:12 }}>
+                      <div style={{ background:T.card, border:'1px solid #2A3339', borderRadius:8, padding:12 }}>
                         {infos.map((l,i) => <Row key={i} {...l}/>)}
                       </div>
                     )}
@@ -1014,18 +1024,18 @@ export default function LogComparison() {
                     <div className='st-ai-card st-ai-card-summary'>
                       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
                         <span style={{ fontSize:16 }}>🧠</span>
-                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:14, fontWeight:700, color:'#3dff7a', letterSpacing:1.5, textTransform:'uppercase' }}>Summary</span>
+                        <span style={{ fontFamily:T.fDisplay, fontSize:14, fontWeight:700, color:T.green, letterSpacing:1.5, textTransform:'uppercase' }}>Summary</span>
                       </div>
-                      <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.summary}</p>
+                      <p style={{ fontSize:13, lineHeight:1.75, color:T.text, margin:0 }}>{reviewAiParts.summary}</p>
                     </div>
                   )}
                   {reviewAiParts.action && (
                     <div className='st-ai-card st-ai-card-action'>
                       <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:12 }}>
                         <span style={{ fontSize:16 }}>🔧</span>
-                        <span style={{ fontFamily:"'Rajdhani',sans-serif", fontSize:14, fontWeight:700, color:'#4db8ff', letterSpacing:1.5, textTransform:'uppercase' }}>What This Means For You</span>
+                        <span style={{ fontFamily:T.fDisplay, fontSize:14, fontWeight:700, color:T.ice, letterSpacing:1.5, textTransform:'uppercase' }}>What This Means For You</span>
                       </div>
-                      <p style={{ fontSize:13, lineHeight:1.75, color:'#dff0df', margin:0 }}>{reviewAiParts.action}</p>
+                      <p style={{ fontSize:13, lineHeight:1.75, color:T.text, margin:0 }}>{reviewAiParts.action}</p>
                     </div>
                   )}
                 </div>
@@ -1076,10 +1086,10 @@ export default function LogComparison() {
                 <div style={{ overflowX: 'auto', borderRadius: 8, border: `1px solid ${T.border}`, maxHeight: 520, overflowY: 'auto' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
                     <thead>
-                      <tr style={{ background: '#0d150d' }}>
+                      <tr style={{ background: T.steel }}>
                         {['#','Name','Year','Model','Power','Time',''].map((h, i) => (
                           <th key={i} style={{
-                            position: 'sticky', top: 0, background: '#0d150d',
+                            position: 'sticky', top: 0, background: T.steel,
                             textAlign: i === 5 ? 'right' : i === 6 ? 'center' : 'left',
                             padding: '8px 10px', fontSize: 11, color: T.muted,
                             fontWeight: 600, letterSpacing: 0.8, textTransform: 'uppercase',
@@ -1105,7 +1115,7 @@ export default function LogComparison() {
                             <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: T.muted }}>
                               {r.vehicle_power || r.power || '—'}
                             </td>
-                            <td style={{ textAlign: 'right', fontWeight: 700, color: isTop ? T.green : T.text, fontVariantNumeric: 'tabular-nums' }}>
+                            <td className="lb-time" style={{ textAlign: 'right', color: isTop ? T.green : T.text }}>
                               {Number.isFinite(r.time_seconds) ? Number(r.time_seconds).toFixed(2) : '—'}s
                             </td>
                             <td style={{ textAlign: 'center' }}>
