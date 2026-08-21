@@ -17,6 +17,7 @@ const getSupabase = require('../Lib/supabase');
 const supabase    = getSupabase();
 const parseCSV    = require('../utils/parseCSV');
 const { buildMessages } = require('../prompt');
+const { parseHTT, generateHTTRevision, spliceHTT, getTableSummary } = require('../utils/httParser');
 
 // ── Upload setup ──────────────────────────────────────────
 const uploadsDir = path.join(__dirname, '..', 'uploads');
@@ -311,13 +312,12 @@ Respond in this EXACT format with no extra text:
 // TUNE TABLE SUBMISSION & REVISIONS
 // ══════════════════════════════════════════════════════════
 
-// POST /portal/sessions/:id/submit-tables — initial spark table paste
-router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ limit: '10mb' }), async (req, res) => {
+// POST /portal/sessions/:id/submit-tables — HTT file upload
+router.post('/portal/sessions/:id/submit-tables', requireAuth, upload.single('htt_file'), async (req, res) => {
+  let filePath = null;
   try {
-    const { spark_table } = req.body || {};
-    const injector_table = null, ve_table = null;
-    if (!spark_table)
-      return res.status(400).json({ error: 'WOT Spark Table is required.' });
+    if (!req.file) return res.status(400).json({ error: 'No .htt file uploaded.' });
+    filePath = req.file.path;
 
     // Fetch session + vehicle
     const { data: session, error: sErr } = await supabase
@@ -325,15 +325,26 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
     if (sErr || !session) return res.status(404).json({ error: 'Session not found.' });
     const vehicle = session.vehicles;
 
-    // Just save the base table — no AI revision yet
-    // Revisions are only generated after log submissions when the AI sees issues
+    // Parse the HTT file
+    const buffer = fs.readFileSync(filePath);
+    const parsed = parseHTT(buffer);
+    const summary = getTableSummary(parsed);
+
+    if (!parsed.tables.wot_spark && !parsed.tables.ve) {
+      return res.status(400).json({ error: 'Could not find tune tables in this .htt file. Make sure it is a valid HP Tuners template export.' });
+    }
+
+    // Store the raw HTT file in Supabase as base64
+    const httBase64 = buffer.toString('base64');
+
+    // Save base HTT to tune_tables
     const { data: tableRev, error: tErr } = await supabase
       .from('tune_tables')
       .insert([{
         session_id:     req.params.id,
         user_id:        req.uid,
         revision:       1,
-        spark_table,
+        spark_table:    httBase64,       // store full HTT as base64
         spark_adjusted: null,
         revision_notes: null,
         triggered_by:   'initial_submission',
@@ -341,16 +352,17 @@ router.post('/portal/sessions/:id/submit-tables', requireAuth, express.json({ li
       .select().single();
     if (tErr) throw tErr;
 
-    // Mark session as having tables submitted
     await supabase.from('tune_sessions').update({
       updated_at: new Date().toISOString(),
-      notes: 'Base table submitted',
+      notes: 'Base HTT file submitted',
     }).eq('id', req.params.id);
 
-    res.json({ ok: true, revision: tableRev });
+    res.json({ ok: true, revision: tableRev, summary, tablesFound: Object.keys(parsed.tables) });
   } catch(e) {
     console.error('submit-tables error:', e);
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    safeUnlink(filePath);
   }
 });
 
@@ -391,6 +403,7 @@ router.post('/portal/vehicles', requireAuth, express.json(), async (req, res) =>
       return res.status(400).json({ ok: false, error: 'Missing required fields: year, model, engine, fuel, power_adder' });
     const { data, error } = await supabase.from('vehicles').insert([{
       user_id: req.uid, user_email: v.user_email || null,
+      platform: v.platform || 'mopar',
       nickname: v.nickname || null, vin: v.vin || null,
       year: v.year, make: v.make || 'Dodge', model: v.model,
       engine: v.engine, fuel: v.fuel, power_adder: v.power_adder,
@@ -566,22 +579,31 @@ router.post('/portal/sessions/:id/submit-stage', requireAuth, upload.single('log
           const revNum = (latestTables.revision || 1) + 1;
           const triggerReason = `Stage ${stage} failed. Log findings: ${observations}`;
 
-          const newRevision = await generateTableRevision({
+          // Get the HTT buffer to modify
+          const baseHTTBase64 = latestTables.spark_adjusted || latestTables.spark_table;
+          const httBuffer = Buffer.from(baseHTTBase64, 'base64');
+          const parsed = parseHTT(httBuffer);
+
+          const aiRevision = await generateHTTRevision({
             vehicle,
-            sparkTable:  latestTables.spark_adjusted || latestTables.spark_table,
+            parsed,
             checklist:   observations,
             triggerReason,
             revisionNum: revNum,
           });
 
+          // Splice revised tables back into HTT file
+          const revisedBuffer = spliceHTT(parsed, aiRevision);
+          const revisedBase64 = revisedBuffer.toString('base64');
+
           await supabase.from('tune_tables').insert([{
             session_id:     sessionId,
             user_id:        req.uid,
             revision:       revNum,
-            spark_table:    latestTables.spark_adjusted || latestTables.spark_table,
-            spark_adjusted: newRevision.spark_adjusted,
-            revision_notes: newRevision.revision_notes,
-            triggered_by:   `stage_${stage}_${passed ? 'pass' : 'fail'}`,
+            spark_table:    baseHTTBase64,
+            spark_adjusted: revisedBase64,
+            revision_notes: aiRevision.notes,
+            triggered_by:   `stage_${stage}_fail`,
           }]);
         }
       } catch(revErr) {
