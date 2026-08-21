@@ -228,7 +228,7 @@ function detectPullGear({ rpm, mph, tireIn, rear }) {
 // =====================================================
 // Checklist
 // =====================================================
-function formatChecklist(parsed, headers, isNA = false) {
+function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   const summary = [];
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
   const hasCol = (name) => headers.includes(name);
@@ -264,26 +264,46 @@ function formatChecklist(parsed, headers, isNA = false) {
     return psi > 0 ? psi : 0;
   };
 
-  const knockEvents = parsed
-    .map(r => ({ retard: Math.abs(r['Total Knock Retard'] || 0), rpm: r[rpmName], boost: getBoostPsi(r) }))
-    .filter(r => Number.isFinite(r.retard) && r.retard > 0);
+  // ── Knock (platform-aware) ────────────────────────────
+  const knockColName = 'Knock Retard'; // same channel name on both Ford and Mopar
+  const knockRaw = parsed.map(r => r['Total Knock Retard'] ?? r['Knock Retard'] ?? null).filter(v => Number.isFinite(v));
+  const knockColFound = hasCol('Total Knock Retard') || hasCol('Knock Retard');
 
-  if (!hasCol('Total Knock Retard')) {
+  if (!knockColFound) {
     summary.push('INFO: Knock column not found in this log.');
-  } else if (!knockEvents.length) {
-    summary.push('OK: No knock detected — timing looks clean throughout the pull.');
-  } else {
-    const peak = knockEvents.reduce((a, b) => b.retard > a.retard ? b : a);
-    const pk       = peak.retard;
-    const rpmStr   = Number.isFinite(peak.rpm)   ? ' around ' + Math.round(peak.rpm / 100) * 100 + ' RPM'   : '';
-    const boostStr = peak.boost !== null && peak.boost > 0 ? ' with approximately ' + peak.boost.toFixed(1) + ' psi of boost' : '';
-
-    if (pk <= 2) {
-      summary.push('WARN: I am seeing a small amount of knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is relatively minor but worth keeping an eye on. The ECU is pulling timing to protect the engine, which is normal, but we want to minimize this as much as possible.');
-    } else if (pk <= 5) {
-      summary.push('WARN: I am seeing moderate knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. The ECU is actively pulling timing to protect the engine. This level of knock needs to be addressed — continued hard driving like this can cause engine damage over time.');
+  } else if (isFord) {
+    // Ford: positive = pulling timing (BAD), negative = adding timing (GOOD)
+    const peakPositive = knockRaw.length ? Math.max(...knockRaw) : 0;
+    const peakNegative = knockRaw.length ? Math.min(...knockRaw) : 0;
+    if (peakPositive > 2.0) {
+      summary.push('CRITICAL: Positive knock retard reached +' + peakPositive.toFixed(1) + '° — the ECU is pulling significant timing to protect the engine. Do not make more pulls until this is resolved.');
+    } else if (peakPositive > 0.5) {
+      summary.push('WARN: Low-level positive knock detected — up to +' + peakPositive.toFixed(1) + '°. The ECU is pulling a small amount of timing. Worth investigating the cause.');
+    } else if (peakNegative < -1.0) {
+      summary.push('OK: Knock sensors are active and healthy — the ECU is adding up to ' + Math.abs(peakNegative).toFixed(1) + '° of timing. This means the tune has headroom and the engine is running confidently.');
     } else {
-      summary.push('CRITICAL: I am seeing significant knock in this log — up to ' + pk.toFixed(1) + ' degrees of timing retard' + rpmStr + boostStr + '. This is a serious concern. The engine is knocking hard and the ECU is pulling large amounts of timing to compensate. Do NOT continue making hard pulls until this is resolved — damage can happen quickly at this level.');
+      summary.push('OK: No knock activity detected — timing is clean.');
+    }
+  } else {
+    // Mopar: any KR magnitude = pulling timing = bad
+    const knockEvents = parsed
+      .map(r => ({ retard: Math.abs(r['Total Knock Retard'] || 0), rpm: r[rpmName], boost: getBoostPsi(r) }))
+      .filter(r => Number.isFinite(r.retard) && r.retard > 0);
+
+    if (!knockEvents.length) {
+      summary.push('OK: No knock detected — timing looks clean throughout the pull.');
+    } else {
+      const peak = knockEvents.reduce((a, b) => b.retard > a.retard ? b : a);
+      const pk       = peak.retard;
+      const rpmStr   = Number.isFinite(peak.rpm)   ? ' around ' + Math.round(peak.rpm / 100) * 100 + ' RPM'   : '';
+      const boostStr = peak.boost !== null && peak.boost > 0 ? ' with approximately ' + peak.boost.toFixed(1) + ' psi of boost' : '';
+      if (pk <= 2) {
+        summary.push('WARN: I am seeing a small amount of knock in this log — up to ' + pk.toFixed(1) + '° of timing retard' + rpmStr + boostStr + '. This is relatively minor but worth keeping an eye on.');
+      } else if (pk <= 5) {
+        summary.push('WARN: I am seeing moderate knock in this log — up to ' + pk.toFixed(1) + '°' + rpmStr + boostStr + '. The ECU is actively pulling timing to protect the engine. This needs to be addressed.');
+      } else {
+        summary.push('CRITICAL: Significant knock detected — up to ' + pk.toFixed(1) + '°' + rpmStr + boostStr + '. Do NOT continue making hard pulls until this is resolved.');
+      }
     }
   }
 
@@ -621,7 +641,14 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
     const powerAdder = String(meta.power_adder || meta.power || '').trim().toLowerCase();
     const isNA = !powerAdder || powerAdder === 'n/a' || powerAdder === 'naturally aspirated' || powerAdder === '';
 
-    const checklist = formatChecklist(parsed, headers, isNA);
+    // Detect platform for platform-specific checklist logic
+    const make   = String(meta.make   || '').toLowerCase();
+    const engine = String(meta.engine || '').toLowerCase();
+    const isFord = make === 'ford' || engine.includes('coyote') || engine.includes('gen1') ||
+                   engine.includes('gen2') || engine.includes('gen3') || engine.includes('gen4') ||
+                   engine.includes('voodoo') || engine.includes('predator') || engine.includes('5.0l') || engine.includes('5.2l');
+
+    const checklist = formatChecklist(parsed, headers, isNA, isFord);
 
     const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
       rpm:     r['Engine RPM (SAE)'],
