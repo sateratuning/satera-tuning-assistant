@@ -739,6 +739,7 @@ export default function MainApp() {
                   <option value="">Tire Height</option>{tireHeights.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
+              </>}
             </div>
 
             {/* Dyno mode */}
@@ -1089,6 +1090,7 @@ export default function MainApp() {
               </div>
             )}
 
+          </>}
           </main>
         </div>
       </div>
