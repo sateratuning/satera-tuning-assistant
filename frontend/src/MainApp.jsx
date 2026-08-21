@@ -699,7 +699,7 @@ export default function MainApp() {
                     ))}
                   </div>
                 </div>
-                {formData.platform && <><div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+                {formData.platform && <div><div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                   <select name="year" value={formData.year} onChange={handleChange} style={css.select}>
                     <option value="">Year *</option>{years.map(y=><option key={y} value={y}>{y}</option>)}
                   </select>
@@ -738,8 +738,10 @@ export default function MainApp() {
                 <select name="tire" value={formData.tire} onChange={handleChange} style={css.select}>
                   <option value="">Tire Height</option>{tireHeights.map(t=><option key={t} value={t}>{t}</option>)}
                 </select>
-              </>}
-            </div>
+              </div>
+              </div>{/* end platform gate */}
+              </div>{/* end fieldGrid */}
+            </div>{/* end vehicle card */}
 
             {/* Dyno mode */}
             <div style={css.card}>
@@ -850,7 +852,7 @@ export default function MainApp() {
                 <div>Select your vehicle platform on the left to get started</div>
               </div>
             )}
-            {formData.platform && <>{/* Upload + Analyze */}
+            {formData.platform && <div>{/* Upload + Analyze */}
             <div className="st-card-highlight">
               <p className="st-section-title">Datalog Upload</p>
               <div style={{ display:'flex', gap:12, alignItems:'center', flexWrap:'wrap' }}>
@@ -1089,7 +1091,7 @@ export default function MainApp() {
               </div>
             )}
 
-          </>}
+          </div>}
           </main>
         </div>
       </div>
