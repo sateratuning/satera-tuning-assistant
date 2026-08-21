@@ -182,7 +182,7 @@ export default function Portal() {
   const [stageLogs, setStageLogs]             = useState([]);
 
   const [vehicleForm, setVehicleForm] = useState({
-    platform:'mopar', nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'',
+    platform:'', nickname:'', vin:'', year:'', make:'', model:'', engine:'', fuel:'', power_adder:'',
     transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'',
     throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'',
   });
@@ -283,7 +283,7 @@ export default function Portal() {
       );
       await loadVehicles();
       setView('garage');
-      setVehicleForm({ platform:'mopar', nickname:'', vin:'', year:'', make:'Dodge', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
+      setVehicleForm({ platform:'', nickname:'', vin:'', year:'', make:'', model:'', engine:'', fuel:'', power_adder:'', transmission:'', rear_gear:'', tire_height:'', injectors:'', map_sensor:'', throttle_body:'', cam:'', calid:'', trans_calid:'', trans_model:'', notes:'' });
       showToast('Vehicle saved!');
     } catch (e) { setError(e.message); }
   };
@@ -607,28 +607,49 @@ export default function Portal() {
               </div>
             )}
 
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
+            {/* ── PLATFORM SELECTOR ── */}
+            <div style={{ ...css.card, marginBottom:20 }}>
+              <p style={{ fontSize:12, color:T.green, letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
+                Step 1 — Select Your Vehicle Platform
+              </p>
+              <p style={{ fontSize:12, color:T.muted, margin:'0 0 14px' }}>
+                Choose your platform to unlock the vehicle options.
+              </p>
+              <div style={{ display:'flex', gap:12 }}>
+                {[
+                  ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
+                  ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
+                ].map(([p, icon, label, sub]) => (
+                  <button key={p} onClick={() => setVehicleForm(prev => ({
+                    ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford', model:'', engine:'', transmission:'', injectors:'', map_sensor:'', throttle_body:''
+                  }))} style={{
+                    flex:1, padding:'18px 14px', borderRadius:10, cursor:'pointer', textAlign:'center',
+                    border: vehicleForm.platform===p ? `2px solid ${T.green}` : `1.5px solid ${T.border}`,
+                    background: vehicleForm.platform===p ? T.greenLo : 'rgba(0,0,0,0.25)',
+                    transition:'all 0.2s',
+                    boxShadow: vehicleForm.platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                  }}>
+                    <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
+                    <div style={{ fontSize:15, fontWeight:700, color: vehicleForm.platform===p ? T.green : T.text, marginBottom:5 }}>{label}</div>
+                    <div style={{ fontSize:11, color:T.faint, lineHeight:1.4 }}>{sub}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {!vehicleForm.platform && (
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:160, color:T.faint, fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:`1.5px dashed ${T.border}`, borderRadius:10, padding:24 }}>
+                <div style={{ fontSize:28 }}>👆</div>
+                <div>Select your vehicle platform above to fill in vehicle details</div>
+              </div>
+            )}
+
+            {vehicleForm.platform && <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:20 }}>
               {/* Left col */}
               <div style={{ display:'grid', gap:16 }}>
                 <div style={css.card}>
                   <SectionTitle>Vehicle Identity</SectionTitle>
                   <div style={{ display:'grid', gap:10 }}>
-                    <div>
-                      <label style={css.label}>Platform *</label>
-                      <div style={{ display:'flex', gap:8 }}>
-                        {[['mopar','🔧 Mopar / Gen3 HEMI'],['ford','🐎 Ford Coyote']].map(([p, label]) => (
-                          <button key={p} onClick={() => setVehicleForm(prev => ({
-                            ...prev, platform:p, make: p==='mopar'?'Dodge':'Ford', model:'', engine:'', transmission:'', injectors:'', map_sensor:'', throttle_body:''
-                          }))} style={{
-                            flex:1, padding:'10px 8px', borderRadius:7, cursor:'pointer', fontSize:13, fontWeight:600,
-                            border: vehicleForm.platform===p ? `1.5px solid ${T.green}` : `1px solid ${T.border}`,
-                            background: vehicleForm.platform===p ? T.greenLo : 'transparent',
-                            color: vehicleForm.platform===p ? T.green : T.muted,
-                            transition:'all 0.2s',
-                          }}>{label}</button>
-                        ))}
-                      </div>
-                    </div>
                     <div><label style={css.label}>Nickname (optional)</label><input placeholder={vehicleForm.platform==='ford' ? 'e.g. My Mustang GT' : 'e.g. My Hellcat'} style={css.input} value={vehicleForm.nickname} onChange={e => setVehicleForm(p => ({...p, nickname:e.target.value}))}/></div>
                     <div><label style={css.label}>VIN (optional)</label><input placeholder="17-digit VIN" style={css.input} value={vehicleForm.vin} onChange={e => setVehicleForm(p => ({...p, vin:e.target.value}))}/></div>
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
@@ -728,7 +749,7 @@ export default function Portal() {
                   <button onClick={() => setView('garage')} style={css.btnGhost}>Cancel</button>
                 </div>
               </div>
-            </div>
+            </div>}
           </div>
         )}
 
