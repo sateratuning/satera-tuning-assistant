@@ -286,7 +286,7 @@ export default function LogComparison() {
   const [interval, setInterval]         = useState('60-130');
 
   // Vehicle
-  const [platform, setPlatform] = useState('mopar');
+  const [platform, setPlatform] = useState('');
   const [vehicle, setVehicle] = useState({
     name: '', year: '', model: '', engine: '', injectors: '', map: '',
     throttle: '', power: '', trans: '', tire: '', gear: '', fuel: ''
@@ -689,8 +689,43 @@ export default function LogComparison() {
           </div>
         </div>
 
-        {/* ── UPLOAD CONTROLS ─────────────────────────── */}
-        <div style={{ ...css.cardHighlight, marginBottom: 20 }}>
+        {/* ── PLATFORM SELECTOR ── */}
+        <div style={{ ...css.card, marginBottom: 20 }}>
+          <p style={{ fontSize:12, color:'#3dff7a', letterSpacing:2, textTransform:'uppercase', fontWeight:700, margin:'0 0 4px' }}>
+            Step 1 — Select Your Vehicle Platform
+          </p>
+          <p style={{ fontSize:12, color:'#6b9f6b', margin:'0 0 14px' }}>
+            Choose your platform to unlock log upload and vehicle options.
+          </p>
+          <div style={{ display:'flex', gap:12 }}>
+            {[
+              ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
+              ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
+            ].map(([p, icon, label, sub]) => (
+              <button key={p} onClick={() => { setPlatform(p); setVehicle(v => ({...v, model:'', engine:'', trans:''})); }}
+                style={{
+                  flex:1, padding:'18px 14px', borderRadius:10, cursor:'pointer', textAlign:'center',
+                  border: platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
+                  background: platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.25)',
+                  transition:'all 0.2s',
+                  boxShadow: platform===p ? '0 0 18px rgba(61,255,122,0.18)' : 'none',
+                }}>
+                <div style={{ fontSize:32, marginBottom:8 }}>{icon}</div>
+                <div style={{ fontSize:15, fontWeight:700, color: platform===p ? '#3dff7a' : '#dff0df', marginBottom:5 }}>{label}</div>
+                <div style={{ fontSize:11, color:'#4a7a4a', lineHeight:1.4 }}>{sub}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── UPLOAD CONTROLS — gated behind platform ─── */}
+        {!platform && (
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:140, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24, marginBottom:20 }}>
+            <div style={{ fontSize:28 }}>👆</div>
+            <div>Select your vehicle platform above to upload logs</div>
+          </div>
+        )}
+        {platform && <div style={{ ...css.cardHighlight, marginBottom: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
             <p className='st-section-title' style={{ margin:0 }}>Upload & Compare</p>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -757,10 +792,10 @@ export default function LogComparison() {
               </span>
             )}
           </div>
-        </div>
+        </div>}
 
         {/* ── VEHICLE BAR (horizontal, full width) ────── */}
-        <div style={{ ...css.card, marginBottom: 4 }}>
+        {platform && <div style={{ ...css.card, marginBottom: 4 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
             <p className='st-section-title' style={{ margin:0 }}>Vehicle Details</p>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -775,32 +810,7 @@ export default function LogComparison() {
               )}
             </div>
           </div>
-          {/* Platform selector */}
-          <div style={{ marginBottom: platform ? 16 : 0 }}>
-            <p style={{ fontSize:11, color:'#6b9f6b', letterSpacing:1, textTransform:'uppercase', fontWeight:700, margin:'0 0 8px' }}>
-              Select Your Vehicle Platform
-            </p>
-            <div style={{ display:'flex', gap:10 }}>
-              {[
-                ['mopar','🔧','Mopar / Gen3 HEMI','Charger · Challenger · Durango · Ram'],
-                ['ford', '🐎','Ford Coyote',      'Mustang GT · GT500 · F-150 · Dark Horse'],
-              ].map(([p, icon, label, sub]) => (
-                <button key={p} onClick={() => { setPlatform(p); setVehicle(v => ({...v, model:'', engine:'', trans:''})); }}
-                  style={{
-                    flex:1, padding:'14px 12px', borderRadius:10, cursor:'pointer', textAlign:'center',
-                    border: platform===p ? '2px solid #3dff7a' : '1.5px solid #1f2d1f',
-                    background: platform===p ? 'rgba(61,255,122,0.07)' : 'rgba(0,0,0,0.2)',
-                    transition:'all 0.2s',
-                    boxShadow: platform===p ? '0 0 16px rgba(61,255,122,0.15)' : 'none',
-                  }}>
-                  <div style={{ fontSize:24, marginBottom:4 }}>{icon}</div>
-                  <div style={{ fontSize:13, fontWeight:700, color: platform===p ? '#3dff7a' : '#dff0df', marginBottom:3 }}>{label}</div>
-                  <div style={{ fontSize:11, color:'#4a7a4a' }}>{sub}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-          {platform && <><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
             <input
               name="name"
               placeholder={user ? maskedDisplayName(user) : 'Display name'}
@@ -834,21 +844,13 @@ export default function LogComparison() {
               <option value="">Tire Height</option>{tireHeights.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           </div>
-          </>}
-        </div>
+        </div>}
 
         {/* ── 2-COLUMN LAYOUT: center + leaderboard ────── */}
         <div style={layoutStyle}>
 
           {/* ── COL 1: Graph + AI Review ──────────────── */}
           <div style={{ display: 'grid', gap: 16, alignContent: 'start' }}>
-            {!platform && (
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'center', minHeight:200, color:'#4a7a4a', fontSize:13, textAlign:'center', flexDirection:'column', gap:8, border:'1.5px dashed #1f2d1f', borderRadius:10, padding:24 }}>
-                <div style={{ fontSize:32 }}>👆</div>
-                <div>Select your vehicle platform above to get started</div>
-              </div>
-            )}
-
             {/* Speed graph */}
             <div style={css.card}>
               <p className='st-section-title'>Speed vs Time — {interval} mph</p>
