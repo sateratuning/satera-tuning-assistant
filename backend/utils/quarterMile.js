@@ -75,8 +75,11 @@ const TRAP_SPREAD_MPH = 1.5;
 // ET is sensitive to the launch, which a 60-130 never sees.
 const ET_EXTRA_S = 0.10;
 
-const r1 = (n) => Math.round(n * 10) / 10;
-const r2 = (n) => Math.round(n * 100) / 100;
+// Display precision: these are estimates, so extra decimals would be
+// false precision. Trap speed rounds to whole mph, ET to one decimal.
+const rTrap = (n) => Math.round(n);
+const rEt   = (n) => Math.round(n * 10) / 10;
+const r2    = (n) => Math.round(n * 100) / 100;
 
 /**
  * Full estimate from a 60-130 mph time.
@@ -107,16 +110,23 @@ function estimateQuarterMile(sixtyTo130) {
   const etHigh = etFromTrap(trapLow)  + ET_EXTRA_S;
   const etMid  = etFromTrap(trapMid);
 
+  const tLo = rTrap(trapLow),  tHi = rTrap(trapHigh);
+  const eLo = rEt(etLow),      eHi = rEt(etHigh);
+
   return {
     sixtyTo130: t,
-    trapMph:    r1(trapMid),
-    trapLow:    r1(trapLow),
-    trapHigh:   r1(trapHigh),
-    trapRange:  `${r1(trapLow).toFixed(1)}-${r1(trapHigh).toFixed(1)} mph`,
-    et:         r2(etMid),
-    etLow:      r2(etLow),
-    etHigh:     r2(etHigh),
-    etRange:    `${r2(etLow).toFixed(2)}-${r2(etHigh).toFixed(2)}s`,
+    trapMph:    rTrap(trapMid),
+    trapLow:    tLo,
+    trapHigh:   tHi,
+    // "144–147 mph"  (collapses to a single figure if rounding matches)
+    trapRange:  tLo === tHi ? `${tLo} mph` : `${tLo}–${tHi} mph`,
+    trapValue:  tLo === tHi ? `${tLo}`     : `${tLo}–${tHi}`,
+    et:         rEt(etMid),
+    etLow:      eLo,
+    etHigh:     eHi,
+    // "8.9–9.3s"
+    etRange:    eLo === eHi ? `${eLo.toFixed(1)}s` : `${eLo.toFixed(1)}–${eHi.toFixed(1)}s`,
+    etValue:    eLo === eHi ? eLo.toFixed(1)       : `${eLo.toFixed(1)}–${eHi.toFixed(1)}`,
     inRange:    true,
     note:       'Estimated from the 60-130 time, which excludes the launch — assumes the car hooks.',
   };
