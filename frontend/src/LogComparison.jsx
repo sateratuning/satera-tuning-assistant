@@ -1080,23 +1080,46 @@ export default function LogComparison() {
                           const w = parseFloat(raceWeight);
                           const custom = Number.isFinite(w) && w > 0 && w !== baseline;
                           return (
-                            <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
-                              <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
-                                <label style={{ fontFamily:T.fData, fontSize:10, letterSpacing:'0.14em', textTransform:'uppercase', color:T.muted }}>
-                                  Race weight
-                                </label>
+                            <div style={{
+                              marginTop:14, padding:'14px 16px', borderRadius:9,
+                              background: custom ? 'rgba(0,230,118,0.05)' : 'rgba(0,0,0,0.22)',
+                              border:`1px solid ${custom ? 'rgba(0,230,118,0.3)' : T.border}`,
+                              transition:'background .2s, border-color .2s',
+                            }}>
+                              <label style={{
+                                display:'block', fontFamily:T.fData, fontSize:11,
+                                letterSpacing:'0.14em', textTransform:'uppercase',
+                                color: custom ? T.green : T.muted, marginBottom:7, fontWeight:600,
+                              }}>
+                                Race Weight
+                              </label>
+                              <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8 }}>
                                 <input
                                   type="number" min="1000" max="9000" step="25"
-                                  placeholder={`${baseline} assumed`}
+                                  placeholder={String(baseline)}
                                   value={raceWeight}
                                   onChange={e => setRaceWeight(e.target.value)}
-                                  style={{ ...css.input, width:140, fontFamily:T.fData, fontSize:12 }}
+                                  style={{
+                                    width:150, padding:'11px 13px', borderRadius:8,
+                                    background:'rgba(0,0,0,0.35)',
+                                    border:`1.5px solid ${custom ? 'rgba(0,230,118,0.45)' : T.borderHi}`,
+                                    color: custom ? T.green : T.text,
+                                    fontFamily:T.fData, fontSize:20, fontWeight:600,
+                                    fontVariantNumeric:'tabular-nums slashed-zero',
+                                    outline:'none', boxSizing:'border-box',
+                                  }}
                                 />
-                                <span style={{ fontSize:11, color: custom ? T.green : T.faint }}>
-                                  {custom
-                                    ? `Corrected for ${w} lb (${w > baseline ? '+' : ''}${(((w - baseline)/100)*0.1).toFixed(1)}s)`
-                                    : `Assuming ${baseline} lb with driver`}
-                                </span>
+                                <span style={{ fontFamily:T.fData, fontSize:14, color:T.muted }}>lb</span>
+                              </div>
+                              <div style={{ fontSize:13, lineHeight:1.5, fontWeight: custom ? 600 : 400, color: custom ? T.green : T.text }}>
+                                {custom
+                                  ? `Corrected for ${w} lb — ${w > baseline ? '+' : ''}${(((w - baseline)/100)*0.1).toFixed(1)}s vs ${baseline} lb`
+                                  : `Assuming ${baseline} lb with driver`}
+                              </div>
+                              <div style={{ fontSize:12, color:T.muted, marginTop:3 }}>
+                                {custom
+                                  ? 'ET, power and lb/hp above are adjusted to this weight.'
+                                  : 'Enter your actual race weight to sharpen the estimate.'}
                               </div>
                             </div>
                           );
