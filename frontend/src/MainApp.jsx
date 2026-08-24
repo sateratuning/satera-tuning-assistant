@@ -169,28 +169,49 @@ function parseCSV(raw) {
   const headerRowIndex = rows.findIndex(r => /(^|,)\s*offset\s*(,|$)/i.test(r));
   if (headerRowIndex === -1) return null;
   const headers = rows[headerRowIndex].split(',').map(h => h.trim());
-  const dataStart = headerRowIndex + 4;
+  let dataStart = headerRowIndex + 1;
+  while (dataStart < rows.length) {
+    const c = rows[dataStart].split(',');
+    const numeric = c.filter(x => x.trim() !== '' && Number.isFinite(parseFloat(x))).length;
+    if (c.length > 1 && numeric >= Math.max(2, Math.floor(c.length * 0.4))) break;
+    dataStart++;
+  }
   const dataRows = rows.slice(dataStart);
-  const speedIndex = findCol(headers, ['Vehicle Speed (SAE)', 'Vehicle Speed', 'Speed (SAE)', 'Speed']);
-  const timeIndex  = findCol(headers, ['Offset', 'Time', 'Time (s)']);
-  const pedalIndex = findCol(headers, ['Accelerator Position D (SAE)', 'Accelerator Position (SAE)', 'Throttle Position (SAE)', 'Throttle Position (%)', 'TPS', 'Relative Accelerator Position']);
-  const rpmIndex   = findCol(headers, ['Engine RPM', 'Engine RPM (SAE)', 'RPM', 'RPM (SAE)', 'Engine Speed (RPM)', 'Engine Speed', 'Engine Speed (SAE)']);
-  if (speedIndex === -1 || timeIndex === -1 || pedalIndex === -1) return null;
+  const speedIndex = findCol(headers, ['Vehicle Speed (SAE)', 'Vehicle Speed', 'Speed (SAE)', 'Vehicle Speed (VSS)', 'VSS', 'Speed']);
+  const timeIndex  = findCol(headers, ['Offset', 'Time (s)', 'Time', 'Timestamp', 'Elapsed Time', 'Session Time']);
+  const pedalIndex = findCol(headers, [
+    'Accelerator Position D (SAE)', 'Accelerator Pedal Position (SAE)', 'Accelerator Pedal Position',
+    'Accelerator Position (SAE)', 'Accelerator Position', 'Relative Accelerator Position',
+    'Throttle Position (SAE)', 'Throttle Position (%)', 'Relative Throttle Position (SAE)',
+    'Throttle Angle', 'Throttle Position', 'Pedal Position', 'TPS',
+  ]);
+  const rpmIndex   = findCol(headers, ['Engine RPM (SAE)', 'Engine RPM', 'RPM (SAE)', 'RPM', 'Engine Speed (RPM)', 'Engine Speed (SAE)', 'Engine Speed']);
+  // Speed + time are essential. Pedal is not — without it we simply
+  // can't isolate a WOT pull, so fall back to using the whole trace.
+  if (speedIndex === -1 || timeIndex === -1) return null;
   const points = [];
   for (let row of dataRows) {
     if (!row.includes(',')) continue;
     const cols = row.split(',');
     const s = parseFloat(cols[speedIndex]);
     const t = parseFloat(cols[timeIndex]);
-    const p = parseFloat(cols[pedalIndex]);
-    const r = rpmIndex !== -1 ? parseFloat(cols[rpmIndex]) : undefined;
-    if (isNum(s) && isNum(t) && isNum(p)) points.push({ s, t, p, r: isNum(r) ? r : null });
+    const p = pedalIndex !== -1 ? parseFloat(cols[pedalIndex]) : NaN;
+    const r = rpmIndex   !== -1 ? parseFloat(cols[rpmIndex])   : undefined;
+    // A row is usable on speed + time alone; pedal just refines WOT detection.
+    if (isNum(s) && isNum(t)) points.push({ s, t, p: isNum(p) ? p : null, r: isNum(r) ? r : null });
   }
   if (!points.length) return null;
+  const havePedal = points.some(pt => pt.p !== null);
   let segments = [], current = [];
-  for (let pt of points) {
-    if (pt.p >= 86) current.push(pt);
-    else if (current.length) { segments.push(current); current = []; }
+  if (havePedal) {
+    // Gate on "near this log's own peak" so Ford blade-angle logs
+    // (which cap well under 100%) still register as WOT.
+    const maxP = Math.max(...points.map(pt => pt.p).filter(v => v !== null));
+    const gate = maxP >= 90 ? Math.max(86, maxP * 0.95) : Math.max(60, maxP * 0.9);
+    for (let pt of points) {
+      if (pt.p !== null && pt.p >= gate) current.push(pt);
+      else if (current.length) { segments.push(current); current = []; }
+    }
   }
   if (current.length) segments.push(current);
   const pack = (arr) => ({
@@ -204,7 +225,7 @@ function parseCSV(raw) {
   if (!segments.length) return pack(points);
   segments.sort((a, b) => (a.at(-1).t - a[0].t) - (b.at(-1).t - b[0].t));
   const best = segments[0];
-  const launchIdx = best.findIndex(p => p.p >= 86 && p.s > 0.5);
+  const launchIdx = best.findIndex(p => (p.p === null || p.p >= 60) && p.s > 0.5);
   const trimmed = launchIdx >= 0 ? best.slice(launchIdx) : best;
   const t0 = trimmed[0].t;
   const norm = trimmed.map(p => ({ ...p, t: +(p.t - t0).toFixed(3) }));
