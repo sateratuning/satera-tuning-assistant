@@ -572,8 +572,8 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
     // 60-130 excludes the launch, so it maps cleanly to trap speed
     const qm = estimateQuarterMile(s130);
     if (qm && qm.inRange) {
-      summary.push('STAT: Estimated 1/4 mile trap: ' + qm.trapRange);
-      summary.push('STAT: Estimated 1/4 mile ET: ' + qm.etRange);
+      summary.push('STAT: Estimated 1/4 mile trap: ' + qm.trapValue + ' mph');
+      summary.push('STAT: Estimated 1/4 mile ET: ' + qm.etValue + 's');
       summary.push('INFO: The 1/4 mile figures are estimated from the 60-130 time using Satera\'s trap speed chart, and are given as ranges because weight, gearing, aero and air density all move the real number. Because 60-130 does not include the launch, treat the ET as the car\'s potential with a clean hook.');
     }
   }
