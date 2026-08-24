@@ -1000,7 +1000,36 @@ export default function MainApp() {
                     <div style={{ background:T.card, border:`1px solid ${T.border}`, borderRadius:10, padding:16 }}>
                       <p style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', margin:'0 0 10px', display:'flex', alignItems:'center', gap:8 }}>Performance Data</p>
                       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(190px,1fr))', gap:10 }}>
-                        {stats.map((l,i) => {
+                        {(() => {
+                          // Shift ET and power to the entered race weight:
+                          // a tenth per 100 lb, power scales linearly.
+                          const baseline = formData.platform === 'ford' ? 4100 : 4500;
+                          const w = parseFloat(raceWeight);
+                          if (!Number.isFinite(w) || w <= 0 || w === baseline) return stats;
+                          const dEt = ((w - baseline) / 100) * 0.1;
+                          const kHp = w / baseline;
+                          return stats.map(l => {
+                            const [lab, ...rest] = l.body.split(':');
+                            const val = rest.join(':').trim();
+                            const shift = (v, fn) => {
+                              const m = val.match(/([\d.]+)\s*[\u2013-]\s*([\d.]+)/);
+                              if (m) return `${fn(parseFloat(m[1]))}\u2013${fn(parseFloat(m[2]))}`;
+                              const o = val.match(/([\d.]+)/);
+                              return o ? `${fn(parseFloat(o[1]))}` : val;
+                            };
+                            if (/1\/4 mile ET/i.test(lab))
+                              return { ...l, body: `${lab}: ${shift(val, n => (n + dEt).toFixed(1))}s` };
+                            if (/Estimated Power/i.test(lab))
+                              return { ...l, body: `${lab}: ${shift(val, n => Math.round(n * kHp / 5) * 5)} hp` };
+                            if (/Power to Weight/i.test(lab)) {
+                              const hpStat = stats.find(x => /Estimated Power/i.test(x.body));
+                              const hm = hpStat && hpStat.body.match(/([\d.]+)\s*[\u2013-]\s*([\d.]+)/);
+                              const mid = hm ? ((parseFloat(hm[1]) + parseFloat(hm[2])) / 2) * kHp : null;
+                              return mid ? { ...l, body: `${lab}: ${(w / mid).toFixed(1)} lb/hp` } : l;
+                            }
+                            return l;
+                          });
+                        })().map((l,i) => {
                           const parts = l.body.split(':');
                           const label = parts[0]?.trim();
                           const raw   = parts.slice(1).join(':').trim();
@@ -1022,18 +1051,11 @@ export default function MainApp() {
                         })}
                       </div>
                       {(() => {
-                        // Trap speed + race weight gives horsepower.
                         const trapStat = stats.find(l => /1\/4 mile trap/i.test(l.body));
                         if (!trapStat) return null;
-                        const range = parseTrapRange(trapStat.body.split(':').slice(1).join(':'));
-                        if (!range) return null;
-                        const [mLo, mHi] = range;
-                        const hpLo = hpFromTrap(raceWeight, mLo);
-                        const hpHi = hpFromTrap(raceWeight, mHi);
-                        const w    = parseFloat(raceWeight);
-                        const have = hpLo && hpHi && Number.isFinite(w) && w > 0;
-                        const lo = have ? Math.round(hpLo / 5) * 5 : null;
-                        const hi = have ? Math.round(hpHi / 5) * 5 : null;
+                        const baseline = formData.platform === 'ford' ? 4100 : 4500;
+                        const w = parseFloat(raceWeight);
+                        const custom = Number.isFinite(w) && w > 0 && w !== baseline;
                         return (
                           <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.border}` }}>
                             <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
@@ -1042,33 +1064,17 @@ export default function MainApp() {
                               </label>
                               <input
                                 type="number" min="1000" max="9000" step="25"
-                                placeholder="lbs incl. driver"
+                                placeholder={`${baseline} assumed`}
                                 value={raceWeight}
                                 onChange={e => setRaceWeight(e.target.value)}
                                 style={{ ...css.input, width:150, fontFamily:T.fData, fontSize:13 }}
                               />
-                              <span style={{ fontSize:11.5, color:T.faint }}>
-                                {have ? 'Estimated from trap speed' : 'Add weight to estimate horsepower'}
+                              <span style={{ fontSize:11.5, color: custom ? T.green : T.faint }}>
+                                {custom
+                                  ? `Corrected for ${w} lb (${w > baseline ? '+' : ''}${(((w - baseline)/100)*0.1).toFixed(1)}s vs ${baseline} lb)`
+                                  : `Assuming ${baseline} lb with driver — enter yours to sharpen the estimate`}
                               </span>
                             </div>
-                            {have && (
-                              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(190px,1fr))', gap:10, marginTop:12 }}>
-                                <div className="st-readout is-data">
-                                  <div className="st-readout-label">Estimated Power</div>
-                                  <div className={`st-readout-value${lo !== hi ? ' is-range' : ''}`}>
-                                    {lo === hi ? lo : `${lo}\u2013${hi}`}<span className="unit">hp</span>
-                                  </div>
-                                  <div className="st-readout-scale"/>
-                                </div>
-                                <div className="st-readout is-data">
-                                  <div className="st-readout-label">Power to Weight</div>
-                                  <div className="st-readout-value">
-                                    {(w / ((lo + hi) / 2)).toFixed(1)}<span className="unit">lb/hp</span>
-                                  </div>
-                                  <div className="st-readout-scale"/>
-                                </div>
-                              </div>
-                            )}
                           </div>
                         );
                       })()}
