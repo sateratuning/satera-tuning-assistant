@@ -968,7 +968,10 @@ export default function LogComparison() {
                 const warns     = reviewLines.filter(l => l.type === 'warn');
                 const oks       = reviewLines.filter(l => l.type === 'ok');
                 const stats     = reviewLines.filter(l => l.type === 'stat');
-                const infos     = reviewLines.filter(l => l.type === 'info');
+                // Keep the 1/4 mile caveat next to the figures it explains
+                const isQtrNote = (l) => l.type === 'info' && /1\/4 mile/i.test(l.body);
+                const qtrNote   = reviewLines.find(isQtrNote);
+                const infos     = reviewLines.filter(l => l.type === 'info' && !isQtrNote(l));
                 const Row = ({ type, body }) => {
                   const s = CHECK_STYLE[type] || CHECK_STYLE.info;
                   const dashIdx = body.indexOf(' — ');
@@ -1016,17 +1019,26 @@ export default function LogComparison() {
                             const parts = l.body.split(':');
                             const label = parts[0]?.trim(), raw = parts.slice(1).join(':').trim();
                             const isTimer = /0.60|40.100|60.130/i.test(label);
-                            const m = raw.match(/^([-\d.,]+)\s*(.*)$/);
+                            const m = raw.match(/^([-\d.,\u2013]+)\s*(.*)$/);
                             const num = m ? m[1] : raw, unit = m && m[2] ? m[2] : '';
                             return (
                               <div key={i} className={`st-readout ${isTimer ? 'is-hero' : 'is-data'}`}>
                                 <div className="st-readout-label">{label}</div>
-                                <div className="st-readout-value">{num}{unit && <span className="unit">{unit}</span>}</div>
+                                <div className={`st-readout-value${/\u2013/.test(num) ? ' is-range' : ''}`}>{num}{unit && <span className="unit">{unit}</span>}</div>
                                 <div className="st-readout-scale"/>
                               </div>
                             );
                           })}
                         </div>
+                        {qtrNote && (
+                          <p style={{
+                            margin:'12px 0 0', paddingTop:12,
+                            borderTop:`1px solid ${T.border}`,
+                            fontSize:11.5, lineHeight:1.6, color:T.muted,
+                          }}>
+                            {qtrNote.body}
+                          </p>
+                        )}
                       </div>
                     )}
                     {oks.length > 0 && (
