@@ -18,6 +18,8 @@ const trainerAI = require('./routes/trainerAI');
 const overlayRoutes = require('./routes/overlay');
 const feedbackRoutes = require('./routes/feedback');
 const { buildMessages } = require('./prompt');
+const { analyzeCsvContent } = require('./utils/robustCsv');
+const { resolveChannel } = require('./utils/channelMap');
 const sparkAdvisor = require('./routes/sparkAdvisor');
 const portalRoutes = require('./routes/portal');
 
@@ -103,30 +105,8 @@ app.get('/ratios', (req, res) => {
 // =====================================================
 // CSV Parsing + Helpers
 // =====================================================
-function analyzeCsvContent(content) {
-  const lines = content.split(/\r?\n/).map(l => l.trim());
-  if (!lines.length) throw new Error('CSV file empty');
-  const headerRowIndex = lines.findIndex(r => /(^|,)\s*offset\s*(,|$)/i.test(r));
-  if (headerRowIndex === -1) throw new Error('Could not locate header row');
-  const headers = (lines[headerRowIndex] || '').split(',').map(h => h.trim());
-  // Skip units, blanks, and optional [Channel Data] label — find first numeric data row
-  let dataStart = headerRowIndex + 1;
-  while (dataStart < lines.length) {
-    const line = lines[dataStart].trim();
-    if (line && /^-?[0-9]/.test(line) && line.includes(",")) break;
-    dataStart++;
-  }
-  const dataRows = lines.slice(dataStart).filter(row => row && row.includes(","));
-  const toNum = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : undefined; };
-  const parsed = dataRows.map(row => {
-    const values = row.split(',');
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = toNum(values[i]); });
-    return obj;
-  });
-  if (!parsed.length) throw new Error('No data rows found in CSV.');
-  return { headers, parsed };
-}
+// analyzeCsvContent now lives in utils/robustCsv.js (tolerant of
+// older VCM Scanner exports: alt delimiters, BOM, decimal commas, etc.)
 
 const isNum = (v) => Number.isFinite(v);
 
@@ -233,15 +213,24 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
   const hasCol = (name) => !!name && headers.includes(name);
   // Resolve a channel name across Mopar / Ford naming conventions
-  const pick = (candidates) => {
-    for (const c of candidates) if (headers.includes(c)) return c;
-    // loose contains-match fallback
+  // Channels that describe *how* a value was derived rather than the value
+  // itself — e.g. "Throttle Angle Source" is an enum, not a throttle reading.
+  const META_SUFFIX = /\b(source|state|status|mode|flag|enable[d]?|type|id)\b\s*$/i;
+  // Literal alias list first (unchanged behaviour), then the shared
+  // resolver's normalised + token matching for version drift.
+  const pick = (candidates, channelKey) => {
+    const usable = headers.filter(h => !META_SUFFIX.test(h));
+    for (const c of candidates) if (usable.includes(c)) return c;
     for (const c of candidates) {
-      const hit = headers.find(h => h.toLowerCase() === c.toLowerCase());
+      const hit = usable.find(h => h.toLowerCase() === c.toLowerCase());
       if (hit) return hit;
     }
+    if (channelKey) {
+      const resolved = resolveChannel(headers, channelKey, parsed);
+      if (resolved) return resolved;
+    }
     for (const c of candidates) {
-      const hit = headers.find(h => h.toLowerCase().includes(c.toLowerCase()));
+      const hit = usable.find(h => h.toLowerCase().includes(c.toLowerCase()));
       if (hit) return hit;
     }
     return null;
@@ -250,14 +239,14 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   const PSI_PER_KPA = 0.1450377377;
   const defaultBaroKpa = 101.325;
 
-  const accelName    = pick(['Accelerator Position D (SAE)','Accelerator Pedal Position','Accelerator Position (SAE)','Accelerator Pedal Position (%)']);
-  const throttleName = pick(['Throttle Position (SAE)','Throttle Position (%)','Relative Throttle Position (SAE)','Throttle Angle']);
-  const timingName   = pick(['Timing Advance (SAE)','Spark Advance (SAE)','Spark Advance']);
-  const rpmName      = pick(['Engine RPM (SAE)','Engine RPM','RPM (SAE)','RPM']);
-  const mapName      = pick(['Intake Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure','MAP (SAE)']);
-  const timeName     = pick(['Offset','Time','Time (s)']);
-  const speedName    = pick(['Vehicle Speed (SAE)','Vehicle Speed','Speed (SAE)']);
-  const boostName    = pick(['Boost Pressure','Boost (SAE)','Boost']);
+  const accelName    = pick(['Accelerator Position D (SAE)','Accelerator Pedal Position','Accelerator Position (SAE)','Accelerator Pedal Position (%)'], 'pedal');
+  const throttleName = pick(['Throttle Position (SAE)','Throttle Position (%)','Relative Throttle Position (SAE)','Throttle Angle'], 'throttle');
+  const timingName   = pick(['Timing Advance (SAE)','Spark Advance (SAE)','Spark Advance'], 'timing');
+  const rpmName      = pick(['Engine RPM (SAE)','Engine RPM','RPM (SAE)','RPM'], 'rpm');
+  const mapName      = pick(['Intake Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure (SAE)','Manifold Absolute Pressure','MAP (SAE)'], 'map');
+  const timeName     = pick(['Offset','Time','Time (s)'], 'time');
+  const speedName    = pick(['Vehicle Speed (SAE)','Vehicle Speed','Speed (SAE)'], 'speed');
+  const boostName    = pick(['Boost Pressure','Boost (SAE)','Boost'], 'boost');
 
   // ── WOT gating (cross-platform) ───────────────────────
   // Mopar: pedal and blade track closely at WOT.
@@ -285,7 +274,7 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   }
 
   // ── Boost helper (cross-platform) ─────────────────────
-  const baroName = pick(['Barometric Pressure (SAE)','Barometric Pressure','Baro Pressure (SAE)','Ambient Pressure (SAE)']);
+  const baroName = pick(['Barometric Pressure (SAE)','Barometric Pressure','Baro Pressure (SAE)','Ambient Pressure (SAE)'], 'baro');
 
   // Ford logs MAP/Baro in psi and provides a dedicated Boost Pressure channel.
   // Mopar logs MAP/Baro in kPa. Detect by magnitude: atmospheric is ~101 kPa vs ~14.7 psi.
