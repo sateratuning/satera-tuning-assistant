@@ -167,14 +167,41 @@ const maskedDisplayName = (u) => {
 function parseCSV(raw) {
   const rows = raw.split(/\r?\n/).map(r => r.trim());
   if (!rows.length) return null;
-  const headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
+
+  // Header row: any row naming a known time axis (not just one starting "offset")
+  const TIME_ALIASES = ['offset','time','time (s)','timestamp','elapsed time','session time'];
+  let headerRowIndex = rows.findIndex(r =>
+    r.includes(',') && r.split(',').some(c => TIME_ALIASES.includes(c.trim().toLowerCase()))
+  );
+  if (headerRowIndex === -1) headerRowIndex = rows.findIndex(r => r.toLowerCase().startsWith('offset'));
   if (headerRowIndex === -1) return null;
+
   const headers = rows[headerRowIndex].split(',').map(h => h.trim());
-  const dataStart = headerRowIndex + 4;
+
+  // Scan to the first genuinely numeric row instead of assuming a fixed offset
+  let dataStart = headerRowIndex + 1;
+  while (dataStart < rows.length) {
+    const c = rows[dataStart].split(',');
+    const numeric = c.filter(x => x.trim() !== '' && Number.isFinite(parseFloat(x))).length;
+    if (c.length > 1 && numeric >= Math.max(2, Math.floor(c.length * 0.4))) break;
+    dataStart++;
+  }
   const dataRows = rows.slice(dataStart);
-  const col = (name) => headers.findIndex(h => h === name);
-  const speedIndex = col('Vehicle Speed (SAE)');
-  const timeIndex  = col('Offset');
+
+  // Exact match first, then a loose contains match
+  const col = (cands) => {
+    for (const c of cands) {
+      const i = headers.findIndex(h => h.toLowerCase() === c.toLowerCase());
+      if (i !== -1) return i;
+    }
+    for (const c of cands) {
+      const i = headers.findIndex(h => h.toLowerCase().includes(c.toLowerCase()));
+      if (i !== -1) return i;
+    }
+    return -1;
+  };
+  const speedIndex = col(['Vehicle Speed (SAE)','Vehicle Speed','Speed (SAE)','Vehicle Speed (VSS)','VSS','Speed']);
+  const timeIndex  = col(['Offset','Time (s)','Time','Timestamp','Elapsed Time','Session Time']);
   if (speedIndex === -1 || timeIndex === -1) return null;
   const speed = [], time = [];
   for (let row of dataRows) {
