@@ -20,6 +20,7 @@ const feedbackRoutes = require('./routes/feedback');
 const { buildMessages } = require('./prompt');
 const { analyzeCsvContent } = require('./utils/robustCsv');
 const { resolveChannel } = require('./utils/channelMap');
+const { estimateQuarterMile } = require('./utils/quarterMile');
 const sparkAdvisor = require('./routes/sparkAdvisor');
 const portalRoutes = require('./routes/portal');
 
@@ -566,7 +567,16 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   const s130 = best(findAllIntervals(60, 130));
   if (z60)  summary.push('STAT: Best 0-60 mph: ' + Number(z60).toFixed(2) + 's');
   if (f100) summary.push('STAT: Best 40-100 mph: ' + Number(f100).toFixed(2) + 's');
-  if (s130) summary.push('STAT: Best 60-130 mph: ' + Number(s130).toFixed(2) + 's');
+  if (s130) {
+    summary.push('STAT: Best 60-130 mph: ' + Number(s130).toFixed(2) + 's');
+    // 60-130 excludes the launch, so it maps cleanly to trap speed
+    const qm = estimateQuarterMile(s130);
+    if (qm && qm.inRange) {
+      summary.push('STAT: Estimated 1/4 mile trap: ' + qm.trapRange);
+      summary.push('STAT: Estimated 1/4 mile ET: ' + qm.etRange);
+      summary.push('INFO: The 1/4 mile figures are estimated from the 60-130 time using Satera\'s trap speed chart, and are given as ranges because weight, gearing, aero and air density all move the real number. Because 60-130 does not include the launch, treat the ET as the car\'s potential with a clean hook.');
+    }
+  }
 
   return summary.join('\n');
 }
