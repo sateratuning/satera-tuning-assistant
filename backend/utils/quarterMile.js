@@ -41,6 +41,39 @@ const TRAP_TABLE = [
 const MIN_T = 2.0;
 const MAX_T = 12.0;
 
+// Assumed race weight (car + driver, fuel as run) when the customer
+// hasn't given one. The trap chart is calibrated around these.
+const BASELINE_WEIGHT = {
+  mopar: 4500,
+  ford:  4100,
+};
+const DEFAULT_BASELINE = 4500;
+
+// Shop rule of thumb: every 100 lb is worth about a tenth in the quarter.
+const ET_SECONDS_PER_100LB = 0.1;
+
+/** Baseline race weight for a platform key ('mopar' | 'ford'). */
+function baselineWeightFor(platform) {
+  const p = String(platform || '').toLowerCase();
+  if (p.includes('ford') || p.includes('coyote')) return BASELINE_WEIGHT.ford;
+  if (p.includes('mopar') || p.includes('hemi'))  return BASELINE_WEIGHT.mopar;
+  return DEFAULT_BASELINE;
+}
+
+/** ET correction for running heavier or lighter than baseline. */
+function etWeightDelta(actualLb, baselineLb) {
+  const a = parseFloat(actualLb), b = parseFloat(baselineLb);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) return 0;
+  return ((a - b) / 100) * ET_SECONDS_PER_100LB;
+}
+
+/** Crank horsepower from trap speed and race weight (Hale/Fox). */
+function hpFromTrap(weightLb, mph) {
+  const w = parseFloat(weightLb), m = parseFloat(mph);
+  if (!Number.isFinite(w) || !Number.isFinite(m) || w <= 0 || m <= 0) return null;
+  return w * Math.pow(m / 234, 3);
+}
+
 /** Trap speed (mph) for a 60-130 time, linearly interpolated. */
 function trapSpeedFor(seconds) {
   const t = Number(seconds);
@@ -86,7 +119,8 @@ const r2    = (n) => Math.round(n * 100) / 100;
  * Trap and ET are both returned as ranges; the ET band is derived from
  * the trap band so the two can never disagree.
  */
-function estimateQuarterMile(sixtyTo130) {
+function estimateQuarterMile(sixtyTo130, opts = {}) {
+  const { platform, weightLb } = opts;
   const t = Number(sixtyTo130);
   if (!Number.isFinite(t)) return null;
 
@@ -110,11 +144,32 @@ function estimateQuarterMile(sixtyTo130) {
   const etHigh = etFromTrap(trapLow)  + ET_EXTRA_S;
   const etMid  = etFromTrap(trapMid);
 
+  // Weight correction: the chart assumes a platform baseline, so a car
+  // running heavier or lighter shifts the ET by a tenth per 100 lb.
+  const baseline = baselineWeightFor(platform);
+  const usedWeight = Number.isFinite(parseFloat(weightLb)) && parseFloat(weightLb) > 0
+    ? parseFloat(weightLb) : baseline;
+  const wDelta = etWeightDelta(usedWeight, baseline);
+
   const tLo = rTrap(trapLow),  tHi = rTrap(trapHigh);
-  const eLo = rEt(etLow),      eHi = rEt(etHigh);
+  const eLo = rEt(etLow  + wDelta), eHi = rEt(etHigh + wDelta);
+
+  // Power only means anything against a real weight
+  const hpLo = hpFromTrap(usedWeight, tLo);
+  const hpHi = hpFromTrap(usedWeight, tHi);
+  const round5 = (n) => n == null ? null : Math.round(n / 5) * 5;
 
   return {
     sixtyTo130: t,
+    baselineWeight: baseline,
+    usedWeight,
+    weightAssumed: !(Number.isFinite(parseFloat(weightLb)) && parseFloat(weightLb) > 0),
+    etWeightDelta: Math.round(wDelta * 100) / 100,
+    hpLow:   round5(hpLo),
+    hpHigh:  round5(hpHi),
+    hpRange: round5(hpLo) === round5(hpHi) ? `${round5(hpLo)} hp` : `${round5(hpLo)}\u2013${round5(hpHi)} hp`,
+    hpValue: round5(hpLo) === round5(hpHi) ? `${round5(hpLo)}` : `${round5(hpLo)}\u2013${round5(hpHi)}`,
+    lbPerHp: hpLo && hpHi ? Math.round((usedWeight / ((round5(hpLo) + round5(hpHi)) / 2)) * 10) / 10 : null,
     trapMph:    rTrap(trapMid),
     trapLow:    tLo,
     trapHigh:   tHi,
@@ -139,4 +194,8 @@ function quarterMileStat(sixtyTo130) {
   return `STAT: Estimated 1/4 mile: ${e.trapRange} trap, ${e.etRange} ET`;
 }
 
-module.exports = { estimateQuarterMile, trapSpeedFor, etFromTrap, quarterMileStat, TRAP_TABLE };
+module.exports = {
+  estimateQuarterMile, trapSpeedFor, etFromTrap, quarterMileStat,
+  baselineWeightFor, etWeightDelta, hpFromTrap,
+  BASELINE_WEIGHT, ET_SECONDS_PER_100LB, TRAP_TABLE,
+};
