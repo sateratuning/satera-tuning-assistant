@@ -956,7 +956,11 @@ export default function MainApp() {
               const warns     = checklistLines.filter(l => l.type === 'warn');
               const oks       = checklistLines.filter(l => l.type === 'ok');
               const stats     = checklistLines.filter(l => l.type === 'stat');
-              const infos     = checklistLines.filter(l => l.type === 'info');
+              // The 1/4 mile caveat belongs beside the figures it explains,
+              // not down in the general Notes list.
+              const isQtrNote = (l) => l.type === 'info' && /1\/4 mile/i.test(l.body);
+              const qtrNote   = checklistLines.find(isQtrNote);
+              const infos     = checklistLines.filter(l => l.type === 'info' && !isQtrNote(l));
               return (
                 <div style={{ display:'grid', gap:12, animation:'fadeIn 0.4s ease' }}>
                   {/* Alert banner for criticals */}
@@ -985,13 +989,13 @@ export default function MainApp() {
                           // a timer or peak figure is what the tuner came for — give it the hero readout
                           const isTimer = /0.60|40.100|60.130/i.test(label);
                           // split trailing unit off the figure so it can be set smaller
-                          const m = raw.match(/^([-\d.,]+)\s*(.*)$/);
+                          const m = raw.match(/^([-\d.,\u2013]+)\s*(.*)$/);
                           const num  = m ? m[1] : raw;
                           const unit = m && m[2] ? m[2] : '';
                           return (
                             <div key={i} className={`st-readout ${isTimer ? 'is-hero' : 'is-data'}`}>
                               <div className="st-readout-label">{label}</div>
-                              <div className="st-readout-value">
+                              <div className={`st-readout-value${/\u2013/.test(num) ? ' is-range' : ''}`}>
                                 {num}{unit && <span className="unit">{unit}</span>}
                               </div>
                               <div className="st-readout-scale"/>
@@ -999,6 +1003,15 @@ export default function MainApp() {
                           );
                         })}
                       </div>
+                      {qtrNote && (
+                        <p style={{
+                          margin:'14px 0 0', paddingTop:14,
+                          borderTop:`1px solid ${T.border}`,
+                          fontSize:12, lineHeight:1.65, color:T.muted,
+                        }}>
+                          {qtrNote.body}
+                        </p>
+                      )}
                     </div>
                   )}
                   {/* All clear */}
