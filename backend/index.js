@@ -209,7 +209,7 @@ function detectPullGear({ rpm, mph, tireIn, rear }) {
 // =====================================================
 // Checklist
 // =====================================================
-function formatChecklist(parsed, headers, isNA = false, isFord = false) {
+function formatChecklist(parsed, headers, isNA = false, isFord = false, raceWeightLb = null) {
   const summary = [];
   const getColumn = (name) => parsed.map(r => r[name]).filter(Number.isFinite);
   const hasCol = (name) => !!name && headers.includes(name);
@@ -570,11 +570,22 @@ function formatChecklist(parsed, headers, isNA = false, isFord = false) {
   if (s130) {
     summary.push('STAT: Best 60-130 mph: ' + Number(s130).toFixed(2) + 's');
     // 60-130 excludes the launch, so it maps cleanly to trap speed
-    const qm = estimateQuarterMile(s130);
+    const qm = estimateQuarterMile(s130, {
+      platform: isFord ? 'ford' : 'mopar',
+      weightLb: raceWeightLb,
+    });
     if (qm && qm.inRange) {
       summary.push('STAT: Estimated 1/4 mile trap: ' + qm.trapValue + ' mph');
       summary.push('STAT: Estimated 1/4 mile ET: ' + qm.etValue + 's');
-      summary.push('INFO: The 1/4 mile figures are estimated from the 60-130 time using Satera\'s trap speed chart, and are given as ranges because weight, gearing, aero and air density all move the real number. Because 60-130 does not include the launch, treat the ET as the car\'s potential with a clean hook.');
+      summary.push('STAT: Estimated Power: ' + qm.hpValue + ' hp');
+      if (qm.lbPerHp) summary.push('STAT: Power to Weight: ' + qm.lbPerHp.toFixed(1) + ' lb/hp');
+      summary.push(
+        'INFO: The 1/4 mile figures are estimated from the 60-130 time using Satera\'s trap speed chart. ' +
+        (qm.weightAssumed
+          ? 'They assume a race weight of ' + qm.usedWeight + ' lb including driver — enter your actual weight to sharpen them. '
+          : 'They are corrected for your ' + qm.usedWeight + ' lb race weight. ') +
+        'Every 100 lb is worth roughly a tenth in the quarter. Because 60-130 does not include the launch, treat the ET as the car\'s potential with a clean hook.'
+      );
     }
   }
 
@@ -708,7 +719,8 @@ app.post(['/ai-review', '/api/ai-review'], upload.single('log'), async (req, res
                    engine.includes('gen2') || engine.includes('gen3') || engine.includes('gen4') ||
                    engine.includes('voodoo') || engine.includes('predator') || engine.includes('5.0l') || engine.includes('5.2l');
 
-    const checklist = formatChecklist(parsed, headers, isNA, isFord);
+    const raceWeightLb = parseFloat(req.body.weight || meta.weight || '') || null;
+    const checklist = formatChecklist(parsed, headers, isNA, isFord, raceWeightLb);
 
     const reduced = parsed.filter((_, i) => i % 400 === 0).map(r => ({
       rpm:     r['Engine RPM (SAE)']    ?? r['Engine RPM']     ?? null,
