@@ -1031,7 +1031,34 @@ export default function LogComparison() {
                       <div style={{ background:T.card, border:'1px solid #2A3339', borderRadius:8, padding:12 }}>
                         <div style={{ fontFamily:T.fDisplay, fontSize:12, fontWeight:700, color:T.green, letterSpacing:2, textTransform:'uppercase', marginBottom:10 }}>Performance Data</div>
                         <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
-                          {stats.map((l,i) => {
+                          {(() => {
+                            const baseline = platform === 'ford' ? 4100 : 4500;
+                            const w = parseFloat(raceWeight);
+                            if (!Number.isFinite(w) || w <= 0 || w === baseline) return stats;
+                            const dEt = ((w - baseline) / 100) * 0.1;
+                            const kHp = w / baseline;
+                            return stats.map(l => {
+                              const [lab, ...rest] = l.body.split(':');
+                              const val = rest.join(':').trim();
+                              const shift = (v, fn) => {
+                                const m = val.match(/([\d.]+)\s*[\u2013-]\s*([\d.]+)/);
+                                if (m) return `${fn(parseFloat(m[1]))}\u2013${fn(parseFloat(m[2]))}`;
+                                const o = val.match(/([\d.]+)/);
+                                return o ? `${fn(parseFloat(o[1]))}` : val;
+                              };
+                              if (/1\/4 mile ET/i.test(lab))
+                                return { ...l, body: `${lab}: ${shift(val, n => (n + dEt).toFixed(1))}s` };
+                              if (/Estimated Power/i.test(lab))
+                                return { ...l, body: `${lab}: ${shift(val, n => Math.round(n * kHp / 5) * 5)} hp` };
+                              if (/Power to Weight/i.test(lab)) {
+                                const hpStat = stats.find(x => /Estimated Power/i.test(x.body));
+                                const hm = hpStat && hpStat.body.match(/([\d.]+)\s*[\u2013-]\s*([\d.]+)/);
+                                const mid = hm ? ((parseFloat(hm[1]) + parseFloat(hm[2])) / 2) * kHp : null;
+                                return mid ? { ...l, body: `${lab}: ${(w / mid).toFixed(1)} lb/hp` } : l;
+                              }
+                              return l;
+                            });
+                          })().map((l,i) => {
                             const parts = l.body.split(':');
                             const label = parts[0]?.trim(), raw = parts.slice(1).join(':').trim();
                             const isTimer = /0.60|40.100|60.130/i.test(label);
@@ -1049,15 +1076,9 @@ export default function LogComparison() {
                         {(() => {
                           const trapStat = stats.find(l => /1\/4 mile trap/i.test(l.body));
                           if (!trapStat) return null;
-                          const range = parseTrapRange(trapStat.body.split(':').slice(1).join(':'));
-                          if (!range) return null;
-                          const [mLo, mHi] = range;
-                          const hpLo = hpFromTrap(raceWeight, mLo);
-                          const hpHi = hpFromTrap(raceWeight, mHi);
-                          const w    = parseFloat(raceWeight);
-                          const have = hpLo && hpHi && Number.isFinite(w) && w > 0;
-                          const lo = have ? Math.round(hpLo / 5) * 5 : null;
-                          const hi = have ? Math.round(hpHi / 5) * 5 : null;
+                          const baseline = platform === 'ford' ? 4100 : 4500;
+                          const w = parseFloat(raceWeight);
+                          const custom = Number.isFinite(w) && w > 0 && w !== baseline;
                           return (
                             <div style={{ marginTop:12, paddingTop:12, borderTop:`1px solid ${T.border}` }}>
                               <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
@@ -1066,33 +1087,17 @@ export default function LogComparison() {
                                 </label>
                                 <input
                                   type="number" min="1000" max="9000" step="25"
-                                  placeholder="lbs incl. driver"
+                                  placeholder={`${baseline} assumed`}
                                   value={raceWeight}
                                   onChange={e => setRaceWeight(e.target.value)}
                                   style={{ ...css.input, width:140, fontFamily:T.fData, fontSize:12 }}
                                 />
-                                <span style={{ fontSize:11, color:T.faint }}>
-                                  {have ? 'Estimated from trap speed' : 'Add weight for horsepower'}
+                                <span style={{ fontSize:11, color: custom ? T.green : T.faint }}>
+                                  {custom
+                                    ? `Corrected for ${w} lb (${w > baseline ? '+' : ''}${(((w - baseline)/100)*0.1).toFixed(1)}s)`
+                                    : `Assuming ${baseline} lb with driver`}
                                 </span>
                               </div>
-                              {have && (
-                                <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:10 }}>
-                                  <div className="st-readout is-data">
-                                    <div className="st-readout-label">Estimated Power</div>
-                                    <div className={`st-readout-value${lo !== hi ? ' is-range' : ''}`}>
-                                      {lo === hi ? lo : `${lo}\u2013${hi}`}<span className="unit">hp</span>
-                                    </div>
-                                    <div className="st-readout-scale"/>
-                                  </div>
-                                  <div className="st-readout is-data">
-                                    <div className="st-readout-label">Power to Weight</div>
-                                    <div className="st-readout-value">
-                                      {(w / ((lo + hi) / 2)).toFixed(1)}<span className="unit">lb/hp</span>
-                                    </div>
-                                    <div className="st-readout-scale"/>
-                                  </div>
-                                </div>
-                              )}
                             </div>
                           );
                         })()}
