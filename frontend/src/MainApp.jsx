@@ -272,6 +272,23 @@ function pickPullGear({ autoDetect, detected, catalog, selectedGearLabel, manual
   return{ratio:1.29,source:'default'};
 }
 const comma=(n,d=1)=>n.toLocaleString(undefined,{maximumFractionDigits:d});
+
+// Horsepower from trap speed and race weight (Hale/Fox):
+//   trap mph = 234 * (hp/weight)^(1/3)   =>   hp = weight * (mph/234)^3
+// Weight is race weight — car plus driver, fuel as run.
+const hpFromTrap = (weightLb, mph) => {
+  const w = parseFloat(weightLb), m = parseFloat(mph);
+  if (!Number.isFinite(w) || !Number.isFinite(m) || w <= 0 || m <= 0) return null;
+  return w * Math.pow(m / 234, 3);
+};
+// Pull "136–139" or "141" out of a trap stat string
+const parseTrapRange = (raw) => {
+  if (!raw) return null;
+  const m = String(raw).match(/([\d.]+)\s*[\u2013-]\s*([\d.]+)/);
+  if (m) return [parseFloat(m[1]), parseFloat(m[2])];
+  const one = String(raw).match(/([\d.]+)/);
+  return one ? [parseFloat(one[1]), parseFloat(one[1])] : null;
+};
 function resampleUniform(T,Y,targetHz=60){
   if(!T||!Y||T.length!==Y.length||T.length<3)return{t:[],y:[]};
   const t0=T[0],tN=T[T.length-1],dt=1/targetHz,N=Math.max(3,Math.floor((tN-t0)/dt));
@@ -441,6 +458,7 @@ export default function MainApp() {
   const [cachedDetectedPull, setCachedDetectedPull] = useState(null);
   const [catalogGears, setCatalogGears]             = useState([]);
   const [fileName, setFileName]   = useState('');
+  const [raceWeight, setRaceWeight] = useState('');
   const fileRef = useRef();
 
   useEffect(() => {
@@ -1003,13 +1021,64 @@ export default function MainApp() {
                           );
                         })}
                       </div>
+                      {(() => {
+                        // Trap speed + race weight gives horsepower.
+                        const trapStat = stats.find(l => /1\/4 mile trap/i.test(l.body));
+                        if (!trapStat) return null;
+                        const range = parseTrapRange(trapStat.body.split(':').slice(1).join(':'));
+                        if (!range) return null;
+                        const [mLo, mHi] = range;
+                        const hpLo = hpFromTrap(raceWeight, mLo);
+                        const hpHi = hpFromTrap(raceWeight, mHi);
+                        const w    = parseFloat(raceWeight);
+                        const have = hpLo && hpHi && Number.isFinite(w) && w > 0;
+                        const lo = have ? Math.round(hpLo / 5) * 5 : null;
+                        const hi = have ? Math.round(hpHi / 5) * 5 : null;
+                        return (
+                          <div style={{ marginTop:14, paddingTop:14, borderTop:`1px solid ${T.border}` }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+                              <label style={{ fontFamily:T.fData, fontSize:10, letterSpacing:'0.14em', textTransform:'uppercase', color:T.muted }}>
+                                Race weight
+                              </label>
+                              <input
+                                type="number" min="1000" max="9000" step="25"
+                                placeholder="lbs incl. driver"
+                                value={raceWeight}
+                                onChange={e => setRaceWeight(e.target.value)}
+                                style={{ ...css.input, width:150, fontFamily:T.fData, fontSize:13 }}
+                              />
+                              <span style={{ fontSize:11.5, color:T.faint }}>
+                                {have ? 'Estimated from trap speed' : 'Add weight to estimate horsepower'}
+                              </span>
+                            </div>
+                            {have && (
+                              <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(190px,1fr))', gap:10, marginTop:12 }}>
+                                <div className="st-readout is-data">
+                                  <div className="st-readout-label">Estimated Power</div>
+                                  <div className={`st-readout-value${lo !== hi ? ' is-range' : ''}`}>
+                                    {lo === hi ? lo : `${lo}\u2013${hi}`}<span className="unit">hp</span>
+                                  </div>
+                                  <div className="st-readout-scale"/>
+                                </div>
+                                <div className="st-readout is-data">
+                                  <div className="st-readout-label">Power to Weight</div>
+                                  <div className="st-readout-value">
+                                    {(w / ((lo + hi) / 2)).toFixed(1)}<span className="unit">lb/hp</span>
+                                  </div>
+                                  <div className="st-readout-scale"/>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {qtrNote && (
                         <p style={{
                           margin:'14px 0 0', paddingTop:14,
                           borderTop:`1px solid ${T.border}`,
                           fontSize:12, lineHeight:1.65, color:T.muted,
                         }}>
-                          {qtrNote.body}
+                          {qtrNote.body} Horsepower is estimated at the crank from trap speed and race weight.
                         </p>
                       )}
                     </div>
