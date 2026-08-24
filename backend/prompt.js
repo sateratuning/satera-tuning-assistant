@@ -117,6 +117,13 @@ RULES (always follow these):
 - If knock is present, attribute it to fuel quality, heat soak, or hardware limitations — never to the tune.
 - Use the platform knowledge above to give specific, accurate context — e.g. if IDC is 88% on a stock Hellcat, note that this is near the limit for stock injectors.
 - Keep total response under 300 words.
+
+QUARTER MILE ESTIMATES:
+- When the checklist includes estimated 1/4 mile trap speed and ET, mention them in the Summary as a performance context point. They are given as RANGES — always quote the full range, never a single number.
+- Be clear these are ESTIMATES derived from the 60-130 mph time, not measured track results.
+- The 60-130 interval excludes the launch entirely, so the ET represents the car's potential with a clean hook. Traction, weather, density altitude, and driver will move the real number.
+- Never present the ET as a guarantee or a prediction of what the car will run. Phrase it as "puts it in the ballpark of" or "suggests roughly", and keep the range intact (e.g. "around 8.90-9.29s").
+- If no 1/4 mile estimate appears in the checklist, do not invent one or attempt to calculate it yourself.
 `;
 
 const FEW_SHOTS = [
@@ -236,7 +243,159 @@ function formatUser({ meta = {}, observations = '' }) {
   ].join('\n');
 }
 
+
+
+// ── Ford Coyote Platform Knowledge ───────────────────────
+const FORD_COYOTE_KNOWLEDGE = {
+  platform: 'ford_coyote',
+  generations: {
+    gen1: { years: '2011-2014', fueling: 'pure_maf', map: false, notes: 'Pure MAF-based fueling. No MAP sensor.' },
+    gen2: { years: '2015-2017', fueling: 'maf_sd_blend', map: false, notes: 'MAF primary with inferred SD blend.' },
+    gen3: { years: '2018-2023', fueling: 'maf_sd_blend', map: false, notes: 'MAF + heavier inferred SD blend than Gen2.' },
+    gen4: { years: '2024+',     fueling: 'map_sd',       map: true,  notes: 'MAP sensor, essentially ignores MAF. Pure SD.' },
+  },
+  knock: {
+    channel: 'Knock Retard',
+    interpretation: 'OPPOSITE of Mopar. Negative KR = ECU adding timing (good, sensors happy). Positive KR = ECU pulling timing (bad, knock detected).',
+    warnThreshold: 0.5,   // flag if KR goes ABOVE this (positive = bad)
+    okRange: [-5, 0.5],   // negative is good, up to 0.5° positive is borderline
+  },
+  fuelTrims: {
+    ltft: { warn: 5, critical: 8 },    // ±5% warn, ±8% critical
+    stft: { warn: 10, critical: 15 },  // STFT hunts more on Ford, higher threshold
+    note: 'Evaluate STFT and LTFT separately. STFT corrects instantly, LTFT is learned. High STFT with low LTFT = short-term rich/lean condition. High LTFT = systematic fueling issue.',
+  },
+  channels: {
+    rpm:          ['Engine RPM'],
+    tps:          ['Throttle Position (SAE)', 'Throttle Angle'],
+    map:          ['Manifold Absolute Pressure'],  // Gen4 only
+    maf:          ['Mass Airflow A (SAE)', 'Mass Airflow (SAE)', 'Mass Airflow Sensor'],
+    knock:        ['Knock Retard'],
+    timing:       ['Timing Advance (SAE)'],
+    trSparkRetard:['TR Command Spark Retard'],  // torque reduction retard, different from KR
+    ltft1:        ['Long Term Fuel Trim Bank 1 (SAE)'],
+    ltft2:        ['Long Term Fuel Trim Bank 2 (SAE)'],
+    stft1:        ['Short Term Fuel Trim Bank 1 (SAE)'],
+    stft2:        ['Short Term Fuel Trim Bank 2 (SAE)'],
+    wb1:          ['WB EQ Ratio Bank 1'],
+    wb2:          ['WB EQ Ratio Bank 2'],
+    boost:        ['Boost Pressure'],  // dedicated channel, cleaner than MAP-Baro
+    fuelPressure: ['Fuel Rail Pressure Actual', 'Fuel Rail Pressure (SAE)'],
+    coolant:      ['Engine Coolant Temp'],
+    iat:          ['Intake Air Temp', 'Manifold Charge Temp'],
+    speed:        ['Vehicle Speed (SAE)'],
+    octane:       ['Inferred Octane'],  // STAT only, do not flag
+    intakeCam:    ['Intake Cam Angle'],
+    exhaustCam:   ['Exhaust Cam Angle'],
+    intakeCamDes: ['Intake Cam Des Angle'],
+    exhaustCamDes:['Exhaust Cam Des Angle'],
+    load:         ['Absolute Load (SAE)', 'Calculated Engine Load (SAE)'],
+    injPW:        ['DI Injector Effective Pulse Width Int.', 'Injector Pulse Width Cyl 1'],
+  },
+  boostThresholds: {
+    na:       2.0,   // below 2 psi peak = treat as NA
+    warnDrop: 0.3,   // 30% drop under WOT = warn boost leak
+  },
+  vct: {
+    note: 'VCT (Variable Cam Timing) affects idle quality and part throttle fueling. Intake cam angle should track desired closely. Large deviation between actual and desired = VCT solenoid issue or oil pressure problem.',
+    warnDeviation: 5,  // degrees deviation from desired
+  },
+};
+
+// ── Platform Detection ────────────────────────────────────
+function detectPlatform(meta) {
+  const make   = String(meta?.make   || '').toLowerCase();
+  const engine = String(meta?.engine || '').toLowerCase();
+  if (make === 'ford' || engine.includes('coyote') || engine.includes('voodoo') ||
+      engine.includes('predator') || engine.includes('gen1') || engine.includes('gen2') ||
+      engine.includes('gen3') || engine.includes('gen4') || engine.includes('5.0l') || engine.includes('5.2l')) {
+    return 'ford_coyote';
+  }
+  return 'mopar_hemi';
+}
+
+// ── Ford Coyote AI Messages ───────────────────────────────
+function buildFordMessages({ meta, observations }) {
+  const engine  = meta?.engine  || 'Unknown';
+  const year    = meta?.year    || 'Unknown';
+  const model   = meta?.model   || 'Unknown';
+  const fuel    = meta?.fuel    || 'Unknown';
+  const power   = meta?.power   || meta?.power_adder || 'N/A';
+  const injectors = meta?.injectors || 'Stock';
+  const cam     = meta?.cam     || 'Stock';
+  const tb      = meta?.throttle_body || 'Stock';
+  const isNA    = !power || power.toLowerCase().includes('n/a') || power.toLowerCase().includes('naturally');
+
+  // Determine generation
+  let gen = 'gen4', genYears = '2024+', fueling = 'MAP/SD (ignores MAF)';
+  if (engine.includes('gen1') || engine.includes('2011') || engine.includes('2012') || engine.includes('2013') || engine.includes('2014')) {
+    gen = 'gen1'; genYears = '2011-2014'; fueling = 'Pure MAF';
+  } else if (engine.includes('gen2') || engine.includes('2015') || engine.includes('2016') || engine.includes('2017')) {
+    gen = 'gen2'; genYears = '2015-2017'; fueling = 'MAF primary + inferred SD blend';
+  } else if (engine.includes('gen3') || engine.includes('2018') || engine.includes('2019') || engine.includes('2020') || engine.includes('2021') || engine.includes('2022') || engine.includes('2023')) {
+    gen = 'gen3'; genYears = '2018-2023'; fueling = 'MAF + heavier SD blend';
+  }
+
+  const system = {
+    role: 'system',
+    content: `You are an expert Ford Coyote performance tuning analyst for Satera Tuning.
+
+VEHICLE: ${year} Ford ${model} — ${engine} — ${fuel}${isNA ? ' (Naturally Aspirated)' : `, ${power}`}
+Injectors: ${injectors} | Cam: ${cam} | Throttle Body: ${tb}
+Generation: ${gen.toUpperCase()} (${genYears}) | Fueling strategy: ${fueling}
+
+CRITICAL FORD-SPECIFIC RULES — follow these exactly:
+
+1. KNOCK RETARD INTERPRETATION (this is opposite of Mopar):
+   - NEGATIVE KR value = ECU is ADDING timing = knock sensors are happy = GOOD
+   - POSITIVE KR value = ECU is PULLING timing = actual knock detected = BAD
+   - Flag anything above +0.5° as a concern
+   - Flag anything above +2.0° as CRITICAL
+   - NEVER flag negative KR values as a problem — they mean the engine is running well
+
+2. FUEL TRIMS — evaluate STFT and LTFT separately:
+   - LTFT (Long Term): ±5% is acceptable, above ±8% is critical — this is the learned correction
+   - STFT (Short Term): ±10% is acceptable, above ±15% is critical — this corrects instantly and hunts more
+   - High STFT with stable LTFT = transient condition, may be normal
+   - High LTFT = systematic fueling issue that needs table correction
+
+3. FUELING STRATEGY for ${gen.toUpperCase()} (${genYears}):
+${gen === 'gen4' ? '   - Gen4 uses a MAP sensor and essentially ignores the MAF. Pure speed-density fueling. Do not comment on MAF readings as a fueling concern.' : ''}
+${gen === 'gen3' ? '   - Gen3 blends MAF with inferred SD. Both channels contribute to fueling.' : ''}
+${gen === 'gen2' ? '   - Gen2 is primarily MAF-based with an SD blend. MAF calibration is the primary fueling control.' : ''}
+${gen === 'gen1' ? '   - Gen1 is pure MAF-based. MAF calibration is everything for fueling accuracy.' : ''}
+
+4. TR COMMAND SPARK RETARD is a torque management channel — completely separate from knock retard. Do not confuse them or flag TR Spark Retard as a knock event.
+
+5. INFERRED OCTANE — report as a data point only (STAT). Do not flag, warn, or make recommendations based on octane reading alone.
+
+6. VCT (Variable Cam Timing) — if intake or exhaust cam angle deviates more than 5° from desired angle, that indicates a VCT solenoid issue or low oil pressure. Flag it if present.
+
+7. BOOST — ${isNA ? 'This is an NA vehicle. Do not mention boost.' : `Boosted vehicle (${power}). Watch for boost drops under WOT.`}
+
+8. NEVER blame the tune or tuner. Frame all issues as hardware, fuel, or mechanical concerns.
+
+9. QUARTER MILE ESTIMATES — if the checklist includes estimated trap speed and ET, mention them as context in the Summary. They are given as RANGES; always quote the full range rather than a single number. They are estimated from the 60-130 mph time, which excludes the launch, so the ET is the car's potential with a clean hook. Never present it as a guarantee, and never calculate one yourself if it isn't in the checklist.
+
+Respond with:
+- SUMMARY: 2-4 sentences in plain English
+- WHAT THIS MEANS FOR YOU: specific action items the customer can act on`
+  };
+
+  const user = {
+    role: 'user',
+    content: `Analyze this Ford Coyote ${gen.toUpperCase()} datalog:\n\n${observations}`
+  };
+
+  return [system, user];
+}
+
 function buildMessages({ meta, observations }) {
+  const platform = detectPlatform(meta);
+  if (platform === 'ford_coyote') {
+    return buildFordMessages({ meta, observations });
+  }
+  // Default: Mopar/Gen3 HEMI
   const system = { role: 'system', content: STYLE_GUIDE };
 
   const shots = FEW_SHOTS.flatMap(ex => ([
