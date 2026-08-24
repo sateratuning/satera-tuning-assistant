@@ -271,6 +271,11 @@ body {
   font-variant-numeric: tabular-nums slashed-zero;
   color: var(--chalk);
 }
+/* Ranges carry more characters than a single figure — step the size
+   down so "144–147" occupies the same optical weight as "147". */
+.st-readout-value.is-range { font-size: 29px; letter-spacing: -0.02em; }
+.st-readout.is-hero .st-readout-value.is-range { font-size: 38px; }
+
 .st-readout-value .unit {
   font-size: 15px;
   font-weight: 400;
@@ -491,5 +496,7 @@ select option { background: var(--steel); color: var(--chalk); }
   .st-step { border-right: none; border-bottom: 1px solid var(--edge); padding: 10px 0; }
   .st-step:last-child { border-bottom: none; }
   .st-readout-value { font-size: 32px; }
+  .st-readout-value.is-range { font-size: 23px; }
   .st-readout.is-hero .st-readout-value { font-size: 40px; }
+  .st-readout.is-hero .st-readout-value.is-range { font-size: 29px; }
 }
